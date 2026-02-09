@@ -1,0 +1,37 @@
+# Build output
+/entry/build/
+/build/
+/.preview/
+/entry/.preview/
+
+# DevEco Studio / IDE
+/.idea/workspace.xml
+/.idea/shelf/
+*.iml
+
+# Dependencies
+/oh_modules/
+/entry/oh_modules/
+/node_modules/
+
+# Local properties (SDK paths, signing keys)
+/local.properties
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Signing materials (sensitive)
+*.p12
+*.cer
+*.p7b
+
+# Hvigor cache
+/.hvigor/
+/entry/.hvigor/
+
+# Windows reserved names
+nul
+
+# Claude Code local settings
+/.claude/settings.local.json

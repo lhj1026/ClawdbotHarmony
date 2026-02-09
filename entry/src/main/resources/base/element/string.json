@@ -1,0 +1,11 @@
+{
+  "string": [
+    { "name": "module_desc",  "value": "ClawdBot AI Assistant" },
+    { "name": "ability_desc", "value": "Main Ability" },
+    { "name": "entry_label",  "value": "ClawdBot" },
+    { "name": "location_reason", "value": "Node Mode needs location access to share your GPS position with the OpenClaw Gateway when requested." },
+    { "name": "camera_reason", "value": "Node Mode needs camera access to capture photos and video when requested by the OpenClaw Gateway." },
+    { "name": "microphone_reason", "value": "Node Mode needs microphone access to record audio during video capture and screen recording." },
+    { "name": "sms_reason", "value": "Node Mode needs SMS access to send text messages when requested by the OpenClaw Gateway." }
+  ]
+}

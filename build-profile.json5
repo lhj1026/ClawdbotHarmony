@@ -1,0 +1,56 @@
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\Liuho\\.ohos\\config\\default_ClawdBotHarmony_Yn97CxRx3sOqTdTYwf8WDJ_pwV6D3Y37ZzaAS6L8E18=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001A37C6590CFF7C0D0E16B6D89080B56F409C68D65DC992841097E8BD7C493386E304FAEED74262",
+          "profile": "C:\\Users\\Liuho\\.ohos\\config\\default_ClawdBotHarmony_Yn97CxRx3sOqTdTYwf8WDJ_pwV6D3Y37ZzaAS6L8E18=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\Liuho\\.ohos\\config\\default_ClawdBotHarmony_Yn97CxRx3sOqTdTYwf8WDJ_pwV6D3Y37ZzaAS6L8E18=.p12",
+          "storePassword": "0000001A9C8100843681FE37559E842C4795FB6005B8836E7D357FD7ECEFC8B47774D2BDD377A720E394"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "compatibleSdkVersion": "5.0.0(12)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        },
+        "targetSdkVersion": "6.0.2(22)"
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug"
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}
