@@ -31,6 +31,7 @@ export struct MessageBubble {
           topLeft: 16, topRight: 4, bottomLeft: 16, bottomRight: 16
         })
         .constraintSize({ maxWidth: '75%' })
+        .copyOption(CopyOptions.LocalDevice)
     }
     .width('100%')
     .padding({ left: 12, right: 12, top: 4, bottom: 4 })
@@ -60,11 +61,13 @@ export struct MessageBubble {
           topLeft: 4, topRight: 16, bottomLeft: 16, bottomRight: 16
         })
         .constraintSize({ maxWidth: '72%' })
+        .copyOption(CopyOptions.LocalDevice)
 
       Blank()
     }
     .width('100%')
     .padding({ left: 12, right: 12, top: 4, bottom: 4 })
+    .alignItems(VerticalAlign.Top)
   }
 
   @Builder
@@ -91,6 +94,7 @@ export struct MessageBubble {
             .borderRadius(6)
             .margin({ top: 4 })
             .constraintSize({ maxHeight: 80 })
+            .copyOption(CopyOptions.LocalDevice)
         }
       }
       .padding(10)
@@ -127,6 +131,7 @@ export struct MessageBubble {
           .borderRadius(6)
           .margin({ top: 4 })
           .constraintSize({ maxHeight: 80 })
+          .copyOption(CopyOptions.LocalDevice)
       }
       .padding(10)
       .backgroundColor('#F5F5F5')

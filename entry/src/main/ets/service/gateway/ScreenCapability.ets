@@ -11,10 +11,10 @@ const TAG = 'ScreenCap';
 
 export class ScreenCapability {
   private log: LogService = LogService.getInstance();
-  private context: object | undefined = undefined;
+  private filesDir: string = '';
 
-  setContext(ctx: object): void {
-    this.context = ctx;
+  setContext(ctx: Context): void {
+    this.filesDir = ctx.filesDir;
   }
 
   async execute(paramsJson: string | undefined): Promise<string> {
@@ -45,9 +45,7 @@ export class ScreenCapability {
     this.log.info(TAG, `Recording screen: durationMs=${durationMs} includeAudio=${includeAudio}`);
 
     // Create temp file
-    let ctx = this.context as Record<string, string>;
-    let filesDir: string = ctx['filesDir'] ?? '/data/storage/el2/base/haps/entry/files';
-    let filePath: string = `${filesDir}/screen_recording_${Date.now()}.mp4`;
+    let filePath: string = `${this.filesDir}/screen_recording_${Date.now()}.mp4`;
     this.log.info(TAG, `Output file: ${filePath}`);
 
     let file = fileIo.openSync(filePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE);
@@ -109,9 +107,9 @@ export class ScreenCapability {
 
     } catch (err) {
       // Ensure file is closed
-      try { fileIo.closeSync(file); } catch { /* ignore */ }
-      try { fileIo.unlinkSync(filePath); } catch { /* ignore */ }
-      throw err;
+      try { fileIo.closeSync(file); } catch (ignored) { /* ignore */ }
+      try { fileIo.unlinkSync(filePath); } catch (ignored) { /* ignore */ }
+      throw err as Error;
     }
   }
 

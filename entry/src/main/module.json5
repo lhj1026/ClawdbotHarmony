@@ -71,10 +71,6 @@
           "abilities": ["EntryAbility"],
           "when": "inuse"
         }
-      },
-      {
-        "name": "ohos.permission.SEND_MESSAGES",
-        "reason": "$string:sms_reason"
       }
     ]
   }

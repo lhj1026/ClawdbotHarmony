@@ -1,5 +1,13 @@
 import { LogService, LogEntry } from '../common/LogService';
 import { I18n } from '../common/I18n';
+import { pasteboard } from '@kit.BasicServicesKit';
+import { fileIo } from '@kit.CoreFileKit';
+import { promptAction, router } from '@kit.ArkUI';
+
+class LogViewerParams {
+  text: string = '';
+  fileName: string = '';
+}
 
 @Component
 export struct LogPage {
@@ -55,6 +63,31 @@ export struct LogPage {
           .fontColor('#1A1A1A')
           .layoutWeight(1)
 
+        // Copy button
+        Text(I18n.t('log.copy'))
+          .fontSize(13)
+          .fontColor('#1976D2')
+          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+          .borderRadius(8)
+          .backgroundColor('#E3F2FD')
+          .margin({ right: 6 })
+          .onClick(() => {
+            this.copyLogs();
+          })
+
+        // Export button
+        Text(I18n.t('log.export'))
+          .fontSize(13)
+          .fontColor('#388E3C')
+          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+          .borderRadius(8)
+          .backgroundColor('#E8F5E9')
+          .margin({ right: 6 })
+          .onClick(() => {
+            this.exportLogs();
+          })
+
+        // Clear button
         Text(I18n.t('log.clear'))
           .fontSize(13)
           .fontColor('#D32F2F')
@@ -134,6 +167,7 @@ export struct LogPage {
                   .width('100%')
                   .maxLines(5)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .copyOption(CopyOptions.LocalDevice)
               }
               .padding({ left: 12, right: 12, top: 4, bottom: 4 })
               .width('100%')
@@ -150,6 +184,64 @@ export struct LogPage {
     .width('100%')
     .height('100%')
     .backgroundColor('#F5F5F5')
+  }
+
+  /** Copy all visible logs to system clipboard */
+  private copyLogs(): void {
+    if (this.logs.length === 0) return;
+
+    let lines: string[] = [];
+    for (let i = 0; i < this.logs.length; i++) {
+      lines.push(this.logs[i].format());
+    }
+    let text: string = lines.join('\n');
+
+    let pasteData: pasteboard.PasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, text);
+    let sysBoard: pasteboard.SystemPasteboard = pasteboard.getSystemPasteboard();
+    sysBoard.setData(pasteData);
+
+    promptAction.showToast({
+      message: I18n.t('log.copied'),
+      duration: 2000,
+    });
+  }
+
+  /** Export all visible logs to a text file and open in-app viewer */
+  private exportLogs(): void {
+    if (this.logs.length === 0) return;
+
+    try {
+      let lines: string[] = [];
+      for (let i = 0; i < this.logs.length; i++) {
+        lines.push(this.logs[i].format());
+      }
+      let text: string = lines.join('\n');
+
+      let now = new Date();
+      let dateStr: string = `${now.getFullYear()}${(now.getMonth() + 1).toString().padStart(2, '0')}${now.getDate().toString().padStart(2, '0')}_${now.getHours().toString().padStart(2, '0')}${now.getMinutes().toString().padStart(2, '0')}${now.getSeconds().toString().padStart(2, '0')}`;
+      let fileName: string = `clawdbot_log_${dateStr}.txt`;
+
+      // Also save to file for later access
+      let ctx: Context = getContext(this);
+      let filePath: string = `${ctx.filesDir}/${fileName}`;
+      let file = fileIo.openSync(filePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      fileIo.writeSync(file.fd, text);
+      fileIo.closeSync(file);
+
+      // Open in-app log viewer
+      let params = new LogViewerParams();
+      params.text = text;
+      params.fileName = fileName;
+      router.pushUrl({
+        url: 'pages/LogViewerPage',
+        params: params,
+      });
+    } catch {
+      promptAction.showToast({
+        message: I18n.t('log.exportFail'),
+        duration: 2000,
+      });
+    }
   }
 
   private formatTime(ts: number): string {

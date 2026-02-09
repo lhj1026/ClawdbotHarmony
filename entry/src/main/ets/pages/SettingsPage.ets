@@ -26,6 +26,13 @@ export struct SettingsPage {
   @State gwStatusText: string = 'Offline';
   @State gwState: ConnectionState = ConnectionState.Disconnected;
 
+  // Capability toggles
+  @State capLocation: boolean = true;
+  @State capCamera: boolean = true;
+  @State capCanvas: boolean = true;
+  @State capScreen: boolean = true;
+  @State capNotification: boolean = true;
+
   private gwListener: ((state: ConnectionState, text: string) => void) | undefined = undefined;
   private langListener: (() => void) | undefined = undefined;
 
@@ -378,18 +385,20 @@ export struct SettingsPage {
               .margin({ top: 8 })
               .onClick(() => { this.toggleGateway(); })
 
-            // Capabilities info
-            Column({ space: 4 }) {
-              Text(I18n.t('settings.caps'))
-                .fontSize(11)
-                .fontColor('#999999')
-                .width('100%')
-              Text(I18n.t('settings.capsDetail'))
-                .fontSize(11)
-                .fontColor('#999999')
-                .width('100%')
-            }
-            .margin({ top: 12 })
+            // Capabilities toggles
+            Divider().margin({ top: 14, bottom: 14 }).color('#F0F0F0')
+            Text(I18n.t('settings.caps'))
+              .fontSize(14)
+              .fontColor('#1A1A1A')
+              .fontWeight(FontWeight.Medium)
+              .width('100%')
+              .margin({ bottom: 10 })
+
+            this.CapToggle(I18n.t('settings.capLocation'), this.capLocation, (v: boolean) => { this.capLocation = v; })
+            this.CapToggle(I18n.t('settings.capCamera'), this.capCamera, (v: boolean) => { this.capCamera = v; })
+            this.CapToggle(I18n.t('settings.capCanvas'), this.capCanvas, (v: boolean) => { this.capCanvas = v; })
+            this.CapToggle(I18n.t('settings.capScreen'), this.capScreen, (v: boolean) => { this.capScreen = v; })
+            this.CapToggle(I18n.t('settings.capNotification'), this.capNotification, (v: boolean) => { this.capNotification = v; })
           }
         }
         .width('100%')
@@ -444,6 +453,21 @@ export struct SettingsPage {
       .letterSpacing(1)
       .padding({ left: 20, top: 20, bottom: 8 })
       .width('100%')
+  }
+
+  @Builder
+  CapToggle(label: string, isOn: boolean, onChange: (v: boolean) => void) {
+    Row() {
+      Text(label)
+        .fontSize(13)
+        .fontColor('#1A1A1A')
+        .layoutWeight(1)
+      Toggle({ type: ToggleType.Switch, isOn: isOn })
+        .selectedColor('#D2691E')
+        .onChange((v: boolean) => { onChange(v); })
+    }
+    .width('100%')
+    .height(40)
   }
 
   @Builder
@@ -515,6 +539,11 @@ export struct SettingsPage {
     let ctx = getContext(this) as common.UIAbilityContext;
     let token = this.gwToken.trim().length > 0 ? this.gwToken.trim() : undefined;
     let password = this.gwPassword.trim().length > 0 ? this.gwPassword.trim() : undefined;
+    // Apply capability config before connecting
+    NodeRuntime.getInstance().updateCapabilities(
+      this.capLocation, this.capCamera, this.capCanvas,
+      this.capScreen, this.capNotification
+    );
     NodeRuntime.getInstance().connect(ctx, endpoint, token, password);
   }
 
@@ -545,6 +574,12 @@ export struct SettingsPage {
       this.gwUseTls = (await store.get('useTls', false)) as boolean;
       if (savedToken.length > 0) this.gwToken = savedToken;
       if (savedPassword.length > 0) this.gwPassword = savedPassword;
+      // Capability toggles (default all true)
+      this.capLocation = (await store.get('capLocation', true)) as boolean;
+      this.capCamera = (await store.get('capCamera', true)) as boolean;
+      this.capCanvas = (await store.get('capCanvas', true)) as boolean;
+      this.capScreen = (await store.get('capScreen', true)) as boolean;
+      this.capNotification = (await store.get('capNotification', true)) as boolean;
     } catch { /* first launch defaults */ }
   }
 
@@ -568,7 +603,19 @@ export struct SettingsPage {
       await gwStore.put('useTls', this.gwUseTls);
       await gwStore.put('token', this.gwToken);
       await gwStore.put('password', this.gwPassword);
+      // Save capability toggles
+      await gwStore.put('capLocation', this.capLocation);
+      await gwStore.put('capCamera', this.capCamera);
+      await gwStore.put('capCanvas', this.capCanvas);
+      await gwStore.put('capScreen', this.capScreen);
+      await gwStore.put('capNotification', this.capNotification);
       await gwStore.flush();
+
+      // Update NodeRuntime capability config
+      NodeRuntime.getInstance().updateCapabilities(
+        this.capLocation, this.capCamera, this.capCanvas,
+        this.capScreen, this.capNotification
+      );
 
       // Save language
       await this.saveLang();

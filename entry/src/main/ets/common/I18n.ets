@@ -18,6 +18,7 @@ function buildZh(): Map<string, string> {
   m.set('chat.title', 'ClawdBot');
   m.set('chat.thinking', '思考中...');
   m.set('chat.online', '在线');
+  m.set('chat.gatewayMode', '网关模式');
   m.set('chat.placeholder', '向 ClawdBot 提问...');
   m.set('chat.empty.subtitle', '你的私人AI助手。\n随时提问或分配任务。');
   m.set('chat.quick.whatCanYouDo', '你能做什么？');
@@ -86,8 +87,12 @@ function buildZh(): Map<string, string> {
   m.set('settings.status', '状态');
   m.set('settings.connect', '连接');
   m.set('settings.disconnect', '断开');
-  m.set('settings.caps', '节点能力：');
-  m.set('settings.capsDetail', '  定位 (GPS)  /  通知');
+  m.set('settings.caps', '节点能力');
+  m.set('settings.capLocation', '定位 (GPS)');
+  m.set('settings.capCamera', '相机 (拍照/录像)');
+  m.set('settings.capCanvas', '画布 (WebView)');
+  m.set('settings.capScreen', '录屏');
+  m.set('settings.capNotification', '通知');
   m.set('settings.about', '关于');
   m.set('settings.app', '应用');
   m.set('settings.appValue', 'ClawdBot for HarmonyOS');
@@ -109,6 +114,11 @@ function buildZh(): Map<string, string> {
   m.set('log.clear', '清除');
   m.set('log.entries', '条');
   m.set('log.empty', '暂无日志');
+  m.set('log.copy', '复制');
+  m.set('log.export', '导出');
+  m.set('log.copied', '已复制到剪贴板');
+  m.set('log.exported', '已导出到文件');
+  m.set('log.exportFail', '导出失败');
 
   // Connection states
   m.set('state.offline', '离线');
@@ -132,6 +142,7 @@ function buildEn(): Map<string, string> {
   m.set('chat.title', 'ClawdBot');
   m.set('chat.thinking', 'Thinking...');
   m.set('chat.online', 'Online');
+  m.set('chat.gatewayMode', 'Gateway Mode');
   m.set('chat.placeholder', 'Ask ClawdBot anything...');
   m.set('chat.empty.subtitle', 'Your personal AI assistant.\nAsk me anything or give me a task.');
   m.set('chat.quick.whatCanYouDo', 'What can you do?');
@@ -200,8 +211,12 @@ function buildEn(): Map<string, string> {
   m.set('settings.status', 'Status');
   m.set('settings.connect', 'Connect');
   m.set('settings.disconnect', 'Disconnect');
-  m.set('settings.caps', 'Node Capabilities:');
-  m.set('settings.capsDetail', '  Location (GPS)  /  Notifications');
+  m.set('settings.caps', 'Node Capabilities');
+  m.set('settings.capLocation', 'Location (GPS)');
+  m.set('settings.capCamera', 'Camera (Photo/Video)');
+  m.set('settings.capCanvas', 'Canvas (WebView)');
+  m.set('settings.capScreen', 'Screen Recording');
+  m.set('settings.capNotification', 'Notifications');
   m.set('settings.about', 'ABOUT');
   m.set('settings.app', 'App');
   m.set('settings.appValue', 'ClawdBot for HarmonyOS');
@@ -223,6 +238,11 @@ function buildEn(): Map<string, string> {
   m.set('log.clear', 'Clear');
   m.set('log.entries', 'entries');
   m.set('log.empty', 'No logs yet');
+  m.set('log.copy', 'Copy');
+  m.set('log.export', 'Export');
+  m.set('log.copied', 'Copied to clipboard');
+  m.set('log.exported', 'Exported to file');
+  m.set('log.exportFail', 'Export failed');
 
   // Connection states
   m.set('state.offline', 'Offline');

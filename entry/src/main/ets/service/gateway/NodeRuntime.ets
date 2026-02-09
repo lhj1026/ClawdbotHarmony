@@ -49,6 +49,14 @@ export class NodeRuntime {
   private smsCapability: SmsCapability = new SmsCapability();
   private screenCapability: ScreenCapability = new ScreenCapability();
 
+  // Capability toggles (default all enabled)
+  private _capLocation: boolean = true;
+  private _capCamera: boolean = true;
+  private _capCanvas: boolean = true;
+  private _capScreen: boolean = true;
+  private _capNotification: boolean = true;
+  private _capSms: boolean = true;
+
   // Observable state
   private _operatorState: ConnectionState = ConnectionState.Disconnected;
   private _nodeState: ConnectionState = ConnectionState.Disconnected;
@@ -102,6 +110,20 @@ export class NodeRuntime {
   /** Expose canvas capability for CanvasPage to register its controller */
   getCanvasCapability(): CanvasCapability {
     return this.canvasCapability;
+  }
+
+  /** Update which capabilities are enabled (called from SettingsPage) */
+  updateCapabilities(location: boolean, camera: boolean, canvas: boolean,
+                     screen: boolean, notification: boolean, sms?: boolean): void {
+    this._capLocation = location;
+    this._capCamera = camera;
+    this._capCanvas = canvas;
+    this._capScreen = screen;
+    this._capNotification = notification;
+    if (sms !== undefined) {
+      this._capSms = sms;
+    }
+    this.log.info(TAG, `Capabilities updated: location=${location} camera=${camera} canvas=${canvas} screen=${screen} notification=${notification} sms=${this._capSms}`);
   }
 
   addStateListener(listener: (state: ConnectionState, text: string) => void): void {
@@ -182,9 +204,8 @@ export class NodeRuntime {
     this.log.info(TAG, `connect() called: ${endpoint.host}:${endpoint.port} tls=${endpoint.useTls} token=${token ? 'yes' : 'no'} password=${password ? 'yes' : 'no'}`);
 
     // Set context for capabilities that need file system access
-    let capCtx: Record<string, string> = { filesDir: context.filesDir };
-    this.cameraCapability.setContext(capCtx);
-    this.screenCapability.setContext(capCtx);
+    this.cameraCapability.setContext(context);
+    this.screenCapability.setContext(context);
 
     // Create operator session
     let operatorOpts = this.buildOperatorOptions();
@@ -209,7 +230,7 @@ export class NodeRuntime {
       this.log.info(TAG, `node state: ${state} - ${message}`);
     };
     this.nodeSession.onEvent = (event, payloadJson) => {
-      this.log.debug(TAG, `node event: ${event} payload=${payloadJson ?? 'none'}`);
+      this.log.debug(TAG, `node event: ${event} payloadLen=${payloadJson ? payloadJson.length : 0}`);
     };
     this.nodeSession.onInvokeRequest = async (req: InvokeRequest): Promise<InvokeResult> => {
       return await this.handleInvoke(req);
@@ -292,7 +313,7 @@ export class NodeRuntime {
           this.log.info(TAG, `location.get result: ${result}`);
           return InvokeResult.success(result);
         }
-        case 'notification.show': {
+        case Command.NOTIFICATION_SHOW: {
           this.log.info(TAG, 'Executing notification.show capability...');
           let result = await this.notificationCapability.execute(paramsJson);
           this.log.info(TAG, `notification.show result: ${result}`);
@@ -339,14 +360,136 @@ export class NodeRuntime {
   }
 
   private handleOperatorEvent(event: string, payloadJson: string | undefined): void {
-    this.log.info(TAG, `operator event: ${event} payloadLen=${payloadJson ? payloadJson.length : 0} payload=${payloadJson ? payloadJson.substring(0, 500) : 'none'}`);
+    this.log.info(TAG, `operator event: "${event}" payloadLen=${payloadJson ? payloadJson.length : 0} payload(200)=${payloadJson ? payloadJson.substring(0, 200) : '(none)'}`);
 
-    if (event === 'chat' && payloadJson) {
+    if (!payloadJson) return;
+
+    // Handle 'agent' event format (streaming from gateway)
+    // Wire format: { runId, stream, data: { text }, delta, sessionKey, seq, ts }
+    // Or: { runId, stream, text, delta, sessionKey, seq, ts }
+    // delta=true means streaming chunk, delta=false or done=true means final
+    if (event === 'agent') {
+      try {
+        let raw = JSON.parse(payloadJson) as Record<string, Object>;
+
+        // Log the raw keys for debugging
+        let rawKeys = Object.keys(raw);
+        this.log.info(TAG, `agent event keys: [${rawKeys.join(',')}] payload(300): ${payloadJson.substring(0, 300)}`);
+
+        let runId: string = (raw['runId'] as string) ?? '';
+        let stream: string = (raw['stream'] as string) ?? '';
+        let seq: number = (raw['seq'] as number) ?? 0;
+        let sessionKey: string = (raw['sessionKey'] as string) ?? '';
+
+        // Extract text: try data.text first, then top-level text
+        let fullText: string = '';
+        let dataObj = raw['data'] as Record<string, Object> | undefined;
+        if (dataObj !== undefined && dataObj !== null) {
+          if (dataObj['text'] !== undefined) {
+            fullText = String(dataObj['text']);
+          }
+        }
+        if (fullText.length === 0 && raw['text'] !== undefined) {
+          fullText = String(raw['text']);
+        }
+
+        // Determine state from multiple signals:
+        // 1. Explicit 'state' field
+        // 2. 'done' boolean field
+        // 3. 'delta' boolean field (delta=false on last chunk means final)
+        // 4. 'type' field (some gateways use type='done')
+        let chatState: string = 'delta';
+
+        let explicitState: string = '';
+        if (raw['state'] !== undefined) {
+          explicitState = String(raw['state']);
+        }
+
+        if (explicitState === 'final' || explicitState === 'done' || explicitState === 'complete' || explicitState === 'finished') {
+          chatState = 'final';
+        } else if (explicitState === 'error') {
+          chatState = 'error';
+        } else if (explicitState === 'aborted') {
+          chatState = 'aborted';
+        }
+
+        // Check 'done' boolean
+        if (chatState === 'delta' && raw['done'] !== undefined) {
+          let doneVal = raw['done'];
+          if (doneVal === true || doneVal as boolean === true || String(doneVal) === 'true') {
+            chatState = 'final';
+          }
+        }
+
+        // Check 'delta' boolean — delta=false on a non-zero seq means final
+        if (chatState === 'delta' && raw['delta'] !== undefined) {
+          let deltaVal = raw['delta'];
+          if (deltaVal === false || String(deltaVal) === 'false') {
+            chatState = 'final';
+          }
+        }
+
+        // Check 'type' field
+        if (chatState === 'delta' && raw['type'] !== undefined) {
+          let typeVal = String(raw['type']);
+          if (typeVal === 'done' || typeVal === 'final' || typeVal === 'complete') {
+            chatState = 'final';
+          } else if (typeVal === 'error') {
+            chatState = 'error';
+          }
+        }
+
+        // Check stopReason — if present, this is likely the final event
+        let stopReason: string = '';
+        if (raw['stopReason'] !== undefined) {
+          stopReason = String(raw['stopReason']);
+          if (chatState === 'delta' && stopReason.length > 0) {
+            chatState = 'final';
+          }
+        }
+
+        // Build GatewayChatEvent with text
+        let errorMsg: string | undefined = undefined;
+        if (raw['errorMessage'] !== undefined) {
+          errorMsg = String(raw['errorMessage']);
+        } else if (raw['error'] !== undefined) {
+          errorMsg = String(raw['error']);
+        }
+
+        // Always build the message with content blocks (even if empty)
+        let blocks: GatewayChatContentBlock[] = [];
+        if (fullText.length > 0) {
+          let block: GatewayChatContentBlock = { type: 'text', text: fullText };
+          blocks.push(block);
+        }
+
+        let msgRole: string = stream.length > 0 ? stream : 'assistant';
+        let msgTs: number | undefined = (raw['ts'] as number) ?? undefined;
+
+        let chatEvent: GatewayChatEvent = {
+          runId: runId,
+          sessionKey: sessionKey,
+          seq: seq,
+          state: chatState,
+          message: { role: msgRole, content: blocks, timestamp: msgTs },
+          errorMessage: errorMsg,
+          stopReason: stopReason.length > 0 ? stopReason : undefined,
+        };
+
+        this.log.info(TAG, `agentChat: state=${chatState} runId=${runId} seq=${seq} textLen=${fullText.length} blocks=${blocks.length} text(100)="${fullText.substring(0, 100)}"`);
+        this.dispatchChatEvent(chatEvent);
+      } catch (err) {
+        this.log.error(TAG, `Failed to parse agent event: ${(err as Error).message ?? ''}`);
+      }
+      return;
+    }
+
+    // Handle 'chat' event format (legacy / direct chat.send response)
+    if (event === 'chat') {
       try {
         let raw = JSON.parse(payloadJson) as Record<string, Object>;
         let runId: string = (raw['runId'] as string) ?? '';
         let state: string = (raw['state'] as string) ?? '';
-        this.log.info(TAG, `chat event parsed: runId=${runId} state=${state}`);
 
         let chatEvent: GatewayChatEvent = {
           runId: runId,
@@ -357,48 +500,40 @@ export class NodeRuntime {
           stopReason: (raw['stopReason'] as string) ?? undefined,
         };
 
-        // Parse message if present
         let msgRaw = raw['message'] as Record<string, Object> | undefined;
         if (msgRaw) {
           let contentRaw: Object = msgRaw['content'];
           let blocks: GatewayChatContentBlock[] = [];
-          this.log.info(TAG, `chat message: role=${msgRaw['role']} contentType=${typeof contentRaw} isArray=${Array.isArray(contentRaw)}`);
           if (Array.isArray(contentRaw)) {
             let contentArr: Object[] = contentRaw as Object[];
-            this.log.info(TAG, `content blocks: count=${contentArr.length}`);
             for (let i = 0; i < contentArr.length; i++) {
               let block: Record<string, string> = contentArr[i] as Record<string, string>;
               let blockText: string = block['text'] ?? '';
-              blocks.push({
+              let b: GatewayChatContentBlock = {
                 type: block['type'] ?? 'text',
                 text: blockText.length > 0 ? blockText : undefined,
-              });
-              this.log.info(TAG, `  block[${i}]: type=${block['type']} textLen=${blockText.length} text=${blockText.substring(0, 100)}`);
+              };
+              blocks.push(b);
             }
           } else if (typeof contentRaw === 'string') {
-            blocks.push({ type: 'text', text: contentRaw as string });
-            this.log.info(TAG, `content is string: ${(contentRaw as string).substring(0, 100)}`);
-          } else {
-            this.log.warn(TAG, `content is unexpected type: ${typeof contentRaw}`);
+            let b: GatewayChatContentBlock = { type: 'text', text: contentRaw as string };
+            blocks.push(b);
           }
           chatEvent.message = {
             role: (msgRaw['role'] as string) ?? 'assistant',
             content: blocks,
             timestamp: (msgRaw['timestamp'] as number) ?? undefined,
           };
-          this.log.info(TAG, `chat message built: blocks=${blocks.length}`);
-        } else {
-          this.log.info(TAG, `chat event has no message (state=${state})`);
         }
 
         this.dispatchChatEvent(chatEvent);
       } catch (err) {
-        this.log.error(TAG, `Failed to parse chat event: ${(err as Error).message ?? ''} stack=${(err as Error).stack ?? ''}`);
+        this.log.error(TAG, `Failed to parse chat event: ${(err as Error).message ?? ''}`);
       }
       return;
     }
 
-    // Other operator events: voice wake, branding, etc.
+    // Other operator events: voice wake, branding, presence, health, etc.
   }
 
   private buildClientInfo(clientId: string, clientMode: string): ClientInfo {
@@ -424,26 +559,38 @@ export class NodeRuntime {
   }
 
   private buildNodeOptions(): ConnectOptions {
-    let caps = [
-      Capability.Location,
-      Capability.Camera,
-      Capability.Canvas,
-      Capability.Screen,
-      Capability.Sms,
-    ];
-    let commands = [
-      Command.LOCATION_GET,
-      'notification.show',
-      Command.CAMERA_SNAP,
-      Command.CAMERA_CLIP,
-      Command.CANVAS_PRESENT,
-      Command.CANVAS_HIDE,
-      Command.CANVAS_NAVIGATE,
-      Command.CANVAS_EVAL,
-      Command.CANVAS_SNAPSHOT,
-      Command.SMS_SEND,
-      Command.SCREEN_RECORD,
-    ];
+    let caps: string[] = [];
+    let commands: string[] = [];
+
+    if (this._capLocation) {
+      caps.push(Capability.Location);
+      commands.push(Command.LOCATION_GET);
+    }
+    if (this._capCamera) {
+      caps.push(Capability.Camera);
+      commands.push(Command.CAMERA_SNAP);
+      commands.push(Command.CAMERA_CLIP);
+    }
+    if (this._capCanvas) {
+      caps.push(Capability.Canvas);
+      commands.push(Command.CANVAS_PRESENT);
+      commands.push(Command.CANVAS_HIDE);
+      commands.push(Command.CANVAS_NAVIGATE);
+      commands.push(Command.CANVAS_EVAL);
+      commands.push(Command.CANVAS_SNAPSHOT);
+    }
+    if (this._capScreen) {
+      caps.push(Capability.Screen);
+      commands.push(Command.SCREEN_RECORD);
+    }
+    if (this._capNotification) {
+      caps.push(Capability.Notification);
+      commands.push(Command.NOTIFICATION_SHOW);
+    }
+    if (this._capSms) {
+      caps.push(Capability.Sms);
+      commands.push(Command.SMS_SEND);
+    }
 
     return {
       role: 'node',

@@ -14,6 +14,7 @@ export class Capability {
   static readonly Sms: string = 'sms';
   static readonly VoiceWake: string = 'voiceWake';
   static readonly Location: string = 'location';
+  static readonly Notification: string = 'notification';
 }
 
 export class Command {
@@ -36,4 +37,6 @@ export class Command {
   static readonly SMS_SEND: string = 'sms.send';
   // Location
   static readonly LOCATION_GET: string = 'location.get';
+  // Notification
+  static readonly NOTIFICATION_SHOW: string = 'notification.show';
 }

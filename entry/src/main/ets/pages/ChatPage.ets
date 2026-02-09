@@ -31,6 +31,8 @@ export struct ChatPage {
   private gwAssistantMsgId: string = '';
   private gwChatResolve: (() => void) | undefined = undefined;
   private gwEarlyFinish: boolean = false;
+  private gwIdleTimer: number = -1; // auto-finish after no events for N seconds
+  private gwReceivedDelta: boolean = false; // whether we got at least one delta with text
 
   aboutToAppear(): void {
     this.loadHistory();
@@ -95,7 +97,7 @@ export struct ChatPage {
               Row({ space: 3 }) {
                 Circle({ width: 6, height: 6 })
                   .fill('#4CAF50')
-                Text('GW')
+                Text(I18n.t('chat.gatewayMode'))
                   .fontSize(10)
                   .fontColor('#4CAF50')
                   .fontWeight(FontWeight.Medium)
@@ -276,31 +278,45 @@ export struct ChatPage {
     try {
       this.log.info('ChatPage', `Sending via gateway: ${text.substring(0, 100)}`);
 
+      // Reset state flags
+      this.gwEarlyFinish = false;
+      this.gwReceivedDelta = false;
+      if (this.gwIdleTimer >= 0) {
+        clearTimeout(this.gwIdleTimer);
+        this.gwIdleTimer = -1;
+      }
+
       // Create placeholder assistant message BEFORE sending RPC
-      // to avoid race condition where events arrive before gwRunId is set
+      // to avoid race condition where events arrive before gwRunId is set.
+      // The handleGatewayChatEvent will adopt any runId it receives while gwRunId is empty.
       let assistantMsg = new ChatMessage('assistant', '');
       this.gwAssistantMsgId = assistantMsg.id;
+      this.gwRunId = ''; // will be set from RPC response or adopted from events
       this.messages.push(assistantMsg);
       this.scrollToEnd();
 
-      // sendChatMessage returns the idempotencyKey which is also the runId
-      // used in chat events. Set gwRunId ASAP so events aren't missed.
       let runtime = NodeRuntime.getInstance();
       let runId = await runtime.sendChatMessage(text);
-      this.gwRunId = runId;
-      this.log.info('ChatPage', `Gateway chat started: runId=${runId}`);
+      this.log.info('ChatPage', `chat.send returned runId=${runId}, current gwRunId=${this.gwRunId}`);
 
-      // Check if we already received a final/error event while awaiting
-      // (unlikely but possible if server responds + errors instantly)
+      // Only set gwRunId from RPC if events haven't already set it
+      if (this.gwRunId.length === 0) {
+        this.gwRunId = runId;
+        this.log.info('ChatPage', `Set gwRunId from RPC response: ${runId}`);
+      } else {
+        this.log.info('ChatPage', `gwRunId already adopted from events: ${this.gwRunId} (RPC returned: ${runId})`);
+      }
+
+      // Check if we already received a final/error event while awaiting the RPC
       if (this.gwEarlyFinish) {
-        this.log.info('ChatPage', `Early finish detected for runId=${runId}`);
+        this.log.info('ChatPage', `Early finish detected for runId=${this.gwRunId}`);
         this.gwEarlyFinish = false;
         this.isLoading = false;
         return;
       }
 
       // Wait for final/error event (up to 120 seconds)
-      await this.waitForGatewayChatComplete(runId, 120000);
+      await this.waitForGatewayChatComplete(this.gwRunId, 120000);
 
     } catch (e) {
       let errMsg = (e as Error).message ?? String(e);
@@ -318,6 +334,11 @@ export struct ChatPage {
       this.isLoading = false;
       this.gwRunId = '';
       this.gwAssistantMsgId = '';
+      this.gwReceivedDelta = false;
+      if (this.gwIdleTimer >= 0) {
+        clearTimeout(this.gwIdleTimer);
+        this.gwIdleTimer = -1;
+      }
     }
   }
 
@@ -326,11 +347,19 @@ export struct ChatPage {
     return new Promise<void>((resolve) => {
       let timer = setTimeout(() => {
         this.log.warn('ChatPage', `Gateway chat timeout for runId=${runId}`);
-        // If we still have an empty message, show timeout
         let idx = this.findGwAssistantIndex();
-        if (idx >= 0 && this.messages[idx].content.length === 0) {
-          this.messages[idx] = new ChatMessage('assistant', 'Gateway response timeout');
-          this.messages = [...this.messages]; // force re-render
+        if (idx >= 0) {
+          let existingText = this.messages[idx].content;
+          if (existingText.length === 0) {
+            // No text received at all — show timeout error
+            let updated = new ChatMessage('assistant', 'Gateway response timeout');
+            updated.id = this.gwAssistantMsgId;
+            this.messages[idx] = updated;
+            this.messages = [...this.messages];
+          } else {
+            // We have partial text from deltas — keep it (treat as final)
+            this.log.info('ChatPage', `Timeout but have text (${existingText.length} chars), keeping it`);
+          }
         }
         this.isLoading = false;
         this.gwRunId = '';
@@ -359,13 +388,6 @@ export struct ChatPage {
 
   /** Handle incoming gateway chat events (delta / final / error / aborted). */
   private handleGatewayChatEvent(event: GatewayChatEvent): void {
-    this.log.info('ChatPage', `handleGatewayChatEvent: state=${event.state} runId=${event.runId} myRunId=${this.gwRunId} hasMsg=${event.message ? 'yes' : 'no'}`);
-    // Only handle events for our current run
-    if (event.runId !== this.gwRunId) {
-      this.log.warn('ChatPage', `Ignoring chat event: event.runId=${event.runId} !== gwRunId=${this.gwRunId}`);
-      return;
-    }
-
     // Extract text from content blocks
     let text = '';
     if (event.message && event.message.content) {
@@ -374,6 +396,21 @@ export struct ChatPage {
           text += block.text;
         }
       }
+    }
+
+    this.log.info('ChatPage', `gwChatEvent: state=${event.state} runId=${event.runId} myRunId=${this.gwRunId} textLen=${text.length} text(80)="${text.substring(0, 80)}"`);
+
+    // Accept events for our current run, OR if we have no gwRunId yet
+    // (events may arrive before sendChatMessage resolves)
+    if (this.gwRunId.length > 0 && event.runId !== this.gwRunId) {
+      this.log.warn('ChatPage', `Ignoring chat event: event.runId=${event.runId} !== gwRunId=${this.gwRunId}`);
+      return;
+    }
+
+    // If we haven't set gwRunId yet, adopt this event's runId
+    if (this.gwRunId.length === 0 && this.gwAssistantMsgId.length > 0 && event.runId.length > 0) {
+      this.log.info('ChatPage', `Adopting runId from event: ${event.runId}`);
+      this.gwRunId = event.runId;
     }
 
     if (event.state === 'delta') {
@@ -386,47 +423,74 @@ export struct ChatPage {
         this.messages[idx] = updated;
         this.messages = [...this.messages]; // trigger re-render
         this.scrollToEnd();
+        this.gwReceivedDelta = true;
+        this.log.info('ChatPage', `Updated msg idx=${idx} textLen=${text.length}`);
+      } else {
+        this.log.warn('ChatPage', `Delta but no update: idx=${idx} textLen=${text.length}`);
+      }
+
+      // Reset idle timer: if no new events for 15 seconds after receiving text, treat as final
+      if (this.gwIdleTimer >= 0) {
+        clearTimeout(this.gwIdleTimer);
+      }
+      if (this.gwReceivedDelta) {
+        this.gwIdleTimer = setTimeout(() => {
+          if (this.gwAssistantMsgId.length > 0) {
+            this.log.info('ChatPage', 'Idle timeout — treating accumulated text as final');
+            this.finishGatewayChat();
+          }
+        }, 15000);
       }
     } else if (event.state === 'final') {
       // Final message: update with complete text
       let idx = this.findGwAssistantIndex();
-      if (idx >= 0 && text.length > 0) {
-        let updated = new ChatMessage('assistant', text);
-        updated.id = this.gwAssistantMsgId;
-        updated.timestamp = this.messages[idx].timestamp;
-        this.messages[idx] = updated;
+      if (idx >= 0) {
+        if (text.length > 0) {
+          let updated = new ChatMessage('assistant', text);
+          updated.id = this.gwAssistantMsgId;
+          updated.timestamp = this.messages[idx].timestamp;
+          this.messages[idx] = updated;
+        }
+        // If final event has no text, keep whatever we accumulated from deltas
         this.messages = [...this.messages];
       }
-      this.log.info('ChatPage', `Gateway chat final: textLen=${text.length} text=${text.substring(0, 200)}`);
-      this.isLoading = false;
-      this.gwRunId = '';
-      this.gwAssistantMsgId = '';
-      if (this.gwChatResolve) {
-        this.gwChatResolve();
-        this.gwChatResolve = undefined;
-      } else {
-        this.gwEarlyFinish = true;
-      }
+      this.log.info('ChatPage', `Gateway chat FINAL: textLen=${text.length} text(200)="${text.substring(0, 200)}"`);
+      this.finishGatewayChat();
     } else if (event.state === 'error' || event.state === 'aborted') {
       let errText = event.errorMessage ?? (event.state === 'aborted' ? 'Response aborted' : 'Unknown error');
       let idx = this.findGwAssistantIndex();
       if (idx >= 0) {
-        let updated = new ChatMessage('assistant', `Gateway: ${errText}`);
-        updated.id = this.gwAssistantMsgId;
-        this.messages[idx] = updated;
+        // If we already have text from deltas, keep it; otherwise show error
+        if (this.messages[idx].content.length === 0) {
+          let updated = new ChatMessage('assistant', `Gateway: ${errText}`);
+          updated.id = this.gwAssistantMsgId;
+          this.messages[idx] = updated;
+        }
         this.messages = [...this.messages];
       }
       this.log.error('ChatPage', `Gateway chat ${event.state}: ${errText}`);
-      this.isLoading = false;
-      this.gwRunId = '';
-      this.gwAssistantMsgId = '';
-      if (this.gwChatResolve) {
-        this.gwChatResolve();
-        this.gwChatResolve = undefined;
-      } else {
-        this.gwEarlyFinish = true;
-      }
+      this.finishGatewayChat();
     }
+  }
+
+  /** Clean up state after a gateway chat run completes. */
+  private finishGatewayChat(): void {
+    this.log.info('ChatPage', `finishGatewayChat: gwRunId=${this.gwRunId} hadDelta=${this.gwReceivedDelta}`);
+    this.isLoading = false;
+    this.gwRunId = '';
+    this.gwAssistantMsgId = '';
+    this.gwReceivedDelta = false;
+    if (this.gwIdleTimer >= 0) {
+      clearTimeout(this.gwIdleTimer);
+      this.gwIdleTimer = -1;
+    }
+    if (this.gwChatResolve) {
+      this.gwChatResolve();
+      this.gwChatResolve = undefined;
+    } else {
+      this.gwEarlyFinish = true;
+    }
+    this.saveHistory();
   }
 
   /** Send message through local AI service (direct HTTP API). */

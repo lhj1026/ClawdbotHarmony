@@ -5,6 +5,9 @@ import { SettingsPage } from './SettingsPage';
 import { LogPage } from './LogPage';
 import { I18n, LangCode } from '../common/I18n';
 import { LogService } from '../common/LogService';
+import { Constants } from '../common/Constants';
+import { NodeRuntime } from '../service/gateway/NodeRuntime';
+import { GatewayEndpoint } from '../service/gateway/GatewayModels';
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 
@@ -19,6 +22,7 @@ struct Index {
   aboutToAppear(): void {
     LogService.getInstance().info('App', 'ClawdBot started');
     this.loadLang();
+    this.autoConnectGateway();
     this.langListener = () => {
       this.lang = I18n.lang;
     };
@@ -34,6 +38,42 @@ struct Index {
 
   onLangChange(): void {
     // triggers UI re-render
+  }
+
+  /** Auto-connect to Gateway if Node Mode is enabled in settings */
+  private async autoConnectGateway(): Promise<void> {
+    try {
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let store = await preferences.getPreferences(ctx, Constants.PREFS_GATEWAY);
+      let enabled = (await store.get('enabled', false)) as boolean;
+      if (!enabled) return;
+
+      let host = (await store.get('host', '')) as string;
+      if (host.length === 0) return;
+
+      let port = parseInt((await store.get('port', '9999')) as string) || 9999;
+      let useTls = (await store.get('useTls', false)) as boolean;
+      let token = (await store.get('token', '')) as string;
+      let password = (await store.get('password', '')) as string;
+
+      // Load capability toggles
+      let capLocation = (await store.get('capLocation', true)) as boolean;
+      let capCamera = (await store.get('capCamera', true)) as boolean;
+      let capCanvas = (await store.get('capCanvas', true)) as boolean;
+      let capScreen = (await store.get('capScreen', true)) as boolean;
+      let capNotification = (await store.get('capNotification', true)) as boolean;
+
+      let endpoint: GatewayEndpoint = { host: host, port: port, useTls: useTls };
+      let runtime = NodeRuntime.getInstance();
+      runtime.updateCapabilities(capLocation, capCamera, capCanvas, capScreen, capNotification);
+      runtime.connect(ctx, endpoint,
+        token.length > 0 ? token : undefined,
+        password.length > 0 ? password : undefined);
+
+      LogService.getInstance().info('App', `Auto-connecting gateway: ${host}:${port}`);
+    } catch {
+      LogService.getInstance().warn('App', 'Failed to auto-connect gateway');
+    }
   }
 
   private async loadLang(): Promise<void> {
