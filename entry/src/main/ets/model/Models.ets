@@ -12,6 +12,8 @@ export class ChatMessage {
   toolName: string;
   toolInput: string;
   toolOutput: string;
+  imagePath: string;   // local file path for photos displayed in chat
+  audioPath: string;   // local file path for audio playback in chat
 
   constructor(role: string, content: string) {
     this.id = `m_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
@@ -22,6 +24,8 @@ export class ChatMessage {
     this.toolName = '';
     this.toolInput = '';
     this.toolOutput = '';
+    this.imagePath = '';
+    this.audioPath = '';
   }
 }
 
@@ -82,6 +86,8 @@ export class SkillItem {
 export interface ApiMessage {
   role: string;
   content: string;
+  toolCalls?: string;    // JSON string of OpenAI tool_calls array (for assistant messages)
+  toolCallId?: string;   // tool_call_id (for role:"tool" result messages)
 }
 
 export interface ToolSchema {

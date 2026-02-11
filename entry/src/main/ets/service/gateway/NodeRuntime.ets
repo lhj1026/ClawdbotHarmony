@@ -15,6 +15,8 @@ import { SmsCapability } from './SmsCapability';
 import { ScreenCapability } from './ScreenCapability';
 import { MicrophoneCapability } from './MicrophoneCapability';
 import { SpeakerCapability } from './SpeakerCapability';
+import { EmailCapability } from './EmailCapability';
+import { CalendarCapability } from './CalendarCapability';
 import { GatewayProtocol } from './GatewayProtocol';
 import { Capability, Command } from './GatewayProtocol';
 import {
@@ -53,6 +55,8 @@ export class NodeRuntime {
   private screenCapability: ScreenCapability = new ScreenCapability();
   private microphoneCapability: MicrophoneCapability = new MicrophoneCapability();
   private speakerCapability: SpeakerCapability = new SpeakerCapability();
+  private emailCapability: EmailCapability = new EmailCapability();
+  private calendarCapability: CalendarCapability = new CalendarCapability();
 
   // Capability toggles (default all enabled)
   private _capLocation: boolean = true;
@@ -63,6 +67,8 @@ export class NodeRuntime {
   private _capSms: boolean = true;
   private _capMicrophone: boolean = true;
   private _capSpeaker: boolean = true;
+  private _capEmail: boolean = true;
+  private _capCalendar: boolean = true;
 
   // Observable state
   private _operatorState: ConnectionState = ConnectionState.Disconnected;
@@ -83,6 +89,9 @@ export class NodeRuntime {
 
   // Notification-to-chat listeners
   private _notifListeners: Array<(info: NotificationInfo) => void> = [];
+
+  // Media file listeners — notify ChatPage when a recording/photo is captured via gateway
+  private _mediaListeners: Array<(type: string, path: string) => void> = [];
 
   static getInstance(): NodeRuntime {
     if (!NodeRuntime.instance) {
@@ -132,7 +141,7 @@ export class NodeRuntime {
   /** Update which capabilities are enabled (called from SettingsPage) */
   updateCapabilities(location: boolean, camera: boolean, canvas: boolean,
                      screen: boolean, notification: boolean, sms?: boolean,
-                     microphone?: boolean, speaker?: boolean): void {
+                     microphone?: boolean, speaker?: boolean, email?: boolean): void {
     this._capLocation = location;
     this._capCamera = camera;
     this._capCanvas = canvas;
@@ -147,7 +156,10 @@ export class NodeRuntime {
     if (speaker !== undefined) {
       this._capSpeaker = speaker;
     }
-    this.log.info(TAG, `Capabilities updated: location=${location} camera=${camera} canvas=${canvas} screen=${screen} notification=${notification} sms=${this._capSms} mic=${this._capMicrophone} speaker=${this._capSpeaker}`);
+    if (email !== undefined) {
+      this._capEmail = email;
+    }
+    this.log.info(TAG, `Capabilities updated: location=${location} camera=${camera} canvas=${canvas} screen=${screen} notification=${notification} sms=${this._capSms} mic=${this._capMicrophone} speaker=${this._capSpeaker} email=${this._capEmail}`);
   }
 
   addStateListener(listener: (state: ConnectionState, text: string) => void): void {
@@ -234,6 +246,26 @@ export class NodeRuntime {
     }
   }
 
+  addMediaListener(listener: (type: string, path: string) => void): void {
+    this._mediaListeners.push(listener);
+  }
+
+  removeMediaListener(listener: (type: string, path: string) => void): void {
+    let idx = this._mediaListeners.indexOf(listener);
+    if (idx >= 0) {
+      this._mediaListeners.splice(idx, 1);
+    }
+  }
+
+  private dispatchMedia(type: string, path: string): void {
+    this.log.info(TAG, `dispatchMedia: type=${type} path=${path}`);
+    for (let listener of this._mediaListeners) {
+      try {
+        listener(type, path);
+      } catch { /* ignore */ }
+    }
+  }
+
   private dispatchNotification(info: NotificationInfo): void {
     this.log.info(TAG, `dispatchNotification: title="${info.title}" sender="${info.sender}" body="${info.body.substring(0, 80)}"`);
     for (let listener of this._notifListeners) {
@@ -313,6 +345,18 @@ export class NodeRuntime {
     }
   }
 
+  /**
+   * Stop all speaker audio (TTS and media playback) immediately.
+   */
+  async stopSpeaker(): Promise<void> {
+    this.log.info(TAG, 'stopSpeaker: stopping all audio');
+    try {
+      await this.speakerCapability.execute(Command.SPEAKER_STOP, undefined);
+    } catch (err) {
+      this.log.warn(TAG, `stopSpeaker error: ${(err as Error).message ?? ''}`);
+    }
+  }
+
   connect(context: common.UIAbilityContext, endpoint: GatewayEndpoint, token?: string, password?: string): void {
     // Disconnect existing sessions if any
     this.disconnect();
@@ -325,6 +369,8 @@ export class NodeRuntime {
     this.screenCapability.setContext(context);
     this.microphoneCapability.setContext(context);
     this.speakerCapability.setContext(context);
+    this.emailCapability.setContext(context);
+    this.calendarCapability.setContext(context);
 
     // Set up notification capability: bundleName, icon, permission, and chat callback
     if (this._capNotification) {
@@ -485,6 +531,14 @@ export class NodeRuntime {
           this.log.info(TAG, 'Executing mic.record capability...');
           let result = await this.microphoneCapability.execute(paramsJson);
           this.log.info(TAG, `mic.record result: ${result.substring(0, 200)}`);
+          // Extract filePath and notify ChatPage for playback button
+          try {
+            let parsed = JSON.parse(result) as Record<string, Object>;
+            let fp = parsed['filePath'] as string;
+            if (fp && fp.length > 0) {
+              this.dispatchMedia('audio', fp);
+            }
+          } catch { /* ignore */ }
           return InvokeResult.success(result);
         }
         case Command.SPEAKER_SPEAK:
@@ -493,6 +547,18 @@ export class NodeRuntime {
           this.log.info(TAG, `Executing ${command} capability...`);
           let result = await this.speakerCapability.execute(command, paramsJson);
           this.log.info(TAG, `${command} result: ${result.substring(0, 200)}`);
+          return InvokeResult.success(result);
+        }
+        case Command.EMAIL_SEND: {
+          this.log.info(TAG, 'Executing email.send capability...');
+          let result = await this.emailCapability.execute(paramsJson);
+          this.log.info(TAG, `email.send result: ${result}`);
+          return InvokeResult.success(result);
+        }
+        case Command.CALENDAR_ADD: {
+          this.log.info(TAG, 'Executing calendar.add capability...');
+          let result = await this.calendarCapability.execute(paramsJson);
+          this.log.info(TAG, `calendar.add result: ${result}`);
           return InvokeResult.success(result);
         }
         default:
@@ -834,6 +900,14 @@ export class NodeRuntime {
       commands.push(Command.SPEAKER_SPEAK);
       commands.push(Command.SPEAKER_PLAY);
       commands.push(Command.SPEAKER_STOP);
+    }
+    if (this._capEmail) {
+      caps.push(Capability.Email);
+      commands.push(Command.EMAIL_SEND);
+    }
+    if (this._capCalendar) {
+      caps.push(Capability.Calendar);
+      commands.push(Command.CALENDAR_ADD);
     }
 
     return {

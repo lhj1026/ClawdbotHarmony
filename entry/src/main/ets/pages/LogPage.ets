@@ -17,6 +17,7 @@ export struct LogPage {
   @State filterLevel: string = 'ALL';
   @State autoScroll: boolean = true;
   @State logEnabled: boolean = false;
+  @State expandedTimestamps: number[] = [];
   @State @Watch('onLangChange') lang: string = 'zh';
 
   private logSvc: LogService = LogService.getInstance();
@@ -188,9 +189,28 @@ export struct LogPage {
                   .fontColor(entry.level === 'ERROR' ? '#D32F2F' : entry.level === 'WARN' ? '#F57C00' : '#333333')
                   .lineHeight(16)
                   .width('100%')
-                  .maxLines(5)
+                  .maxLines(this.expandedTimestamps.includes(entry.timestamp) ? 99999 : 5)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                   .copyOption(CopyOptions.LocalDevice)
+
+                if (entry.message.length > 200 || entry.message.split('\n').length > 5) {
+                  Text(this.expandedTimestamps.includes(entry.timestamp) ? I18n.t('log.showLess') : I18n.t('log.readMore'))
+                    .fontSize(11)
+                    .fontColor('#1976D2')
+                    .padding({ top: 2, bottom: 2 })
+                    .onClick(() => {
+                      if (this.expandedTimestamps.includes(entry.timestamp)) {
+                        this.expandedTimestamps = this.expandedTimestamps.filter((ts: number) => ts !== entry.timestamp);
+                      } else {
+                        let newArr: number[] = [];
+                        for (let ts of this.expandedTimestamps) {
+                          newArr.push(ts);
+                        }
+                        newArr.push(entry.timestamp);
+                        this.expandedTimestamps = newArr;
+                      }
+                    })
+                }
               }
               .padding({ left: 12, right: 12, top: 4, bottom: 4 })
               .width('100%')

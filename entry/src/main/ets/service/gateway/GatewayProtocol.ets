@@ -17,6 +17,8 @@ export class Capability {
   static readonly Notification: string = 'notification';
   static readonly Microphone: string = 'microphone';
   static readonly Speaker: string = 'speaker';
+  static readonly Email: string = 'email';
+  static readonly Calendar: string = 'calendar';
 }
 
 export class Command {
@@ -49,4 +51,8 @@ export class Command {
   static readonly SPEAKER_SPEAK: string = 'speaker.speak';
   static readonly SPEAKER_PLAY: string = 'speaker.play';
   static readonly SPEAKER_STOP: string = 'speaker.stop';
+  // Email
+  static readonly EMAIL_SEND: string = 'email.send';
+  // Calendar
+  static readonly CALENDAR_ADD: string = 'calendar.add';
 }

@@ -31,6 +31,11 @@ function buildZh(): Map<string, string> {
   m.set('chat.playingAudio', '正在播放音频...');
   m.set('chat.audioPlayed', '音频已播放');
   m.set('chat.audioFailed', '音频播放失败');
+  m.set('chat.audioReady', '点击播放录音');
+  m.set('chat.audioPlaying', '正在播放...');
+  m.set('chat.recording', '正在录音...');
+  m.set('chat.speechError', '语音识别失败');
+  m.set('chat.rateLimited', '免费模型已达到速率限制，请稍后重试。\n\n如需更稳定的服务，请注册自己的 API Key：\n\n📝 OpenRouter 注册步骤：\n1. 打开 openrouter.ai 并点击注册\n2. 使用 Google 账号或邮箱注册\n3. 注册后进入 openrouter.ai/settings/keys\n4. 点击 "Create Key" 创建一个新密钥\n5. 复制密钥，回到本 App 的设置页\n6. 在 "AI 提供商" 选择 OpenRouter\n7. 将密钥粘贴到 "API Key" 输入框\n\n💡 OpenRouter 提供免费和付费模型，注册后免费额度更高，也可按需充值使用 GPT-4o、Claude 等高级模型。');
   m.set('chat.ttsReading', '🔊 正在朗读...');
   m.set('chat.ttsReadDone', '🔊 已朗读');
   m.set('chat.ttsReadFailed', '朗读失败');
@@ -107,6 +112,7 @@ function buildZh(): Map<string, string> {
   m.set('settings.capNotification', '通知');
   m.set('settings.capMicrophone', '麦克风 (录音)');
   m.set('settings.capSpeaker', '音箱 (朗读/播放)');
+  m.set('settings.capEmail', '邮件 (发送)');
   m.set('settings.about', '关于');
   m.set('settings.app', '应用');
   m.set('settings.appValue', 'ClawdBot for HarmonyOS');
@@ -134,6 +140,8 @@ function buildZh(): Map<string, string> {
   m.set('log.exported', '已导出到文件');
   m.set('log.exportFail', '导出失败');
   m.set('log.recording', '记录中');
+  m.set('log.readMore', '展开');
+  m.set('log.showLess', '收起');
   m.set('log.filePath', '文件路径');
 
   // LoginPage
@@ -206,6 +214,11 @@ function buildEn(): Map<string, string> {
   m.set('chat.playingAudio', 'Playing audio...');
   m.set('chat.audioPlayed', 'Audio played');
   m.set('chat.audioFailed', 'Audio playback failed');
+  m.set('chat.audioReady', 'Tap to play recording');
+  m.set('chat.audioPlaying', 'Playing...');
+  m.set('chat.recording', 'Recording...');
+  m.set('chat.speechError', 'Speech recognition failed');
+  m.set('chat.rateLimited', 'Free model rate limited. Please retry shortly.\n\nFor stable service, register your own API Key:\n\n📝 OpenRouter Registration:\n1. Go to openrouter.ai and sign up\n2. Register with Google or email\n3. After sign-up, go to openrouter.ai/settings/keys\n4. Click "Create Key" to generate a new key\n5. Copy the key, then open Settings in this app\n6. Select "OpenRouter" as AI Provider\n7. Paste the key into the "API Key" field\n\n💡 OpenRouter offers free and paid models. After registration you get higher free limits, and can top up to use premium models like GPT-4o, Claude, etc.');
   m.set('chat.ttsReading', '🔊 Reading aloud...');
   m.set('chat.ttsReadDone', '🔊 Read aloud');
   m.set('chat.ttsReadFailed', 'TTS read failed');
@@ -282,6 +295,7 @@ function buildEn(): Map<string, string> {
   m.set('settings.capNotification', 'Notifications');
   m.set('settings.capMicrophone', 'Microphone (Record)');
   m.set('settings.capSpeaker', 'Speaker (TTS/Playback)');
+  m.set('settings.capEmail', 'Email (Send)');
   m.set('settings.about', 'ABOUT');
   m.set('settings.app', 'App');
   m.set('settings.appValue', 'ClawdBot for HarmonyOS');
@@ -309,6 +323,8 @@ function buildEn(): Map<string, string> {
   m.set('log.exported', 'Exported to file');
   m.set('log.exportFail', 'Export failed');
   m.set('log.recording', 'Recording');
+  m.set('log.readMore', 'Read more');
+  m.set('log.showLess', 'Show less');
   m.set('log.filePath', 'File path');
 
   // LoginPage

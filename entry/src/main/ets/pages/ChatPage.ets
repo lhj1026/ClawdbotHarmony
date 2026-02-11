@@ -1,5 +1,5 @@
 import { preferences } from '@kit.ArkData';
-import { common } from '@kit.AbilityKit';
+import { common, abilityAccessCtrl } from '@kit.AbilityKit';
 import { MessageBubble } from '../components/MessageBubble';
 import { ChatMessage, SettingsData, MemoryItem } from '../model/Models';
 import { AIService, AIResult } from '../service/AIService';
@@ -11,6 +11,8 @@ import { ConnectionState, GatewayChatEvent } from '../service/gateway/GatewayMod
 import { NotificationInfo } from '../service/gateway/NotificationCapability';
 import { LogService } from '../common/LogService';
 import { I18n } from '../common/I18n';
+import { speechRecognizer } from '@kit.CoreSpeechKit';
+import { audio } from '@kit.AudioKit';
 
 @Component
 export struct ChatPage {
@@ -21,7 +23,13 @@ export struct ChatPage {
   @State @Watch('onLangChange') lang: string = 'zh';
   @State ttsAutoRead: boolean = false;
   @State dotPhase: number = 0;
+  @State isRecording: boolean = false;
   private dotTimer: number = -1;
+  private asrEngine: speechRecognizer.SpeechRecognitionEngine | undefined = undefined;
+  private asrSessionId: string = '';
+  private asrBaseText: string = '';
+  private audioCapturer: audio.AudioCapturer | undefined = undefined;
+  private asrReading: boolean = false;
 
   private scroller: Scroller = new Scroller();
   private ai: AIService = AIService.getInstance();
@@ -31,6 +39,7 @@ export struct ChatPage {
   private chatListener: ((event: GatewayChatEvent) => void) | undefined = undefined;
   private notifListener: ((info: NotificationInfo) => void) | undefined = undefined;
   private langListener: (() => void) | undefined = undefined;
+  private mediaListener: ((type: string, path: string) => void) | undefined = undefined;
   // Track the current gateway chat run
   private gwRunId: string = '';
   private gwAssistantMsgId: string = '';
@@ -63,6 +72,11 @@ export struct ChatPage {
       this.handleNotificationInChat(info);
     };
     NodeRuntime.getInstance().addNotificationListener(this.notifListener);
+    // Register media listener for audio/photo captured via gateway
+    this.mediaListener = (type: string, path: string) => {
+      this.handleMediaCaptured(type, path);
+    };
+    NodeRuntime.getInstance().addMediaListener(this.mediaListener);
     this.lang = I18n.lang;
     this.langListener = () => { this.lang = I18n.lang; };
     I18n.addListener(this.langListener);
@@ -81,11 +95,17 @@ export struct ChatPage {
       NodeRuntime.getInstance().removeNotificationListener(this.notifListener);
       this.notifListener = undefined;
     }
+    if (this.mediaListener) {
+      NodeRuntime.getInstance().removeMediaListener(this.mediaListener);
+      this.mediaListener = undefined;
+    }
     if (this.langListener) {
       I18n.removeListener(this.langListener);
       this.langListener = undefined;
     }
     this.stopDotAnimation();
+    this.asrReading = false;
+    this.cleanupAsr();
   }
 
   onLangChange(): void {
@@ -141,6 +161,10 @@ export struct ChatPage {
             this.ttsAutoRead = !this.ttsAutoRead;
             this.saveTtsAutoReadSetting();
             this.log.info('ChatPage', `TTS auto-read toggled: ${this.ttsAutoRead}`);
+            // Immediately stop any in-progress TTS/audio when muting
+            if (!this.ttsAutoRead) {
+              NodeRuntime.getInstance().stopSpeaker().catch(() => { /* ignore */ });
+            }
           })
 
         // clear button
@@ -166,8 +190,8 @@ export struct ChatPage {
             }
           }, (msg: ChatMessage): string => msg.id)
 
-          // loading indicator — only for local AI mode (gateway mode uses a placeholder message)
-          if (this.isLoading && this.gwAssistantMsgId.length === 0) {
+          // loading indicator — animated dots while waiting for response
+          if (this.isLoading) {
             ListItem() {
               Row() {
                 Text('C')
@@ -195,7 +219,7 @@ export struct ChatPage {
                 .backgroundColor('#F0F0F0')
                 .borderRadius(16)
               }
-              .padding({ left: 16, right: 16, top: 4, bottom: 4 })
+              .padding({ left: 16, right: 20, top: 4, bottom: 4 })
             }
           }
         }
@@ -206,7 +230,18 @@ export struct ChatPage {
 
       // -- input bar --
       Row({ space: 8 }) {
-        TextInput({ text: this.inputText, placeholder: I18n.t('chat.placeholder') })
+        // Mic button for voice input
+        Button() {
+          Text('\uD83C\uDFA4').fontSize(18)
+        }
+        .width(42)
+        .height(42)
+        .borderRadius(21)
+        .backgroundColor(this.isRecording ? '#F44336' : '#F0F0F0')
+        .onClick(() => { this.toggleRecording(); })
+
+        TextInput({ text: this.inputText,
+          placeholder: this.isRecording ? I18n.t('chat.recording') : I18n.t('chat.placeholder') })
           .layoutWeight(1)
           .height(42)
           .borderRadius(21)
@@ -331,7 +366,7 @@ export struct ChatPage {
       // Create placeholder assistant message BEFORE sending RPC
       // to avoid race condition where events arrive before gwRunId is set.
       // The handleGatewayChatEvent will adopt any runId it receives while gwRunId is empty.
-      let assistantMsg = new ChatMessage('assistant', '...');
+      let assistantMsg = new ChatMessage('assistant', '');
       this.gwAssistantMsgId = assistantMsg.id;
       this.gwRunId = ''; // will be set from RPC response or adopted from events
       this.messages.push(assistantMsg);
@@ -392,7 +427,7 @@ export struct ChatPage {
         let idx = this.findGwAssistantIndex();
         if (idx >= 0) {
           let existingText = this.messages[idx].content;
-          if (existingText.length === 0 || existingText === '...') {
+          if (existingText.length === 0 || existingText.length === 0) {
             // No text received at all — show timeout error
             this.messages[idx].content = 'Gateway response timeout';
           } else {
@@ -535,7 +570,7 @@ export struct ChatPage {
       let idx = this.findGwAssistantIndex();
       if (idx >= 0) {
         // If we already have text from deltas, keep it; otherwise show error
-        if (this.messages[idx].content.length === 0 || this.messages[idx].content === '...') {
+        if (this.messages[idx].content.length === 0 || this.messages[idx].content.length === 0) {
           this.messages[idx].content = `Gateway: ${errText}`;
         }
       }
@@ -565,7 +600,7 @@ export struct ChatPage {
         if (this.gwAssistantMsgId.length > 0) {
           this.log.info('ChatPage', 'Timeout waiting for agent events after empty final');
           let idx = this.findGwAssistantIndex();
-          if (idx >= 0 && (this.messages[idx].content === '...' || this.messages[idx].content.length === 0)) {
+          if (idx >= 0 && (this.messages[idx].content.length === 0 || this.messages[idx].content.length === 0)) {
             this.messages[idx].content = 'No response received';
           }
           this.doCleanupGatewayChat();
@@ -692,6 +727,23 @@ export struct ChatPage {
   }
 
   /** Handle a gateway notification and display it as a chat message. */
+  /** Handle media files captured via gateway (audio recordings, photos). */
+  private handleMediaCaptured(type: string, path: string): void {
+    this.log.info('ChatPage', `Media captured: type=${type} path=${path}`);
+    // Insert a tool-result message with the media file for playback/display
+    let msg = new ChatMessage('tool', `{"note":"${type} captured","path":"${path}"}`);
+    msg.toolName = type === 'audio' ? 'record_audio' : 'capture_photo';
+    msg.toolOutput = msg.content;
+    if (type === 'audio') {
+      msg.audioPath = path;
+    } else if (type === 'photo') {
+      msg.imagePath = path;
+    }
+    this.messages.push(msg);
+    this.scrollToEnd();
+    this.saveHistory();
+  }
+
   private handleNotificationInChat(info: NotificationInfo): void {
     this.log.info('ChatPage', `Notification received: title="${info.title}" sender="${info.sender}" body="${info.body.substring(0, 80)}"`);
 
@@ -782,6 +834,182 @@ export struct ChatPage {
     this.stopDotAnimation();
   }
 
+  // ---- Voice input (speech-to-text) ----
+
+  private toggleRecording(): void {
+    if (this.isRecording) {
+      this.stopRecording();
+    } else {
+      this.startRecording();
+    }
+  }
+
+  private asrDebug(text: string): void {
+    this.messages.push(new ChatMessage('assistant', '[ASR] ' + text));
+    this.scrollToEnd();
+  }
+
+  private async startRecording(): Promise<void> {
+    this.asrBaseText = this.inputText;
+    this.asrDebug('Starting...');
+
+    try {
+      // Clean up previous
+      await this.cleanupAsr();
+
+      // 1. Request microphone permission at runtime
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let atManager = abilityAccessCtrl.createAtManager();
+      let permResult = await atManager.requestPermissionsFromUser(ctx, ['ohos.permission.MICROPHONE']);
+      if (permResult.authResults[0] !== 0) {
+        this.asrDebug('Mic permission denied');
+        this.isRecording = false;
+        return;
+      }
+
+      // 2. Create AudioCapturer FIRST (before ASR grabs mic)
+      let capturerOptions: audio.AudioCapturerOptions = {
+        streamInfo: {
+          samplingRate: audio.AudioSamplingRate.SAMPLE_RATE_16000,
+          channels: audio.AudioChannel.CHANNEL_1,
+          sampleFormat: audio.AudioSampleFormat.SAMPLE_FORMAT_S16LE,
+          encodingType: audio.AudioEncodingType.ENCODING_TYPE_RAW
+        },
+        capturerInfo: {
+          source: audio.SourceType.SOURCE_TYPE_VOICE_RECOGNITION,
+          capturerFlags: 0
+        }
+      };
+      this.audioCapturer = await audio.createAudioCapturer(capturerOptions);
+      await this.audioCapturer.start();
+      this.asrDebug('Mic captured');
+
+      // 2. Create ASR engine
+      let initParams: speechRecognizer.CreateEngineParams = {
+        language: 'zh-CN',
+        online: 1,
+        extraParams: { locate: 'CN', recognizerMode: 'short' }
+      };
+
+      try {
+        this.asrEngine = await speechRecognizer.createEngine(initParams);
+      } catch (onlineErr) {
+        this.asrDebug('Online failed, trying offline...');
+        let offlineParams: speechRecognizer.CreateEngineParams = {
+          language: 'zh-CN',
+          online: 0,
+          extraParams: { locate: 'CN', recognizerMode: 'short' }
+        };
+        this.asrEngine = await speechRecognizer.createEngine(offlineParams);
+      }
+
+      this.asrSessionId = 'asr_' + Date.now().toString();
+      this.setupAsrListener();
+
+      // 3. Start ASR listening (write mode — we feed audio from capturer)
+      let recognizerParams: speechRecognizer.StartParams = {
+        sessionId: this.asrSessionId,
+        audioInfo: {
+          audioType: 'pcm',
+          sampleRate: 16000,
+          soundChannel: 1,
+          sampleBit: 16
+        },
+        extraParams: { locate: 'CN', recognizerMode: 'short' }
+      };
+      this.asrEngine.startListening(recognizerParams);
+
+      this.isRecording = true;
+      this.asrReading = true;
+      this.asrDebug('Recording...');
+
+      // 4. Read audio data loop and feed to ASR engine
+      this.readAudioLoop();
+
+    } catch (err) {
+      let msg = (err as Error).message ?? String(err);
+      this.asrDebug('FAILED: ' + msg);
+      this.isRecording = false;
+      await this.cleanupAsr();
+    }
+  }
+
+  private async readAudioLoop(): Promise<void> {
+    if (!this.audioCapturer || !this.asrEngine) return;
+    try {
+      let bufSize = await this.audioCapturer.getBufferSize();
+      while (this.asrReading && this.audioCapturer && this.asrEngine) {
+        let buf: ArrayBuffer = await this.audioCapturer.read(bufSize, true);
+        if (buf.byteLength > 0 && this.asrEngine && this.asrSessionId.length > 0) {
+          let uint8 = new Uint8Array(buf);
+          this.asrEngine.writeAudio(this.asrSessionId, uint8);
+        }
+      }
+    } catch (err) {
+      // Reading stopped (expected when stopRecording is called)
+      this.asrDebug('Audio read ended: ' + ((err as Error).message ?? ''));
+    }
+  }
+
+  private setupAsrListener(): void {
+    if (!this.asrEngine) return;
+    let page = this;
+    let listener: speechRecognizer.RecognitionListener = {
+      onStart(sessionId: string, eventMessage: string): void {
+        page.asrDebug('onStart: ' + eventMessage);
+      },
+      onEvent(sessionId: string, eventCode: number, eventMessage: string): void {
+        page.asrDebug('onEvent: code=' + eventCode);
+      },
+      onResult(sessionId: string, result: speechRecognizer.SpeechRecognitionResult): void {
+        page.asrDebug('text="' + result.result + '" final=' + result.isFinal);
+        if (result.result.length > 0) {
+          page.inputText = page.asrBaseText + result.result;
+        }
+      },
+      onComplete(sessionId: string, eventMessage: string): void {
+        page.asrDebug('onComplete');
+        page.isRecording = false;
+        page.asrReading = false;
+        page.cleanupAsr();
+      },
+      onError(sessionId: string, errorCode: number, errorMessage: string): void {
+        page.asrDebug('onError: code=' + errorCode + ' ' + errorMessage);
+        page.isRecording = false;
+        page.asrReading = false;
+        page.cleanupAsr();
+      }
+    };
+    this.asrEngine.setListener(listener);
+  }
+
+  private async stopRecording(): Promise<void> {
+    this.asrDebug('Stopping...');
+    this.asrReading = false;
+    if (this.asrEngine && this.asrSessionId.length > 0) {
+      try {
+        this.asrEngine.finish(this.asrSessionId);
+      } catch { /* ignore */ }
+    }
+    this.isRecording = false;
+    // Give engine a moment to process final results before cleanup
+    setTimeout((): void => {
+      this.cleanupAsr();
+    }, 500);
+  }
+
+  private async cleanupAsr(): Promise<void> {
+    if (this.audioCapturer) {
+      try { await this.audioCapturer.stop(); } catch { /* ignore */ }
+      try { await this.audioCapturer.release(); } catch { /* ignore */ }
+      this.audioCapturer = undefined;
+    }
+    if (this.asrEngine) {
+      try { this.asrEngine.shutdown(); } catch { /* ignore */ }
+      this.asrEngine = undefined;
+    }
+  }
+
   private buildSystemPrompt(memItems: MemoryItem[], skills: import('../model/Models').SkillItem[]): string {
     let now = new Date().toISOString();
     let base = `You are ClawdBot, a personal AI assistant running on HarmonyOS.
@@ -803,13 +1031,20 @@ Platform: HarmonyOS
     let modelPref = 'model_' + provider;
     let apiKey = (await store.get(keyPref, '')) as string;
     let baseUrl = (await store.get(urlPref, '')) as string;
+    // Safety: ignore stale cross-provider URLs (e.g. SiliconFlow URL leaking to OpenRouter)
+    if (provider === 'openrouter' && baseUrl.length > 0 && !baseUrl.includes('openrouter')) {
+      baseUrl = '';
+    }
     let defaultModel = provider === 'openrouter' ? Constants.DEFAULT_MODEL_OPENROUTER
       : provider === 'anthropic' ? Constants.DEFAULT_MODEL_ANTHROPIC
         : provider === 'openai' ? Constants.DEFAULT_MODEL_OPENAI : 'llama3';
     let model = (await store.get(modelPref, defaultModel)) as string;
-    // Use built-in OpenRouter key as fallback
+    // Use built-in keys as fallback
     if (apiKey.length === 0 && provider === 'openrouter' && Constants.OPENROUTER_DEFAULT_KEY.length > 0) {
       apiKey = Constants.OPENROUTER_DEFAULT_KEY;
+    }
+    if (apiKey.length === 0 && provider === 'openai' && Constants.SILICONFLOW_DEFAULT_KEY.length > 0) {
+      apiKey = Constants.SILICONFLOW_DEFAULT_KEY;
     }
     return {
       provider: provider,
@@ -839,7 +1074,9 @@ Platform: HarmonyOS
           isToolCall: m.isToolCall,
           toolName: m.toolName,
           toolInput: m.toolInput,
-          toolOutput: m.toolOutput
+          toolOutput: m.toolOutput,
+          imagePath: m.imagePath,
+          audioPath: m.audioPath
         };
         return saved;
       });
@@ -861,6 +1098,8 @@ Platform: HarmonyOS
         msg.toolName = d.toolName ?? '';
         msg.toolInput = d.toolInput ?? '';
         msg.toolOutput = d.toolOutput ?? '';
+        msg.imagePath = d.imagePath ?? '';
+        msg.audioPath = d.audioPath ?? '';
         this.messages.push(msg);
       }
       this.scrollToEnd();
@@ -903,7 +1142,7 @@ Platform: HarmonyOS
    */
   private autoReadAloud(text: string): void {
     if (!this.ttsAutoRead) return;
-    if (text.length === 0 || text === '...') return;
+    if (text.length === 0) return;
 
     // Reload setting in case user changed it mid-session
     this.loadTtsAutoReadSetting();
@@ -1114,4 +1353,6 @@ interface SavedMsg {
   toolName?: string;
   toolInput?: string;
   toolOutput?: string;
+  imagePath?: string;
+  audioPath?: string;
 }

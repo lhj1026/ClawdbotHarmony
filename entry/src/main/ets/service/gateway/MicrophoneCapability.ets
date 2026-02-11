@@ -107,14 +107,11 @@ export class MicrophoneCapability {
       let base64: string = buffer.from(buf).toString('base64');
       this.log.info(TAG, `Audio base64 length: ${base64.length}`);
 
-      // Clean up temp file
-      try { fileIo.unlinkSync(filePath); } catch { /* best effort */ }
-
-      return `{"format":"m4a","base64":${JSON.stringify(base64)},"durationMs":${durationMs},"size":${fileSize}}`;
+      // Keep the file for local playback (ChatPage can show a play button)
+      return `{"format":"m4a","base64":${JSON.stringify(base64)},"durationMs":${durationMs},"size":${fileSize},"filePath":${JSON.stringify(filePath)}}`;
 
     } catch (err) {
       try { fileIo.closeSync(file); } catch (ignored) { /* ignore */ }
-      try { fileIo.unlinkSync(filePath); } catch (ignored) { /* ignore */ }
       throw err as Error;
     }
   }

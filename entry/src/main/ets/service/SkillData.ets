@@ -64,8 +64,8 @@ export function getSkillSystemPrompt(skills: SkillItem[]): string {
 export function getDefaultSkills(): SkillItem[] {
   return [
     new SkillItem('skill_system', 'System Tools',
-      'File access, command execution, and device operations',
-      'automation', true, true, 5),
+      'File access, search, command execution, location, and device operations',
+      'automation', true, true, 7),
     new SkillItem('skill_web', 'Web Search',
       'Search the web and fetch page contents',
       'productivity', true, true, 2),
@@ -77,7 +77,7 @@ export function getDefaultSkills(): SkillItem[] {
       'productivity', true, true, 3),
     new SkillItem('skill_media', 'Media Tools',
       'Capture photos, record audio',
-      'media', false, true, 2),
+      'media', true, true, 2),
   ];
 }
 
@@ -102,7 +102,7 @@ function makeTool(name: string, description: string, schema: JsonSchemaObj): Too
 
 const SKILL_PROMPTS: Map<string, string> = new Map([
   ['skill_system',
-    'You can execute commands and manage files on the device via system tools.'],
+    'You can execute commands, manage files, and get device location via system tools. This is a HarmonyOS device. File paths are sandbox-based — use list_files with empty path first to discover available directories. Do NOT use Linux paths like /home/. You can get the user\'s current GPS location using get_location.'],
   ['skill_web',
     'You can search the web and fetch page contents for up-to-date information.'],
   ['skill_smart_home',
@@ -125,10 +125,17 @@ function buildSystemToolSchemas(): ToolSchema[] {
   writeProps['content'] = { type: 'string', description: 'Content to write' };
 
   let listProps: Record<string, JsonSchemaProperty> = {};
-  listProps['path'] = { type: 'string', description: 'Directory path' };
+  listProps['path'] = { type: 'string', description: 'Directory path. Leave empty to list the app sandbox root directory.' };
+
+  let searchProps: Record<string, JsonSchemaProperty> = {};
+  searchProps['path'] = { type: 'string', description: 'Directory to search in. Defaults to app sandbox filesDir if empty.' };
+  searchProps['pattern'] = { type: 'string', description: 'Filename pattern to match (case-insensitive substring match). e.g. ".txt", "config"' };
+  searchProps['content'] = { type: 'string', description: 'Text content to search inside files (exact match). Only searches files < 256KB.' };
 
   let pickProps: Record<string, JsonSchemaProperty> = {};
   pickProps['purpose'] = { type: 'string', description: 'Brief reason for picking a file (shown to user)' };
+
+  let locationProps: Record<string, JsonSchemaProperty> = {};
 
   return [
     makeTool('execute_command', 'Execute a shell command on the device (sandboxed)',
@@ -137,10 +144,14 @@ function buildSystemToolSchemas(): ToolSchema[] {
       makeSchema(pathProps, ['path'])),
     makeTool('write_file', 'Write text content to a file (sandbox only)',
       makeSchema(writeProps, ['path', 'content'])),
-    makeTool('list_files', 'List files in a directory (sandbox only)',
-      makeSchema(listProps, ['path'])),
+    makeTool('list_files', 'List files in a directory. Defaults to the app sandbox root if path is empty. This is a HarmonyOS device — use sandbox paths returned by this tool, NOT Linux paths.',
+      makeSchema(listProps)),
+    makeTool('search_files', 'Search for files recursively by filename pattern and/or content. Searches up to 5 levels deep, max 50 results. Defaults to app sandbox if path is empty.',
+      makeSchema(searchProps)),
     makeTool('pick_file', 'Open system file picker for user to select a file. Returns the file content. Use this to access files outside the app sandbox.',
       makeSchema(pickProps)),
+    makeTool('get_location', 'Get the device current GPS location (latitude, longitude, accuracy). Use this when the user asks where they are or needs location info.',
+      makeSchema(locationProps)),
   ];
 }
 

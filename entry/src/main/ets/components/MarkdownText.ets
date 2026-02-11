@@ -233,8 +233,7 @@ export struct MarkdownText {
               .fontFamily('monospace')
               .fontColor('#EEFFFF')
               .lineHeight(18)
-              .copyOption(CopyOptions.LocalDevice)
-          }
+                        }
           .scrollable(ScrollDirection.Horizontal)
           .scrollBar(BarState.Off)
           .width('100%')
@@ -257,7 +256,8 @@ export struct MarkdownText {
           .margin({ top: 4, bottom: 2 })
           .width('100%')
           .textAlign(TextAlign.Start)
-        } else if (block.type === 'hr') {
+          .wordBreak(WordBreak.BREAK_ALL)
+                  } else if (block.type === 'hr') {
           Divider().color('#D0D0D0').margin({ top: 6, bottom: 6 })
         } else if (block.type === 'list_item') {
           Row() {
@@ -278,7 +278,8 @@ export struct MarkdownText {
             .fontColor(this.textColor)
             .lineHeight(22)
             .layoutWeight(1)
-          }
+            .wordBreak(WordBreak.BREAK_ALL)
+                      }
           .width('100%')
           .alignItems(VerticalAlign.Top)
         } else {
@@ -297,7 +298,8 @@ export struct MarkdownText {
           .lineHeight(22)
           .width('100%')
           .textAlign(TextAlign.Start)
-        }
+          .wordBreak(WordBreak.BREAK_ALL)
+                  }
       }, (block: MdBlock): string => block.key)
     }
     .alignItems(HorizontalAlign.Start)

@@ -48,6 +48,7 @@ export struct SettingsPage {
   @State capNotification: boolean = true;
   @State capMicrophone: boolean = true;
   @State capSpeaker: boolean = true;
+  @State capEmail: boolean = true;
   @State ttsAutoRead: boolean = false;
 
   private gwListener: ((state: ConnectionState, text: string) => void) | undefined = undefined;
@@ -430,6 +431,7 @@ export struct SettingsPage {
             this.CapToggle(I18n.t('settings.capNotification'), this.capNotification, (v: boolean) => { this.capNotification = v; })
             this.CapToggle(I18n.t('settings.capMicrophone'), this.capMicrophone, (v: boolean) => { this.capMicrophone = v; })
             this.CapToggle(I18n.t('settings.capSpeaker'), this.capSpeaker, (v: boolean) => { this.capSpeaker = v; })
+            this.CapToggle(I18n.t('settings.capEmail'), this.capEmail, (v: boolean) => { this.capEmail = v; })
 
             // TTS auto-read
             Divider().margin({ top: 10, bottom: 10 }).color('#F0F0F0')
@@ -625,7 +627,7 @@ export struct SettingsPage {
     NodeRuntime.getInstance().updateCapabilities(
       this.capLocation, this.capCamera, this.capCanvas,
       this.capScreen, this.capNotification, undefined,
-      this.capMicrophone, this.capSpeaker
+      this.capMicrophone, this.capSpeaker, this.capEmail
     );
     NodeRuntime.getInstance().connect(ctx, endpoint, token, password);
   }
@@ -641,7 +643,11 @@ export struct SettingsPage {
       this.savedModels['anthropic'] = (await store.get('model_anthropic', Constants.DEFAULT_MODEL_ANTHROPIC)) as string;
       this.savedModels['openai'] = (await store.get('model_openai', Constants.DEFAULT_MODEL_OPENAI)) as string;
       this.savedModels['local'] = (await store.get('model_local', 'llama3')) as string;
-      this.savedKeys['openrouter'] = (await store.get('key_openrouter', '')) as string;
+      let orKey = (await store.get('key_openrouter', '')) as string;
+      if (orKey.length === 0 && Constants.OPENROUTER_DEFAULT_KEY.length > 0) {
+        orKey = Constants.OPENROUTER_DEFAULT_KEY;
+      }
+      this.savedKeys['openrouter'] = orKey;
       this.savedKeys['anthropic'] = (await store.get('key_anthropic', '')) as string;
       this.savedKeys['openai'] = (await store.get('key_openai', '')) as string;
       this.savedKeys['local'] = (await store.get('key_local', '')) as string;
@@ -679,6 +685,7 @@ export struct SettingsPage {
       this.capNotification = (await store.get('capNotification', true)) as boolean;
       this.capMicrophone = (await store.get('capMicrophone', true)) as boolean;
       this.capSpeaker = (await store.get('capSpeaker', true)) as boolean;
+      this.capEmail = (await store.get('capEmail', true)) as boolean;
       this.ttsAutoRead = (await store.get('ttsAutoRead', false)) as boolean;
     } catch { /* first launch defaults */ }
   }
@@ -724,6 +731,7 @@ export struct SettingsPage {
       await gwStore.put('capNotification', this.capNotification);
       await gwStore.put('capMicrophone', this.capMicrophone);
       await gwStore.put('capSpeaker', this.capSpeaker);
+      await gwStore.put('capEmail', this.capEmail);
       await gwStore.put('ttsAutoRead', this.ttsAutoRead);
       await gwStore.flush();
 
