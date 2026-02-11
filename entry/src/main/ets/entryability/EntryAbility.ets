@@ -49,8 +49,8 @@ export default class EntryAbility extends UIAbility {
         console.info('[ClawdBot] loadContent succeeded: ' + page);
       });
     }).catch(() => {
-      // Fallback to login page on error
-      windowStage.loadContent('pages/LoginPage', (err) => {
+      // Fallback to main page on error
+      windowStage.loadContent('pages/Index', (err) => {
         if (err) {
           console.error('[ClawdBot] loadContent fallback failed: ' + JSON.stringify(err));
         }
@@ -59,18 +59,9 @@ export default class EntryAbility extends UIAbility {
   }
 
   private async getInitialPage(): Promise<string> {
-    try {
-      let store = await preferences.getPreferences(this.context, Constants.PREFS_LOGIN);
-      let loggedIn = (await store.get('loggedIn', false)) as boolean;
-      if (loggedIn) {
-        console.info('[ClawdBot] User is logged in, loading Index');
-        return 'pages/Index';
-      }
-    } catch (e) {
-      console.warn('[ClawdBot] Failed to check login state: ' + (e as Error).message);
-    }
-    console.info('[ClawdBot] User not logged in, loading LoginPage');
-    return 'pages/LoginPage';
+    // Skip login — go directly to main page
+    console.info('[ClawdBot] Login disabled, loading Index directly');
+    return 'pages/Index';
   }
 
   onWindowStageDestroy(): void {
