@@ -1,6 +1,8 @@
 /**
  * Handles calendar.add commands from the gateway.
- * Adds events with reminders to the system calendar via @kit.CalendarKit.
+ * Uses CalendarManager.editEvent() (API 12+) to open the system calendar UI,
+ * ensuring events are visible in the system Calendar app.
+ * Falls back to programmatic addEvent() on a LOCAL calendar if editEvent fails.
  */
 import { calendarManager } from '@kit.CalendarKit';
 import { abilityAccessCtrl, common } from '@kit.AbilityKit';
@@ -74,11 +76,7 @@ export class CalendarCapability {
 
     this.log.info(TAG, `Adding event: title="${title}" start=${startTime} end=${endTime} reminder=[${reminderTime.join(',')}] loc="${location}"`);
 
-    // Get default calendar
-    let calendar: calendarManager.Calendar = await this.calendarMgr.getCalendar();
-    this.log.info(TAG, 'Got default calendar');
-
-    // Build event
+    // Build event object
     let event: calendarManager.Event = {
       type: calendarManager.EventType.NORMAL,
       startTime: startTime,
@@ -98,11 +96,66 @@ export class CalendarCapability {
       event.reminderTime = reminderTime;
     }
 
-    // Add event to calendar
-    let eventId: number = await calendar.addEvent(event);
-    this.log.info(TAG, `Event added successfully: eventId=${eventId}`);
+    // Strategy 1: Use editEvent() which opens the system calendar creation UI
+    // This guarantees the event appears in the system Calendar app
+    try {
+      this.log.info(TAG, 'Trying editEvent() to open system calendar UI...');
+      let eventId: number = await this.calendarMgr.editEvent(event);
+      this.log.info(TAG, `editEvent() succeeded: eventId=${eventId}`);
+      return `{"ok":true,"eventId":${eventId},"title":${JSON.stringify(title)},"startTime":${startTime},"endTime":${endTime},"method":"editEvent"}`;
+    } catch (editErr) {
+      this.log.warn(TAG, `editEvent() failed: ${(editErr as Error).message ?? ''}, trying programmatic approach...`);
+    }
 
-    return `{"ok":true,"eventId":${eventId},"title":${JSON.stringify(title)},"startTime":${startTime},"endTime":${endTime}}`;
+    // Strategy 2: Find a LOCAL calendar from getAllCalendars()
+    let calendar: calendarManager.Calendar | undefined = undefined;
+    try {
+      let allCalendars: calendarManager.Calendar[] = await this.calendarMgr.getAllCalendars();
+      this.log.info(TAG, `Found ${allCalendars.length} calendars`);
+      for (let i = 0; i < allCalendars.length; i++) {
+        let cal = allCalendars[i];
+        let account: calendarManager.CalendarAccount = cal.getAccount();
+        let config: calendarManager.CalendarConfig = cal.getConfig();
+        this.log.info(TAG, `Calendar[${i}]: id=${cal.id} name="${account.name}" type="${account.type}" display="${account.displayName ?? ''}" reminder=${config.enableReminder ?? false}`);
+        // Prefer LOCAL type calendar
+        if (account.type === calendarManager.CalendarType.LOCAL && !calendar) {
+          calendar = cal;
+          this.log.info(TAG, `Selected LOCAL calendar: id=${cal.id} name="${account.name}"`);
+        }
+      }
+      // If no LOCAL found, use first available
+      if (!calendar && allCalendars.length > 0) {
+        calendar = allCalendars[0];
+        let acc = calendar.getAccount();
+        this.log.info(TAG, `No LOCAL calendar found, using first: id=${calendar.id} name="${acc.name}" type="${acc.type}"`);
+      }
+    } catch (listErr) {
+      this.log.warn(TAG, `getAllCalendars() failed: ${(listErr as Error).message ?? ''}`);
+    }
+
+    // Strategy 3: Fall back to getCalendar() (app default)
+    if (!calendar) {
+      this.log.info(TAG, 'Falling back to getCalendar() (app default)...');
+      calendar = await this.calendarMgr.getCalendar();
+    }
+
+    // Ensure reminders are enabled on the calendar
+    try {
+      let config = calendar.getConfig();
+      if (!config.enableReminder) {
+        this.log.info(TAG, 'Enabling reminders on calendar...');
+        await calendar.setConfig({ enableReminder: true });
+      }
+    } catch (cfgErr) {
+      this.log.warn(TAG, `setConfig failed: ${(cfgErr as Error).message ?? ''}`);
+    }
+
+    // Add event to selected calendar
+    let eventId: number = await calendar.addEvent(event);
+    let account = calendar.getAccount();
+    this.log.info(TAG, `Event added to calendar "${account.name}" (type=${account.type}): eventId=${eventId}`);
+
+    return `{"ok":true,"eventId":${eventId},"title":${JSON.stringify(title)},"startTime":${startTime},"endTime":${endTime},"calendar":"${account.name}","calendarType":"${account.type}","method":"addEvent"}`;
   }
 
   private async requestPermission(): Promise<void> {

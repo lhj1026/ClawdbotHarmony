@@ -132,7 +132,7 @@ struct Index {
         .tabBar(this.TabItem(1, '\uD83D\uDD27', I18n.t('tab.skills')))
 
         TabContent() {
-          MemoryPage()
+          MemoryPage({ isActive: this.currentTab === 2 })
         }
         .tabBar(this.TabItem(2, '\uD83E\uDDE0', I18n.t('tab.memory')))
 

@@ -9,6 +9,9 @@ import { ChatMessage, ApiMessage, ToolSchema, SettingsData } from '../model/Mode
 import { Constants } from '../common/Constants';
 import { LogService } from '../common/LogService';
 import { I18n } from '../common/I18n';
+import { calendarManager } from '@kit.CalendarKit';
+import { CalendarCapability } from './gateway/CalendarCapability';
+import { MemoryService } from './MemoryService';
 
 /**
  * AI interaction service.
@@ -382,6 +385,7 @@ export class AIService {
       }
     }
 
+    this.log.info(this.TAG, `callOpenAI raw response (first 500): ${resp.substring(0, 500)}`);
     let data = JSON.parse(resp) as OpenAIResp;
     if (!data.choices || data.choices.length === 0) {
       throw new Error(`Invalid response: no choices. Raw: ${resp.substring(0, 200)}`);
@@ -390,6 +394,7 @@ export class AIService {
     if (!choice.message) {
       throw new Error(`Invalid response: no message in choice`);
     }
+    this.log.info(this.TAG, `callOpenAI: hasContent=${!!choice.message.content} hasToolCalls=${!!(choice.message.tool_calls && choice.message.tool_calls.length > 0)} contentLen=${(choice.message.content ?? '').length}`);
     if (choice.message.content) {
       // Strip <think>...</think> blocks from thinking models (openrouter/free may route to them)
       let text = choice.message.content;
@@ -418,6 +423,12 @@ export class AIService {
         }
       }
     }
+    // Fallback: some models output tool calls as JSON in text content
+    if (raw.toolCalls.length === 0 && raw.text.length > 0) {
+      this.log.info(this.TAG, `callOpenAI: no tool_calls in response, trying text extraction. text="${raw.text.substring(0, 200)}"`);
+      this.extractToolCallsFromText(raw);
+    }
+    this.log.info(this.TAG, `callOpenAI: final toolCalls=${raw.toolCalls.length} textLen=${raw.text.length}`);
     return raw;
   }
 
@@ -462,6 +473,39 @@ export class AIService {
     return raw;
   }
 
+  // --------- Fallback: extract tool calls from text ---------
+  private extractToolCallsFromText(raw: RawResponse): void {
+    let text = raw.text;
+    // Pattern 1: {"name": "tool_name", "arguments": {...}}
+    // Pattern 2: {"name": "tool_name", "parameters": {...}}
+    let patterns: RegExp[] = [
+      /\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"arguments"\s*:\s*(\{[\s\S]*?\})\s*\}/g,
+      /\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"parameters"\s*:\s*(\{[\s\S]*?\})\s*\}/g,
+    ];
+    for (let re of patterns) {
+      let match: RegExpExecArray | null = re.exec(text);
+      while (match !== null) {
+        let name = match[1];
+        let args = match[2];
+        try {
+          JSON.parse(args); // validate JSON
+          let rtc = new RawToolCall();
+          rtc.id = `fallback_${Date.now()}_${raw.toolCalls.length}`;
+          rtc.name = name;
+          rtc.input = args;
+          raw.toolCalls.push(rtc);
+          this.log.info(this.TAG, `Extracted tool call from text: ${name}`);
+          // Remove the tool call JSON from displayed text
+          raw.text = text.substring(0, match.index).trim() +
+            (match.index + match[0].length < text.length ? '\n' + text.substring(match.index + match[0].length).trim() : '');
+          raw.text = raw.text.trim();
+        } catch { /* invalid JSON, skip */ }
+        match = re.exec(text);
+      }
+      if (raw.toolCalls.length > 0) break;
+    }
+  }
+
   // --------- HTTP helper ---------
   private async httpPost(url: string, body: string,
     headers: Record<string, string>): Promise<string> {
@@ -493,14 +537,6 @@ export class AIService {
     try {
       let input = JSON.parse(inputJson) as Record<string, string>;
       switch (name) {
-        case 'execute_command': {
-          let r: ToolResultObj = {
-            note: 'Sandboxed. Command: ' + (input['command'] ?? ''),
-            stdout: '[command would execute here]',
-            exitCode: 0
-          };
-          return JSON.stringify(r);
-        }
         case 'read_file': {
           let filePath = input['path'] ?? '';
           if (filePath.length === 0) {
@@ -647,12 +683,12 @@ export class AIService {
             return JSON.stringify(r);
           }
           try {
-            // Request file access permissions at runtime
-            let atManager = abilityAccessCtrl.createAtManager();
-            await atManager.requestPermissionsFromUser(context, [
-              'ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY',
-              'ohos.permission.READ_WRITE_DOCUMENTS_DIRECTORY'
-            ]);
+            // // Request file access permissions at runtime
+            // let atManager = abilityAccessCtrl.createAtManager();
+            // await atManager.requestPermissionsFromUser(context, [
+            //   'ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY',
+            //   'ohos.permission.READ_WRITE_DOCUMENTS_DIRECTORY'
+            // ]);
             let options = new picker.DocumentSelectOptions();
             let documentPicker = new picker.DocumentViewPicker(context);
             let uris = await documentPicker.select(options);
@@ -682,12 +718,119 @@ export class AIService {
           }
         }
         case 'web_search': {
-          let r: ToolResultObj = { note: 'Connect a search API', query: input['query'] ?? '' };
-          return JSON.stringify(r);
+          let query = input['query'] ?? '';
+          if (query.length === 0) {
+            let r: ToolResultObj = { error: 'No query provided' };
+            return JSON.stringify(r);
+          }
+          try {
+            let encoded = encodeURIComponent(query);
+            let searchUrl = `https://html.duckduckgo.com/html/?q=${encoded}`;
+            this.log.info(this.TAG, `web_search: query="${query}" url=${searchUrl}`);
+            let req = http.createHttp();
+            let resp = await req.request(searchUrl, {
+              method: http.RequestMethod.GET,
+              header: {
+                'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml',
+                'Accept-Language': 'en-US,en;q=0.9',
+              },
+              expectDataType: http.HttpDataType.STRING,
+              connectTimeout: 10000,
+              readTimeout: 15000
+            });
+            req.destroy();
+            let html = (resp.result as string) ?? '';
+            this.log.info(this.TAG, `web_search: HTTP ${resp.responseCode} htmlLen=${html.length}`);
+            if (html.length < 200) {
+              this.log.warn(this.TAG, `web_search: short response: ${html}`);
+            } else {
+              this.log.info(this.TAG, `web_search: html preview: ${html.substring(0, 300)}`);
+            }
+            // Try multiple extraction strategies
+            let results: string[] = [];
+            let links: string[] = [];
+            // Strategy 1: DuckDuckGo snippet class
+            let re1 = /class="result__snippet"[^>]*>([\s\S]*?)<\/(?:a|span|div)>/g;
+            let m1: RegExpExecArray | null = re1.exec(html);
+            while (m1 !== null && results.length < 5) {
+              let snippet = m1[1].replace(/<[^>]*>/g, '').replace(/&amp;/g, '&')
+                .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+                .replace(/&#x27;/g, "'").replace(/&nbsp;/g, ' ').trim();
+              if (snippet.length > 0) results.push(snippet);
+              m1 = re1.exec(html);
+            }
+            // Strategy 2: result__a links
+            let linkRe = /class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g;
+            let lm: RegExpExecArray | null = linkRe.exec(html);
+            while (lm !== null && links.length < 5) {
+              let title = lm[2].replace(/<[^>]*>/g, '').trim();
+              let href = lm[1];
+              if (title.length > 0) links.push(title + ': ' + href);
+              lm = linkRe.exec(html);
+            }
+            this.log.info(this.TAG, `web_search: strategy1 results=${results.length} links=${links.length}`);
+            // Strategy 3: fallback - extract any text between result divs
+            if (results.length === 0) {
+              let re3 = /class="result[^"]*"[\s\S]*?<a[^>]*href="(https?:\/\/[^"]*)"[^>]*>([\s\S]*?)<\/a>/g;
+              let m3: RegExpExecArray | null = re3.exec(html);
+              while (m3 !== null && links.length < 5) {
+                let title = m3[2].replace(/<[^>]*>/g, '').trim();
+                if (title.length > 0) {
+                  links.push(title + ': ' + m3[1]);
+                }
+                m3 = re3.exec(html);
+              }
+              this.log.info(this.TAG, `web_search: strategy3 fallback links=${links.length}`);
+            }
+            // Strategy 4: last resort - just strip all HTML and return text
+            if (results.length === 0 && links.length === 0) {
+              let plainText = html.replace(/<script[\s\S]*?<\/script>/gi, '')
+                .replace(/<style[\s\S]*?<\/style>/gi, '')
+                .replace(/<[^>]*>/g, ' ')
+                .replace(/\s+/g, ' ').trim();
+              if (plainText.length > 2000) plainText = plainText.substring(0, 2000);
+              this.log.info(this.TAG, `web_search: strategy4 plainText len=${plainText.length}`);
+              results.push(plainText);
+            }
+            return JSON.stringify({ query: query, results: results, links: links });
+          } catch (e) {
+            this.log.error(this.TAG, `web_search error: ${(e as Error).message}`);
+            let r: ToolResultObj = { error: 'Search failed: ' + (e as Error).message, query: query };
+            return JSON.stringify(r);
+          }
         }
         case 'web_fetch': {
-          let r: ToolResultObj = { note: 'URL fetch stub', url: input['url'] ?? '' };
-          return JSON.stringify(r);
+          let url = input['url'] ?? '';
+          if (url.length === 0) {
+            let r: ToolResultObj = { error: 'No URL provided' };
+            return JSON.stringify(r);
+          }
+          try {
+            let req = http.createHttp();
+            let resp = await req.request(url, {
+              method: http.RequestMethod.GET,
+              header: { 'User-Agent': 'Mozilla/5.0' },
+              expectDataType: http.HttpDataType.STRING,
+              connectTimeout: 10000,
+              readTimeout: 15000
+            });
+            req.destroy();
+            let html = (resp.result as string) ?? '';
+            // Strip HTML tags for plain text
+            let text = html.replace(/<script[\s\S]*?<\/script>/gi, '')
+              .replace(/<style[\s\S]*?<\/style>/gi, '')
+              .replace(/<[^>]*>/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim();
+            if (text.length > 8000) {
+              text = text.substring(0, 8000) + '...[truncated]';
+            }
+            return JSON.stringify({ url: url, status: resp.responseCode, content: text });
+          } catch (e) {
+            let r: ToolResultObj = { error: 'Fetch failed: ' + (e as Error).message, url: url };
+            return JSON.stringify(r);
+          }
         }
         case 'list_devices': {
           let d1: DeviceObj = { id: 'light1', name: 'Living Room Light', status: 'on' };
@@ -700,16 +843,125 @@ export class AIService {
           return JSON.stringify(r);
         }
         case 'list_events': {
-          let r: ToolResultObj = { events: [], note: 'Calendar API not connected' };
-          return JSON.stringify(r);
+          if (!context) {
+            let r: ToolResultObj = { error: 'No UI context available for calendar' };
+            return JSON.stringify(r);
+          }
+          try {
+            let atManager = abilityAccessCtrl.createAtManager();
+            await atManager.requestPermissionsFromUser(context,
+              ['ohos.permission.READ_CALENDAR', 'ohos.permission.WRITE_CALENDAR']);
+            let calMgr = calendarManager.getCalendarManager(context);
+            let daysStr = input['days'] ?? '7';
+            let days = parseInt(daysStr) || 7;
+            let now = Date.now();
+            let endTime = now + days * 24 * 60 * 60 * 1000;
+            let filter = calendarManager.EventFilter.filterByTime(now, endTime);
+            this.log.info(this.TAG, `list_events: days=${days} now=${now} end=${endTime}`);
+            // Query ALL calendars, not just the default one
+            interface EventSummary {
+              title: string;
+              start: string;
+              end: string;
+              location: string;
+              description: string;
+            }
+            let summaries: EventSummary[] = [];
+            try {
+              let allCals: calendarManager.Calendar[] = await calMgr.getAllCalendars();
+              this.log.info(this.TAG, `list_events: found ${allCals.length} calendars`);
+              for (let cal of allCals) {
+                let calAccount: calendarManager.CalendarAccount = cal.getAccount();
+                this.log.info(this.TAG, `list_events: querying calendar name=${calAccount.name} type=${calAccount.type}`);
+                let events: calendarManager.Event[] = await cal.getEvents(filter);
+                this.log.info(this.TAG, `list_events: calendar ${calAccount.name} has ${events.length} events`);
+                for (let ev of events) {
+                  if (summaries.length >= 20) break;
+                  let s: EventSummary = {
+                    title: ev.title ?? '',
+                    start: new Date(ev.startTime).toISOString(),
+                    end: new Date(ev.endTime).toISOString(),
+                    location: ev.location?.location ?? '',
+                    description: ev.description ?? ''
+                  };
+                  summaries.push(s);
+                }
+              }
+            } catch (e1) {
+              this.log.warn(this.TAG, `getAllCalendars failed: ${(e1 as Error).message}, trying default calendar`);
+              // Fallback to default calendar
+              let cal = await calMgr.getCalendar();
+              let events: calendarManager.Event[] = await cal.getEvents(filter);
+              this.log.info(this.TAG, `list_events: default calendar has ${events.length} events`);
+              for (let ev of events) {
+                if (summaries.length >= 20) break;
+                let s: EventSummary = {
+                  title: ev.title ?? '',
+                  start: new Date(ev.startTime).toISOString(),
+                  end: new Date(ev.endTime).toISOString(),
+                  location: ev.location?.location ?? '',
+                  description: ev.description ?? ''
+                };
+                summaries.push(s);
+              }
+            }
+            this.log.info(this.TAG, `list_events: returning ${summaries.length} events total`);
+            return JSON.stringify({ days: days, count: summaries.length, events: summaries });
+          } catch (e) {
+            this.log.error(this.TAG, `list_events error: ${(e as Error).message}`);
+            let r: ToolResultObj = { error: 'List events failed: ' + (e as Error).message };
+            return JSON.stringify(r);
+          }
         }
         case 'create_event': {
-          let r: ToolResultObj = { created: true, title: input['title'] ?? '' };
-          return JSON.stringify(r);
+          if (!context) {
+            let r: ToolResultObj = { error: 'No UI context available for calendar' };
+            return JSON.stringify(r);
+          }
+          try {
+            let title = input['title'] ?? '';
+            let startStr = input['start'] ?? '';
+            let endStr = input['end'] ?? '';
+            let startMs = startStr.length > 0 ? new Date(startStr).getTime() : Date.now();
+            let endMs = endStr.length > 0 ? new Date(endStr).getTime() : (startMs + 60 * 60 * 1000);
+            let calCap = new CalendarCapability();
+            calCap.setContext(context);
+            let calParams = JSON.stringify({
+              title: title,
+              startTime: startMs,
+              endTime: endMs,
+              reminderTime: [5]
+            });
+            let calResult = await calCap.execute(calParams);
+            return calResult;
+          } catch (e) {
+            let r: ToolResultObj = { error: 'Calendar create failed: ' + (e as Error).message };
+            return JSON.stringify(r);
+          }
         }
         case 'set_reminder': {
-          let r: ToolResultObj = { set: true, message: input['message'] ?? '' };
-          return JSON.stringify(r);
+          if (!context) {
+            let r: ToolResultObj = { error: 'No UI context available for calendar' };
+            return JSON.stringify(r);
+          }
+          try {
+            let msg = input['message'] ?? '';
+            let timeStr = input['time'] ?? '';
+            let reminderMs = timeStr.length > 0 ? new Date(timeStr).getTime() : (Date.now() + 10 * 60 * 1000);
+            let calCap = new CalendarCapability();
+            calCap.setContext(context);
+            let calParams = JSON.stringify({
+              title: msg,
+              startTime: reminderMs,
+              endTime: reminderMs + 15 * 60 * 1000,
+              reminderTime: [0]
+            });
+            let calResult = await calCap.execute(calParams);
+            return calResult;
+          } catch (e) {
+            let r: ToolResultObj = { error: 'Reminder set failed: ' + (e as Error).message };
+            return JSON.stringify(r);
+          }
         }
         case 'capture_photo': {
           if (!context) {
@@ -855,12 +1107,55 @@ export class AIService {
           }
         }
         case 'save_memory': {
-          let r: ToolResultObj = {
-            saved: true,
-            type: input['mem_type'] ?? 'fact',
-            content: input['content'] ?? ''
-          };
-          return JSON.stringify(r);
+          if (!context) {
+            let r: ToolResultObj = { error: 'No UI context available' };
+            return JSON.stringify(r);
+          }
+          let memType = input['mem_type'] ?? 'fact';
+          let content = input['content'] ?? '';
+          if (content.length === 0) {
+            let r: ToolResultObj = { error: 'No content to save' };
+            return JSON.stringify(r);
+          }
+          try {
+            let memSvc = MemoryService.getInstance();
+            let item = await memSvc.addIfNew(context, memType, content, 0.8);
+            if (item) {
+              return JSON.stringify({ saved: true, id: item.id, type: memType, content: content });
+            } else {
+              return JSON.stringify({ saved: false, note: 'Already exists', type: memType, content: content });
+            }
+          } catch (e) {
+            let r: ToolResultObj = { error: 'Save memory failed: ' + (e as Error).message };
+            return JSON.stringify(r);
+          }
+        }
+        case 'search_memory': {
+          if (!context) {
+            let r: ToolResultObj = { error: 'No UI context available' };
+            return JSON.stringify(r);
+          }
+          let query = input['query'] ?? '';
+          if (query.length === 0) {
+            let r: ToolResultObj = { error: 'No query provided' };
+            return JSON.stringify(r);
+          }
+          try {
+            let memSvc = MemoryService.getInstance();
+            let filterType = input['mem_type'] ?? '';
+            let results = await memSvc.search(context, query, filterType);
+            let items = results.map((m): Record<string, string | number> => {
+              let obj: Record<string, string | number> = {};
+              obj['type'] = m.memType;
+              obj['content'] = m.content;
+              obj['created'] = new Date(m.createdAt).toLocaleDateString();
+              return obj;
+            });
+            return JSON.stringify({ query: query, found: results.length, items: items });
+          } catch (e) {
+            let r: ToolResultObj = { error: 'Search memory failed: ' + (e as Error).message };
+            return JSON.stringify(r);
+          }
         }
         default: {
           let r: ToolResultObj = { error: 'Unknown tool: ' + name };

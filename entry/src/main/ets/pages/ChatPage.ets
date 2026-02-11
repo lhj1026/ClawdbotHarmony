@@ -11,8 +11,10 @@ import { ConnectionState, GatewayChatEvent } from '../service/gateway/GatewayMod
 import { NotificationInfo } from '../service/gateway/NotificationCapability';
 import { LogService } from '../common/LogService';
 import { I18n } from '../common/I18n';
-import { speechRecognizer } from '@kit.CoreSpeechKit';
 import { audio } from '@kit.AudioKit';
+import { fileIo } from '@kit.CoreFileKit';
+import { http } from '@kit.NetworkKit';
+import { util } from '@kit.ArkTS';
 
 @Component
 export struct ChatPage {
@@ -24,12 +26,12 @@ export struct ChatPage {
   @State ttsAutoRead: boolean = false;
   @State dotPhase: number = 0;
   @State isRecording: boolean = false;
+  @State assistantName: string = '';
+  @State assistantAvatar: string = '';
   private dotTimer: number = -1;
-  private asrEngine: speechRecognizer.SpeechRecognitionEngine | undefined = undefined;
-  private asrSessionId: string = '';
-  private asrBaseText: string = '';
   private audioCapturer: audio.AudioCapturer | undefined = undefined;
   private asrReading: boolean = false;
+  private pcmBuffers: ArrayBuffer[] = [];
 
   private scroller: Scroller = new Scroller();
   private ai: AIService = AIService.getInstance();
@@ -40,6 +42,7 @@ export struct ChatPage {
   private notifListener: ((info: NotificationInfo) => void) | undefined = undefined;
   private langListener: (() => void) | undefined = undefined;
   private mediaListener: ((type: string, path: string) => void) | undefined = undefined;
+  private soulText: string = Constants.DEFAULT_SOUL;
   // Track the current gateway chat run
   private gwRunId: string = '';
   private gwAssistantMsgId: string = '';
@@ -52,6 +55,7 @@ export struct ChatPage {
   aboutToAppear(): void {
     this.loadHistory();
     this.loadTtsAutoReadSetting();
+    this.loadAssistantSettings();
     this.gwConnected = NodeRuntime.getInstance().isConnected;
     this.gwListener = (state: ConnectionState, _text: string) => {
       let wasConnected = this.gwConnected;
@@ -116,21 +120,36 @@ export struct ChatPage {
     Column() {
       // -- header --
       Row() {
-        Text('C')
-          .fontSize(16)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(Color.White)
-          .textAlign(TextAlign.Center)
-          .width(34)
-          .height(34)
-          .borderRadius(17)
-          .backgroundColor('#D2691E')
-          .margin({ right: 10 })
-        Column() {
-          Text(I18n.t('chat.title'))
-            .fontSize(18)
+        if (this.assistantAvatar.length > 0) {
+          Image('file://' + this.assistantAvatar)
+            .width(34)
+            .height(34)
+            .borderRadius(17)
+            .objectFit(ImageFit.Cover)
+            .margin({ right: 10 })
+        } else {
+          Text(this.getAssistantInitial())
+            .fontSize(16)
             .fontWeight(FontWeight.Bold)
-            .fontColor('#1A1A1A')
+            .fontColor(Color.White)
+            .textAlign(TextAlign.Center)
+            .width(34)
+            .height(34)
+            .borderRadius(17)
+            .backgroundColor('#D2691E')
+            .margin({ right: 10 })
+        }
+        Column() {
+          Row({ space: 6 }) {
+            Text(this.getAssistantDisplayName())
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#1A1A1A')
+            Text('v2.3')
+              .fontSize(11)
+              .fontColor('#999999')
+              .margin({ top: 4 })
+          }
           Row({ space: 6 }) {
             Text(this.isLoading ? I18n.t('chat.thinking') : I18n.t('chat.online'))
               .fontSize(12)
@@ -186,7 +205,7 @@ export struct ChatPage {
         List({ scroller: this.scroller }) {
           ForEach(this.messages, (msg: ChatMessage) => {
             ListItem() {
-              MessageBubble({ message: msg })
+              MessageBubble({ message: msg, assistantAvatar: this.assistantAvatar, assistantName: this.assistantName })
             }
           }, (msg: ChatMessage): string => msg.id)
 
@@ -194,16 +213,25 @@ export struct ChatPage {
           if (this.isLoading) {
             ListItem() {
               Row() {
-                Text('C')
-                  .fontSize(13)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor(Color.White)
-                  .textAlign(TextAlign.Center)
-                  .width(30)
-                  .height(30)
-                  .borderRadius(15)
-                  .backgroundColor('#D2691E')
-                  .margin({ right: 8 })
+                if (this.assistantAvatar.length > 0) {
+                  Image('file://' + this.assistantAvatar)
+                    .width(30)
+                    .height(30)
+                    .borderRadius(15)
+                    .objectFit(ImageFit.Cover)
+                    .margin({ right: 8 })
+                } else {
+                  Text(this.getAssistantInitial())
+                    .fontSize(13)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor(Color.White)
+                    .textAlign(TextAlign.Center)
+                    .width(30)
+                    .height(30)
+                    .borderRadius(15)
+                    .backgroundColor('#D2691E')
+                    .margin({ right: 8 })
+                }
                 Row({ space: 6 }) {
                   Circle({ width: 8, height: 8 })
                     .fill(this.dotPhase === 0 ? '#D2691E' : '#CCCCCC')
@@ -230,15 +258,24 @@ export struct ChatPage {
 
       // -- input bar --
       Row({ space: 8 }) {
-        // Mic button for voice input
-        Button() {
+        // Mic button for voice input (press & hold)
+        Column() {
           Text('\uD83C\uDFA4').fontSize(18)
         }
         .width(42)
         .height(42)
         .borderRadius(21)
         .backgroundColor(this.isRecording ? '#F44336' : '#F0F0F0')
-        .onClick(() => { this.toggleRecording(); })
+        .justifyContent(FlexAlign.Center)
+        .onTouch((event: TouchEvent) => {
+          if (event.type === TouchType.Down) {
+            this.startRecording();
+          } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+            if (this.isRecording) {
+              this.stopRecording();
+            }
+          }
+        })
 
         TextInput({ text: this.inputText,
           placeholder: this.isRecording ? I18n.t('chat.recording') : I18n.t('chat.placeholder') })
@@ -274,17 +311,25 @@ export struct ChatPage {
   @Builder
   EmptyState() {
     Column({ space: 16 }) {
-      Text('C')
-        .fontSize(44)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(Color.White)
-        .textAlign(TextAlign.Center)
-        .width(88)
-        .height(88)
-        .borderRadius(44)
-        .backgroundColor('#D2691E')
+      if (this.assistantAvatar.length > 0) {
+        Image('file://' + this.assistantAvatar)
+          .width(88)
+          .height(88)
+          .borderRadius(44)
+          .objectFit(ImageFit.Cover)
+      } else {
+        Text(this.getAssistantInitial())
+          .fontSize(44)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Color.White)
+          .textAlign(TextAlign.Center)
+          .width(88)
+          .height(88)
+          .borderRadius(44)
+          .backgroundColor('#D2691E')
+      }
 
-      Text('ClawdBot')
+      Text(this.getAssistantDisplayName())
         .fontSize(24)
         .fontWeight(FontWeight.Bold)
         .fontColor('#1A1A1A')
@@ -323,6 +368,29 @@ export struct ChatPage {
   }
 
   // ============ logic ============
+
+  private getAssistantInitial(): string {
+    if (this.assistantName.length > 0) {
+      return this.assistantName.charAt(0).toUpperCase();
+    }
+    return 'C';
+  }
+
+  private getAssistantDisplayName(): string {
+    if (this.assistantName.length > 0) {
+      return this.assistantName;
+    }
+    return 'ClawdBot';
+  }
+
+  private async loadAssistantSettings(): Promise<void> {
+    try {
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let store = await preferences.getPreferences(ctx, Constants.PREFS_SETTINGS);
+      this.assistantName = (await store.get('assistant_name', '')) as string;
+      this.assistantAvatar = (await store.get('assistant_avatar', '')) as string;
+    } catch { /* defaults */ }
+  }
 
   private async send(): Promise<void> {
     let text = this.inputText.trim();
@@ -834,30 +902,19 @@ export struct ChatPage {
     this.stopDotAnimation();
   }
 
-  // ---- Voice input (speech-to-text) ----
-
-  private toggleRecording(): void {
-    if (this.isRecording) {
-      this.stopRecording();
-    } else {
-      this.startRecording();
-    }
-  }
+  // ---- Voice input (press-and-hold, ASR via API) ----
 
   private asrDebug(text: string): void {
-    this.messages.push(new ChatMessage('assistant', '[ASR] ' + text));
-    this.scrollToEnd();
+    this.log.info('ASR', text);
   }
 
   private async startRecording(): Promise<void> {
-    this.asrBaseText = this.inputText;
+    this.pcmBuffers = [];
     this.asrDebug('Starting...');
 
     try {
-      // Clean up previous
       await this.cleanupAsr();
 
-      // 1. Request microphone permission at runtime
       let ctx = getContext(this) as common.UIAbilityContext;
       let atManager = abilityAccessCtrl.createAtManager();
       let permResult = await atManager.requestPermissionsFromUser(ctx, ['ohos.permission.MICROPHONE']);
@@ -867,7 +924,6 @@ export struct ChatPage {
         return;
       }
 
-      // 2. Create AudioCapturer FIRST (before ASR grabs mic)
       let capturerOptions: audio.AudioCapturerOptions = {
         streamInfo: {
           samplingRate: audio.AudioSamplingRate.SAMPLE_RATE_16000,
@@ -882,120 +938,247 @@ export struct ChatPage {
       };
       this.audioCapturer = await audio.createAudioCapturer(capturerOptions);
       await this.audioCapturer.start();
-      this.asrDebug('Mic captured');
-
-      // 2. Create ASR engine
-      let initParams: speechRecognizer.CreateEngineParams = {
-        language: 'zh-CN',
-        online: 1,
-        extraParams: { locate: 'CN', recognizerMode: 'short' }
-      };
-
-      try {
-        this.asrEngine = await speechRecognizer.createEngine(initParams);
-      } catch (onlineErr) {
-        this.asrDebug('Online failed, trying offline...');
-        let offlineParams: speechRecognizer.CreateEngineParams = {
-          language: 'zh-CN',
-          online: 0,
-          extraParams: { locate: 'CN', recognizerMode: 'short' }
-        };
-        this.asrEngine = await speechRecognizer.createEngine(offlineParams);
-      }
-
-      this.asrSessionId = 'asr_' + Date.now().toString();
-      this.setupAsrListener();
-
-      // 3. Start ASR listening (write mode — we feed audio from capturer)
-      let recognizerParams: speechRecognizer.StartParams = {
-        sessionId: this.asrSessionId,
-        audioInfo: {
-          audioType: 'pcm',
-          sampleRate: 16000,
-          soundChannel: 1,
-          sampleBit: 16
-        },
-        extraParams: { locate: 'CN', recognizerMode: 'short' }
-      };
-      this.asrEngine.startListening(recognizerParams);
 
       this.isRecording = true;
       this.asrReading = true;
       this.asrDebug('Recording...');
-
-      // 4. Read audio data loop and feed to ASR engine
       this.readAudioLoop();
 
     } catch (err) {
-      let msg = (err as Error).message ?? String(err);
-      this.asrDebug('FAILED: ' + msg);
+      this.asrDebug('FAILED: ' + ((err as Error).message ?? String(err)));
       this.isRecording = false;
       await this.cleanupAsr();
     }
   }
 
   private async readAudioLoop(): Promise<void> {
-    if (!this.audioCapturer || !this.asrEngine) return;
+    if (!this.audioCapturer) return;
     try {
       let bufSize = await this.audioCapturer.getBufferSize();
-      while (this.asrReading && this.audioCapturer && this.asrEngine) {
+      while (this.asrReading && this.audioCapturer) {
         let buf: ArrayBuffer = await this.audioCapturer.read(bufSize, true);
-        if (buf.byteLength > 0 && this.asrEngine && this.asrSessionId.length > 0) {
-          let uint8 = new Uint8Array(buf);
-          this.asrEngine.writeAudio(this.asrSessionId, uint8);
+        if (buf.byteLength > 0) {
+          this.pcmBuffers.push(buf.slice(0));
         }
       }
     } catch (err) {
-      // Reading stopped (expected when stopRecording is called)
       this.asrDebug('Audio read ended: ' + ((err as Error).message ?? ''));
     }
-  }
-
-  private setupAsrListener(): void {
-    if (!this.asrEngine) return;
-    let page = this;
-    let listener: speechRecognizer.RecognitionListener = {
-      onStart(sessionId: string, eventMessage: string): void {
-        page.asrDebug('onStart: ' + eventMessage);
-      },
-      onEvent(sessionId: string, eventCode: number, eventMessage: string): void {
-        page.asrDebug('onEvent: code=' + eventCode);
-      },
-      onResult(sessionId: string, result: speechRecognizer.SpeechRecognitionResult): void {
-        page.asrDebug('text="' + result.result + '" final=' + result.isFinal);
-        if (result.result.length > 0) {
-          page.inputText = page.asrBaseText + result.result;
-        }
-      },
-      onComplete(sessionId: string, eventMessage: string): void {
-        page.asrDebug('onComplete');
-        page.isRecording = false;
-        page.asrReading = false;
-        page.cleanupAsr();
-      },
-      onError(sessionId: string, errorCode: number, errorMessage: string): void {
-        page.asrDebug('onError: code=' + errorCode + ' ' + errorMessage);
-        page.isRecording = false;
-        page.asrReading = false;
-        page.cleanupAsr();
-      }
-    };
-    this.asrEngine.setListener(listener);
   }
 
   private async stopRecording(): Promise<void> {
     this.asrDebug('Stopping...');
     this.asrReading = false;
-    if (this.asrEngine && this.asrSessionId.length > 0) {
-      try {
-        this.asrEngine.finish(this.asrSessionId);
-      } catch { /* ignore */ }
-    }
     this.isRecording = false;
-    // Give engine a moment to process final results before cleanup
-    setTimeout((): void => {
-      this.cleanupAsr();
-    }, 500);
+
+    if (this.audioCapturer) {
+      try { await this.audioCapturer.stop(); } catch { /* ignore */ }
+    }
+
+    let wavPath = this.saveWavFile(this.pcmBuffers);
+    this.pcmBuffers = [];
+
+    if (wavPath.length === 0) {
+      this.asrDebug('No audio data');
+      await this.cleanupAsr();
+      return;
+    }
+
+    try {
+      let stat = fileIo.statSync(wavPath);
+      if (stat.size < 16044) {
+        this.asrDebug('Too short, discarding');
+        try { fileIo.unlinkSync(wavPath); } catch { /* ignore */ }
+        await this.cleanupAsr();
+        return;
+      }
+    } catch { /* ignore */ }
+
+    await this.cleanupAsr();
+
+    // Call ASR API
+    let recognizedText = await this.callAsrApi(wavPath);
+
+    let displayText = recognizedText.length > 0 ? recognizedText : I18n.t('chat.voiceNoText');
+    let userMsg = new ChatMessage('user', displayText);
+    userMsg.audioPath = wavPath;
+    this.messages.push(userMsg);
+    this.scrollToEnd();
+    this.saveHistory();
+
+    if (recognizedText.length > 0) {
+      this.sendVoiceText(recognizedText);
+    }
+  }
+
+  /** Call configured ASR API (Whisper-compatible multipart upload) */
+  private async callAsrApi(wavPath: string): Promise<string> {
+    try {
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let store = await preferences.getPreferences(ctx, Constants.PREFS_SETTINGS);
+      let asrUrl = (await store.get('asr_url', '')) as string;
+      let asrKey = (await store.get('asr_key', '')) as string;
+      let asrModel = (await store.get('asr_model', '')) as string;
+
+      if (asrUrl.length === 0 || asrKey.length === 0) {
+        this.asrDebug('ASR API not configured');
+        return '';
+      }
+
+      // Read WAV file
+      let file = fileIo.openSync(wavPath, fileIo.OpenMode.READ_ONLY);
+      let stat = fileIo.statSync(wavPath);
+      let wavData = new ArrayBuffer(stat.size);
+      fileIo.readSync(file.fd, wavData);
+      fileIo.closeSync(file);
+
+      this.asrDebug(`Sending WAV (${stat.size} bytes) to ${asrUrl}`);
+
+      // Build multipart/form-data
+      let boundary = '----AsrBoundary' + Date.now().toString();
+      let filePart = `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="voice.wav"\r\nContent-Type: audio/wav\r\n\r\n`;
+      let modelPart = asrModel.length > 0
+        ? `\r\n--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\n${asrModel}`
+        : '';
+      let endPart = `\r\n--${boundary}--\r\n`;
+
+      let te = new util.TextEncoder();
+      let filePartBuf = te.encodeInto(filePart);
+      let modelPartBuf = te.encodeInto(modelPart);
+      let endPartBuf = te.encodeInto(endPart);
+
+      let totalLen = filePartBuf.byteLength + wavData.byteLength + modelPartBuf.byteLength + endPartBuf.byteLength;
+      let body = new ArrayBuffer(totalLen);
+      let bodyView = new Uint8Array(body);
+      let pos = 0;
+      bodyView.set(new Uint8Array(filePartBuf.buffer), pos); pos += filePartBuf.byteLength;
+      bodyView.set(new Uint8Array(wavData), pos); pos += wavData.byteLength;
+      bodyView.set(new Uint8Array(modelPartBuf.buffer), pos); pos += modelPartBuf.byteLength;
+      bodyView.set(new Uint8Array(endPartBuf.buffer), pos);
+
+      let httpRequest = http.createHttp();
+      let response = await httpRequest.request(asrUrl, {
+        method: http.RequestMethod.POST,
+        header: {
+          'Authorization': `Bearer ${asrKey}`,
+          'Content-Type': `multipart/form-data; boundary=${boundary}`
+        },
+        extraData: body,
+        connectTimeout: 15000,
+        readTimeout: 30000
+      });
+      httpRequest.destroy();
+
+      if (response.responseCode === 200) {
+        let respStr = response.result as string;
+        this.asrDebug('ASR result: ' + respStr.substring(0, 300));
+        let parsed = JSON.parse(respStr) as Record<string, Object>;
+        let text = (parsed['text'] as string) ?? '';
+        return text.trim();
+      } else {
+        this.asrDebug(`ASR error: ${response.responseCode} ${String(response.result).substring(0, 200)}`);
+        return '';
+      }
+    } catch (err) {
+      this.asrDebug('ASR failed: ' + ((err as Error).message ?? String(err)));
+      return '';
+    }
+  }
+
+  /** Send ASR-recognized text to AI without creating a user message bubble. */
+  private async sendVoiceText(text: string): Promise<void> {
+    if (text.length === 0 || this.isLoading) return;
+
+    this.isLoading = true;
+    this.startDotAnimation();
+
+    try {
+      if (this.gwConnected) {
+        await this.sendViaGateway(text);
+      } else {
+        await this.sendViaLocalAI(text);
+      }
+    } catch (e) {
+      this.messages.push(new ChatMessage('assistant',
+        'Error: ' + ((e as Error).message ?? String(e))));
+    }
+
+    this.isLoading = false;
+    this.stopDotAnimation();
+    this.scrollToEnd();
+    this.saveHistory();
+  }
+
+  private saveWavFile(buffers: ArrayBuffer[]): string {
+    // Calculate total PCM data length
+    let totalPcmLen = 0;
+    for (let b of buffers) {
+      totalPcmLen += b.byteLength;
+    }
+    if (totalPcmLen === 0) return '';
+
+    let sampleRate = 16000;
+    let numChannels = 1;
+    let bitsPerSample = 16;
+    let byteRate = sampleRate * numChannels * bitsPerSample / 8;
+    let blockAlign = numChannels * bitsPerSample / 8;
+    let headerSize = 44;
+    let fileSize = headerSize + totalPcmLen;
+
+    let wavBuffer = new ArrayBuffer(fileSize);
+    let view = new DataView(wavBuffer);
+
+    // RIFF header
+    view.setUint8(0, 0x52);  // R
+    view.setUint8(1, 0x49);  // I
+    view.setUint8(2, 0x46);  // F
+    view.setUint8(3, 0x46);  // F
+    view.setUint32(4, fileSize - 8, true);
+    view.setUint8(8, 0x57);  // W
+    view.setUint8(9, 0x41);  // A
+    view.setUint8(10, 0x56); // V
+    view.setUint8(11, 0x45); // E
+
+    // fmt sub-chunk
+    view.setUint8(12, 0x66); // f
+    view.setUint8(13, 0x6D); // m
+    view.setUint8(14, 0x74); // t
+    view.setUint8(15, 0x20); // (space)
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, byteRate, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, bitsPerSample, true);
+
+    // data sub-chunk
+    view.setUint8(36, 0x64); // d
+    view.setUint8(37, 0x61); // a
+    view.setUint8(38, 0x74); // t
+    view.setUint8(39, 0x61); // a
+    view.setUint32(40, totalPcmLen, true);
+
+    // Copy PCM data after header
+    let dst = new Uint8Array(wavBuffer, headerSize);
+    let offset = 0;
+    for (let b of buffers) {
+      let src = new Uint8Array(b);
+      dst.set(src, offset);
+      offset += src.byteLength;
+    }
+
+    // Write to file
+    let ctx = getContext(this) as common.UIAbilityContext;
+    let voiceDir = ctx.filesDir + '/voice_messages';
+    try { fileIo.mkdirSync(voiceDir); } catch { /* may already exist */ }
+    let filePath = `${voiceDir}/voice_${Date.now()}.wav`;
+    let file = fileIo.openSync(filePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
+    fileIo.writeSync(file.fd, wavBuffer);
+    fileIo.closeSync(file);
+
+    this.asrDebug(`WAV saved: ${filePath} (${fileSize} bytes, ${(totalPcmLen / byteRate).toFixed(1)}s)`);
+    return filePath;
   }
 
   private async cleanupAsr(): Promise<void> {
@@ -1004,18 +1187,44 @@ export struct ChatPage {
       try { await this.audioCapturer.release(); } catch { /* ignore */ }
       this.audioCapturer = undefined;
     }
-    if (this.asrEngine) {
-      try { this.asrEngine.shutdown(); } catch { /* ignore */ }
-      this.asrEngine = undefined;
-    }
   }
 
   private buildSystemPrompt(memItems: MemoryItem[], skills: import('../model/Models').SkillItem[]): string {
-    let now = new Date().toISOString();
+    let d = new Date();
+    let tz = -(d.getTimezoneOffset() / 60);
+    let tzStr = `UTC${tz >= 0 ? '+' : ''}${tz}`;
+    let now = `${d.getFullYear()}-${(d.getMonth()+1).toString().padStart(2,'0')}-${d.getDate().toString().padStart(2,'0')} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}:${d.getSeconds().toString().padStart(2,'0')} ${tzStr}`;
     let base = `You are ClawdBot, a personal AI assistant running on HarmonyOS.
-You are helpful, proactive, and capable of performing real actions through tools.
+
+## Soul
+${this.soulText}
+
+## Capabilities
+You are capable of performing real actions through tools.
+IMPORTANT: When the user asks you to do something, ALWAYS use the appropriate tool to perform the action. Never refuse or guess the outcome — try it first. For example, if asked to run a command, use execute_command; if asked to create a calendar event, use create_event; if asked to take a photo, use capture_photo. The tools are fully functional on this device.
 Current time: ${now}
+Timezone: ${tzStr}
 Platform: HarmonyOS
+
+## Memory System
+You have persistent memory that survives across conversations. Use it proactively:
+
+### When to SAVE memory (use save_memory tool):
+- User shares personal facts: name, birthday, job, family, hobbies, location
+- User states preferences: language, communication style, favorite things
+- User gives instructions: "always do X", "never do Y", "from now on..."
+- Important context worth remembering for future conversations
+
+### When to SEARCH memory (use search_memory tool):
+- Before answering questions that might relate to previously saved information
+- When the user references something from a past conversation
+- When you need to recall user preferences or facts
+
+### Guidelines:
+- Be proactive: if the user says "我叫小明" or "I live in Shanghai", save it without being asked
+- Don't save trivial or temporary information (weather queries, one-time calculations)
+- Categories: fact (personal info), preference (likes/dislikes), instruction (rules)
+- Also include [已记住: <content>] in your response text when saving memory
 `;
     let memBlock = this.memSvc.buildPromptBlock(memItems);
     let skillBlock = getSkillSystemPrompt(skills);
@@ -1046,6 +1255,8 @@ Platform: HarmonyOS
     if (apiKey.length === 0 && provider === 'openai' && Constants.SILICONFLOW_DEFAULT_KEY.length > 0) {
       apiKey = Constants.SILICONFLOW_DEFAULT_KEY;
     }
+    // Load soul
+    this.soulText = (await store.get('soul', Constants.DEFAULT_SOUL)) as string;
     return {
       provider: provider,
       apiKey: apiKey,

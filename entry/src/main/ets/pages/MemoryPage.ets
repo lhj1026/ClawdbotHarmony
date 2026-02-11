@@ -6,6 +6,7 @@ import { I18n } from '../common/I18n';
 
 @Component
 export struct MemoryPage {
+  @Prop @Watch('onTabChange') isActive: boolean = false;
   @State entries: MemoryItem[] = [];
   @State filterType: string = 'all';
   @State showAddPanel: boolean = false;
@@ -22,6 +23,12 @@ export struct MemoryPage {
     this.lang = I18n.lang;
     this.langListener = () => { this.lang = I18n.lang; };
     I18n.addListener(this.langListener);
+  }
+
+  onTabChange(): void {
+    if (this.isActive) {
+      this.reload();
+    }
   }
 
   aboutToDisappear(): void {

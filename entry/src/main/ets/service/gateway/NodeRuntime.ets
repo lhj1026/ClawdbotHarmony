@@ -17,6 +17,7 @@ import { MicrophoneCapability } from './MicrophoneCapability';
 import { SpeakerCapability } from './SpeakerCapability';
 import { EmailCapability } from './EmailCapability';
 import { CalendarCapability } from './CalendarCapability';
+import { ExecCapability } from './ExecCapability';
 import { GatewayProtocol } from './GatewayProtocol';
 import { Capability, Command } from './GatewayProtocol';
 import {
@@ -33,7 +34,7 @@ import { image } from '@kit.ImageKit';
 import { LogService } from '../../common/LogService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '2.2.2';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -57,6 +58,7 @@ export class NodeRuntime {
   private speakerCapability: SpeakerCapability = new SpeakerCapability();
   private emailCapability: EmailCapability = new EmailCapability();
   private calendarCapability: CalendarCapability = new CalendarCapability();
+  private execCapability: ExecCapability = new ExecCapability();
 
   // Capability toggles (default all enabled)
   private _capLocation: boolean = true;
@@ -69,6 +71,7 @@ export class NodeRuntime {
   private _capSpeaker: boolean = true;
   private _capEmail: boolean = true;
   private _capCalendar: boolean = true;
+  private _capExec: boolean = true;
 
   // Observable state
   private _operatorState: ConnectionState = ConnectionState.Disconnected;
@@ -561,6 +564,12 @@ export class NodeRuntime {
           this.log.info(TAG, `calendar.add result: ${result}`);
           return InvokeResult.success(result);
         }
+        case Command.EXEC_RUN: {
+          this.log.info(TAG, 'Executing exec.run capability...');
+          let result = await this.execCapability.execute(paramsJson);
+          this.log.info(TAG, `exec.run result: ${result.substring(0, 200)}`);
+          return InvokeResult.success(result);
+        }
         default:
           this.log.warn(TAG, `Unsupported invoke command: ${command}`);
           return InvokeResult.error('INVALID_REQUEST', `unsupported command: ${command}`);
@@ -908,6 +917,10 @@ export class NodeRuntime {
     if (this._capCalendar) {
       caps.push(Capability.Calendar);
       commands.push(Command.CALENDAR_ADD);
+    }
+    if (this._capExec) {
+      caps.push(Capability.Exec);
+      commands.push(Command.EXEC_RUN);
     }
 
     return {

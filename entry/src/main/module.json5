@@ -72,22 +72,22 @@
           "when": "inuse"
         }
       },
-      {
-        "name": "ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY",
-        "reason": "$string:file_reason",
-        "usedScene": {
-          "abilities": ["EntryAbility"],
-          "when": "inuse"
-        }
-      },
-      {
-        "name": "ohos.permission.READ_WRITE_DOCUMENTS_DIRECTORY",
-        "reason": "$string:file_reason",
-        "usedScene": {
-          "abilities": ["EntryAbility"],
-          "when": "inuse"
-        }
-      },
+      // {
+      //   "name": "ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY",
+      //   "reason": "$string:file_reason",
+      //   "usedScene": {
+      //     "abilities": ["EntryAbility"],
+      //     "when": "inuse"
+      //   }
+      // },
+      // {
+      //   "name": "ohos.permission.READ_WRITE_DOCUMENTS_DIRECTORY",
+      //   "reason": "$string:file_reason",
+      //   "usedScene": {
+      //     "abilities": ["EntryAbility"],
+      //     "when": "inuse"
+      //   }
+      // },
       {
         "name": "ohos.permission.READ_CALENDAR",
         "reason": "$string:calendar_reason",

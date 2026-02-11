@@ -31,21 +31,13 @@ export function getEnabledToolSchemas(skills: SkillItem[]): ToolSchema[] {
       }
     }
   }
-  // always add save_memory
-  let memProps: Record<string, JsonSchemaProperty> = {};
-  memProps['mem_type'] = { type: 'string', description: 'fact | preference | instruction' };
-  memProps['content'] = { type: 'string', description: 'What to remember' };
-  let memSchema: JsonSchemaObj = {
-    type: 'object',
-    properties: memProps,
-    required: ['mem_type', 'content']
-  };
-  let saveMem: ToolSchema = {
-    name: 'save_memory',
-    description: 'Save important information to persistent memory (facts, preferences, instructions)',
-    input_schema: memSchema
-  };
-  schemas.push(saveMem);
+  // always add memory tools
+  let memDefs = TOOL_SCHEMAS.get('skill_memory');
+  if (memDefs) {
+    for (let d of memDefs) {
+      schemas.push(d);
+    }
+  }
   return schemas;
 }
 
@@ -114,9 +106,6 @@ const SKILL_PROMPTS: Map<string, string> = new Map([
 ]);
 
 function buildSystemToolSchemas(): ToolSchema[] {
-  let commandProps: Record<string, JsonSchemaProperty> = {};
-  commandProps['command'] = { type: 'string', description: 'The command to run' };
-
   let pathProps: Record<string, JsonSchemaProperty> = {};
   pathProps['path'] = { type: 'string', description: 'Absolute file path' };
 
@@ -138,8 +127,6 @@ function buildSystemToolSchemas(): ToolSchema[] {
   let locationProps: Record<string, JsonSchemaProperty> = {};
 
   return [
-    makeTool('execute_command', 'Execute a shell command on the device (sandboxed)',
-      makeSchema(commandProps, ['command'])),
     makeTool('read_file', 'Read the text contents of a file (sandbox only)',
       makeSchema(pathProps, ['path'])),
     makeTool('write_file', 'Write text content to a file (sandbox only)',
@@ -218,10 +205,30 @@ function buildMediaToolSchemas(): ToolSchema[] {
   ];
 }
 
+function buildMemoryToolSchemas(): ToolSchema[] {
+  let saveProps: Record<string, JsonSchemaProperty> = {};
+  saveProps['mem_type'] = { type: 'string', description: 'Category: fact | preference | instruction' };
+  saveProps['content'] = { type: 'string', description: 'The information to remember' };
+
+  let searchProps: Record<string, JsonSchemaProperty> = {};
+  searchProps['query'] = { type: 'string', description: 'Search keywords (space-separated, matches any keyword)' };
+  searchProps['mem_type'] = { type: 'string', description: 'Optional filter: fact | preference | instruction' };
+
+  return [
+    makeTool('save_memory',
+      'Save important information to persistent memory. Use this when the user shares personal facts, preferences, or instructions they want you to remember across conversations.',
+      makeSchema(saveProps, ['mem_type', 'content'])),
+    makeTool('search_memory',
+      'Search saved memories by keywords. Use this to recall information about the user before answering questions that might relate to previously saved facts or preferences.',
+      makeSchema(searchProps, ['query'])),
+  ];
+}
+
 const TOOL_SCHEMAS: Map<string, ToolSchema[]> = new Map([
   ['skill_system', buildSystemToolSchemas()],
   ['skill_web', buildWebToolSchemas()],
   ['skill_smart_home', buildSmartHomeToolSchemas()],
   ['skill_calendar', buildCalendarToolSchemas()],
   ['skill_media', buildMediaToolSchemas()],
+  ['skill_memory', buildMemoryToolSchemas()],
 ]);

@@ -1,0 +1,6 @@
+{
+  "name": "libexec",
+  "types": "./index.d.ts",
+  "version": "1.0.0",
+  "description": "Native exec module for shell command execution"
+}

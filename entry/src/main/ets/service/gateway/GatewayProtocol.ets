@@ -19,6 +19,7 @@ export class Capability {
   static readonly Speaker: string = 'speaker';
   static readonly Email: string = 'email';
   static readonly Calendar: string = 'calendar';
+  static readonly Exec: string = 'exec';
 }
 
 export class Command {
@@ -55,4 +56,6 @@ export class Command {
   static readonly EMAIL_SEND: string = 'email.send';
   // Calendar
   static readonly CALENDAR_ADD: string = 'calendar.add';
+  // Exec (shell)
+  static readonly EXEC_RUN: string = 'exec.run';
 }

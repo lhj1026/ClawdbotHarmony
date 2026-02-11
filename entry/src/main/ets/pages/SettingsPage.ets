@@ -1,6 +1,7 @@
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { promptAction, router } from '@kit.ArkUI';
+import { fileIo, picker } from '@kit.CoreFileKit';
 import { Constants } from '../common/Constants';
 import { NodeRuntime } from '../service/gateway/NodeRuntime';
 import { ConnectionState, GatewayEndpoint } from '../service/gateway/GatewayModels';
@@ -29,6 +30,19 @@ export struct SettingsPage {
   };
   @State showKey: boolean = false;
   @State @Watch('onLangChange') lang: string = 'zh';
+
+  // Assistant customization
+  @State assistantName: string = '';
+  @State assistantAvatar: string = '';
+
+  // Soul (personality)
+  @State soul: string = Constants.DEFAULT_SOUL;
+
+  // ASR (Speech-to-Text) settings
+  @State asrApiUrl: string = 'https://api.siliconflow.cn/v1/audio/transcriptions';
+  @State asrApiKey: string = '';
+  @State asrModel: string = 'FunAudioLLM/SenseVoiceSmall';
+  @State showAsrKey: boolean = false;
 
   // Gateway / Node Mode
   @State gwEnabled: boolean = false;
@@ -129,6 +143,57 @@ export struct SettingsPage {
               .borderRadius(8)
               .onClick(() => { this.switchLang('en'); })
           }
+        }
+        .width('100%')
+        .padding(16)
+        .margin({ left: 16, right: 16 })
+        .backgroundColor(Color.White)
+        .borderRadius(12)
+
+        // ---- AI Assistant ----
+        this.SectionTitle(I18n.t('settings.assistant'))
+        Column() {
+          // Avatar preview + change
+          Column({ space: 8 }) {
+            if (this.assistantAvatar.length > 0) {
+              Image('file://' + this.assistantAvatar)
+                .width(72)
+                .height(72)
+                .borderRadius(36)
+                .objectFit(ImageFit.Cover)
+            } else {
+              Text(this.getAssistantInitial())
+                .fontSize(28)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(Color.White)
+                .textAlign(TextAlign.Center)
+                .width(72)
+                .height(72)
+                .borderRadius(36)
+                .backgroundColor('#D2691E')
+            }
+            Text(I18n.t('settings.assistantAvatarChange'))
+              .fontSize(12)
+              .fontColor('#D2691E')
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Center)
+          .padding({ top: 8, bottom: 8 })
+          .onClick(() => { this.pickAvatar(); })
+
+          Divider().margin({ top: 8, bottom: 14 }).color('#F0F0F0')
+
+          // Assistant name
+          Text(I18n.t('settings.assistantName'))
+            .fontSize(14)
+            .fontColor('#1A1A1A')
+            .width('100%')
+          TextInput({ text: this.assistantName, placeholder: I18n.t('settings.assistantNamePlaceholder') })
+            .height(40)
+            .backgroundColor('#F5F5F5')
+            .borderRadius(8)
+            .margin({ top: 6 })
+            .onChange((v: string) => { this.assistantName = v; })
         }
         .width('100%')
         .padding(16)
@@ -270,6 +335,105 @@ export struct SettingsPage {
             .onChange((v: number) => { this.temperature = v / 10; })
             .width('100%')
         }
+        .padding(16)
+        .margin({ left: 16, right: 16 })
+        .backgroundColor(Color.White)
+        .borderRadius(12)
+
+        // ---- Soul / Personality ----
+        this.SectionTitle(I18n.t('settings.soul'))
+        Column() {
+          Text(I18n.t('settings.soulDesc'))
+            .fontSize(11)
+            .fontColor('#999999')
+            .width('100%')
+            .margin({ bottom: 10 })
+
+          TextArea({ text: this.soul, placeholder: 'Enter soul / personality...' })
+            .width('100%')
+            .height(200)
+            .backgroundColor('#F5F5F5')
+            .borderRadius(8)
+            .fontSize(13)
+            .onChange((v: string) => { this.soul = v; })
+
+          Row() {
+            Blank()
+            Text(I18n.t('settings.soulReset'))
+              .fontSize(12)
+              .fontColor('#D2691E')
+              .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+              .borderRadius(6)
+              .borderWidth(1)
+              .borderColor('#D2691E')
+              .margin({ top: 10 })
+              .onClick(() => {
+                this.soul = Constants.DEFAULT_SOUL;
+                promptAction.showToast({ message: I18n.t('settings.soulResetDone'), duration: 1500 });
+              })
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .padding(16)
+        .margin({ left: 16, right: 16 })
+        .backgroundColor(Color.White)
+        .borderRadius(12)
+
+        // ---- ASR (Speech-to-Text) ----
+        this.SectionTitle('ASR')
+        Column() {
+          Text('API URL')
+            .fontSize(14)
+            .fontColor('#1A1A1A')
+            .width('100%')
+          TextInput({ text: this.asrApiUrl, placeholder: 'https://api.openai.com/v1/audio/transcriptions' })
+            .height(40)
+            .backgroundColor('#F5F5F5')
+            .borderRadius(8)
+            .margin({ top: 6 })
+            .onChange((v: string) => { this.asrApiUrl = v; })
+
+          Divider().margin({ top: 14, bottom: 14 }).color('#F0F0F0')
+
+          Text('API Key')
+            .fontSize(14)
+            .fontColor('#1A1A1A')
+            .width('100%')
+          Row() {
+            TextInput({ text: this.asrApiKey, placeholder: 'sk-...' })
+              .layoutWeight(1)
+              .height(40)
+              .backgroundColor('#F5F5F5')
+              .borderRadius(8)
+              .type(this.showAsrKey ? InputType.Normal : InputType.Password)
+              .onChange((v: string) => { this.asrApiKey = v; })
+            Button(this.showAsrKey ? I18n.t('settings.hide') : I18n.t('settings.show'))
+              .fontSize(12)
+              .height(34)
+              .backgroundColor('#F0F0F0')
+              .fontColor('#666666')
+              .borderRadius(8)
+              .margin({ left: 8 })
+              .onClick(() => { this.showAsrKey = !this.showAsrKey; })
+          }
+          .margin({ top: 6 })
+          .width('100%')
+
+          Divider().margin({ top: 14, bottom: 14 }).color('#F0F0F0')
+
+          Text('Model')
+            .fontSize(14)
+            .fontColor('#1A1A1A')
+            .width('100%')
+          TextInput({ text: this.asrModel, placeholder: 'whisper-1' })
+            .height(40)
+            .backgroundColor('#F5F5F5')
+            .borderRadius(8)
+            .margin({ top: 6 })
+            .onChange((v: string) => { this.asrModel = v; })
+        }
+        .width('100%')
         .padding(16)
         .margin({ left: 16, right: 16 })
         .backgroundColor(Color.White)
@@ -589,6 +753,42 @@ export struct SettingsPage {
     return this.gwState === ConnectionState.Connected;
   }
 
+  private getAssistantInitial(): string {
+    if (this.assistantName.length > 0) {
+      return this.assistantName.charAt(0).toUpperCase();
+    }
+    return 'C';
+  }
+
+  private async pickAvatar(): Promise<void> {
+    try {
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let photoPicker = new picker.PhotoViewPicker(ctx);
+      let options = new picker.PhotoSelectOptions();
+      options.MIMEType = picker.PhotoViewMIMETypes.IMAGE_TYPE;
+      options.maxSelectNumber = 1;
+      let result = await photoPicker.select(options);
+      if (result.photoUris.length === 0) return;
+      let srcUri = result.photoUris[0];
+
+      let destPath = ctx.filesDir + '/assistant_avatar.jpg';
+
+      // Copy from picker URI to app sandbox
+      let srcFile = fileIo.openSync(srcUri, fileIo.OpenMode.READ_ONLY);
+      let destFile = fileIo.openSync(destPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      let buf = new ArrayBuffer(4096);
+      let bytesRead = fileIo.readSync(srcFile.fd, buf);
+      while (bytesRead > 0) {
+        fileIo.writeSync(destFile.fd, buf, { length: bytesRead });
+        bytesRead = fileIo.readSync(srcFile.fd, buf);
+      }
+      fileIo.closeSync(srcFile);
+      fileIo.closeSync(destFile);
+
+      this.assistantAvatar = destPath;
+    } catch { /* user cancelled or error */ }
+  }
+
   private switchLang(lang: LangCode): void {
     I18n.setLang(lang);
     this.lang = lang;
@@ -659,6 +859,15 @@ export struct SettingsPage {
       this.model = this.savedModels[this.provider] ?? this.defaultModelFor(this.provider);
       this.apiKey = this.savedKeys[this.provider] ?? '';
       this.baseUrl = this.savedUrls[this.provider] ?? '';
+      // ASR settings
+      this.asrApiUrl = (await store.get('asr_url', 'https://api.siliconflow.cn/v1/audio/transcriptions')) as string;
+      this.asrApiKey = (await store.get('asr_key', '')) as string;
+      this.asrModel = (await store.get('asr_model', 'FunAudioLLM/SenseVoiceSmall')) as string;
+      // Soul
+      this.soul = (await store.get('soul', Constants.DEFAULT_SOUL)) as string;
+      // Assistant customization
+      this.assistantName = (await store.get('assistant_name', '')) as string;
+      this.assistantAvatar = (await store.get('assistant_avatar', '')) as string;
     } catch { /* first launch defaults */ }
   }
 
@@ -713,6 +922,15 @@ export struct SettingsPage {
       await store.put('url_anthropic', this.savedUrls['anthropic'] ?? '');
       await store.put('url_openai', this.savedUrls['openai'] ?? '');
       await store.put('url_local', this.savedUrls['local'] ?? '');
+      // ASR settings
+      await store.put('asr_url', this.asrApiUrl);
+      await store.put('asr_key', this.asrApiKey);
+      await store.put('asr_model', this.asrModel);
+      // Soul
+      await store.put('soul', this.soul);
+      // Assistant customization
+      await store.put('assistant_name', this.assistantName);
+      await store.put('assistant_avatar', this.assistantAvatar);
       await store.flush();
 
       // Save gateway settings

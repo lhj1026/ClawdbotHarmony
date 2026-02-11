@@ -34,6 +34,8 @@ function buildZh(): Map<string, string> {
   m.set('chat.audioReady', '点击播放录音');
   m.set('chat.audioPlaying', '正在播放...');
   m.set('chat.recording', '正在录音...');
+  m.set('chat.voiceMessage', '语音消息');
+  m.set('chat.voiceNoText', '[语音消息]');
   m.set('chat.speechError', '语音识别失败');
   m.set('chat.rateLimited', '免费模型已达到速率限制，请稍后重试。\n\n如需更稳定的服务，请注册自己的 API Key：\n\n📝 OpenRouter 注册步骤：\n1. 打开 openrouter.ai 并点击注册\n2. 使用 Google 账号或邮箱注册\n3. 注册后进入 openrouter.ai/settings/keys\n4. 点击 "Create Key" 创建一个新密钥\n5. 复制密钥，回到本 App 的设置页\n6. 在 "AI 提供商" 选择 OpenRouter\n7. 将密钥粘贴到 "API Key" 输入框\n\n💡 OpenRouter 提供免费和付费模型，注册后免费额度更高，也可按需充值使用 GPT-4o、Claude 等高级模型。');
   m.set('chat.ttsReading', '🔊 正在朗读...');
@@ -73,6 +75,12 @@ function buildZh(): Map<string, string> {
   m.set('memory.clearMessage', '确定要永久删除所有存储的记忆吗？');
   m.set('memory.cancel', '取消');
   m.set('memory.clear', '清除');
+
+  // SettingsPage - Soul
+  m.set('settings.soul', '人格 / Soul');
+  m.set('settings.soulDesc', '定义 AI 助手的行为风格和人格特征，注入 system prompt');
+  m.set('settings.soulReset', '恢复默认');
+  m.set('settings.soulResetDone', '已恢复默认人格');
 
   // SettingsPage
   m.set('settings.title', '设置');
@@ -127,6 +135,13 @@ function buildZh(): Map<string, string> {
   m.set('settings.languageDesc', '界面显示语言');
   m.set('settings.langZh', '中文');
   m.set('settings.langEn', 'English');
+
+  // Settings - Assistant
+  m.set('settings.assistant', 'AI 助手');
+  m.set('settings.assistantName', '助手名字');
+  m.set('settings.assistantNamePlaceholder', '输入助手名字');
+  m.set('settings.assistantAvatar', '头像');
+  m.set('settings.assistantAvatarChange', '点击更换头像');
 
   // LogPage
   m.set('tab.logs', '日志');
@@ -217,6 +232,8 @@ function buildEn(): Map<string, string> {
   m.set('chat.audioReady', 'Tap to play recording');
   m.set('chat.audioPlaying', 'Playing...');
   m.set('chat.recording', 'Recording...');
+  m.set('chat.voiceMessage', 'Voice message');
+  m.set('chat.voiceNoText', '[Voice message]');
   m.set('chat.speechError', 'Speech recognition failed');
   m.set('chat.rateLimited', 'Free model rate limited. Please retry shortly.\n\nFor stable service, register your own API Key:\n\n📝 OpenRouter Registration:\n1. Go to openrouter.ai and sign up\n2. Register with Google or email\n3. After sign-up, go to openrouter.ai/settings/keys\n4. Click "Create Key" to generate a new key\n5. Copy the key, then open Settings in this app\n6. Select "OpenRouter" as AI Provider\n7. Paste the key into the "API Key" field\n\n💡 OpenRouter offers free and paid models. After registration you get higher free limits, and can top up to use premium models like GPT-4o, Claude, etc.');
   m.set('chat.ttsReading', '🔊 Reading aloud...');
@@ -256,6 +273,12 @@ function buildEn(): Map<string, string> {
   m.set('memory.clearMessage', 'Permanently delete all stored memories?');
   m.set('memory.cancel', 'Cancel');
   m.set('memory.clear', 'Clear');
+
+  // SettingsPage - Soul
+  m.set('settings.soul', 'SOUL / PERSONALITY');
+  m.set('settings.soulDesc', 'Define AI behavior style and personality, injected into system prompt');
+  m.set('settings.soulReset', 'Reset to Default');
+  m.set('settings.soulResetDone', 'Soul reset to default');
 
   // SettingsPage
   m.set('settings.title', 'Settings');
@@ -310,6 +333,13 @@ function buildEn(): Map<string, string> {
   m.set('settings.languageDesc', 'Interface display language');
   m.set('settings.langZh', '中文');
   m.set('settings.langEn', 'English');
+
+  // Settings - Assistant
+  m.set('settings.assistant', 'AI ASSISTANT');
+  m.set('settings.assistantName', 'Assistant Name');
+  m.set('settings.assistantNamePlaceholder', 'Enter assistant name');
+  m.set('settings.assistantAvatar', 'Avatar');
+  m.set('settings.assistantAvatarChange', 'Tap to change avatar');
 
   // LogPage
   m.set('tab.logs', 'Logs');

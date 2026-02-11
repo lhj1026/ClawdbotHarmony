@@ -2,14 +2,19 @@ import { ChatMessage } from '../model/Models';
 import { I18n } from '../common/I18n';
 import { MarkdownText } from './MarkdownText';
 import { media } from '@kit.MediaKit';
+import { fileIo } from '@kit.CoreFileKit';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { promptAction } from '@kit.ArkUI';
+import { LogService } from '../common/LogService';
 
 @Component
 export struct MessageBubble {
   @ObjectLink message: ChatMessage;
+  @Prop assistantAvatar: string = '';
+  @Prop assistantName: string = '';
   @State audioPlaying: boolean = false;
   private avPlayer: media.AVPlayer | undefined = undefined;
+  private log: LogService = LogService.getInstance();
 
   build() {
     if (this.message.role === 'user') {
@@ -39,25 +44,84 @@ export struct MessageBubble {
 
       Row() {
         Blank()
-        Text(this.message.content)
-          .fontSize(15)
-          .fontColor(Color.White)
-          .lineHeight(22)
-          .padding(12)
-          .backgroundColor('#D2691E')
-          .borderRadius({
-            topLeft: 16, topRight: 4, bottomLeft: 16, bottomRight: 16
-          })
-          .constraintSize({ maxWidth: '82%' })
-          .copyOption(CopyOptions.LocalDevice)
-          .gesture(LongPressGesture().onAction(() => {
-            this.copyToClipboard(this.message.content);
-          }))
+        Column() {
+          // Voice message: audio indicator + label (tap entire bubble to play)
+          if (this.message.audioPath.length > 0) {
+            Row({ space: 8 }) {
+              // Audio indicator bars
+              Row({ space: 3 }) {
+                ForEach([1, 2, 3, 4, 5], (i: number) => {
+                  Column()
+                    .width(3)
+                    .height(this.audioPlaying ? (8 + (i % 3) * 6) : 10)
+                    .borderRadius(1.5)
+                    .backgroundColor('rgba(255,255,255,0.7)')
+                }, (i: number): string => i.toString())
+              }
+              .height(24)
+              .alignItems(VerticalAlign.Center)
+
+              Text(this.audioPlaying ? I18n.t('chat.audioPlaying') : I18n.t('chat.voiceMessage'))
+                .fontSize(12)
+                .fontColor('rgba(255,255,255,0.8)')
+            }
+            .padding({ left: 12, right: 12, top: 10, bottom: 2 })
+          }
+
+          // Text content (or ASR transcription below voice indicator)
+          if (this.message.content.length > 0) {
+            Text(this.message.content)
+              .fontSize(15)
+              .fontColor(Color.White)
+              .lineHeight(22)
+              .padding(this.message.audioPath.length > 0
+                ? { left: 12, right: 12, top: 2, bottom: 12 }
+                : 12)
+          }
+        }
+        .backgroundColor('#D2691E')
+        .borderRadius({
+          topLeft: 16, topRight: 4, bottomLeft: 16, bottomRight: 16
+        })
+        .constraintSize({ maxWidth: '82%' })
+        .gesture(
+          GestureGroup(GestureMode.Exclusive,
+            LongPressGesture().onAction(() => {
+              this.copyToClipboard(this.message.content);
+            }),
+            TapGesture().onAction(() => {
+              if (this.message.audioPath.length > 0) {
+                this.toggleAudioPlayback();
+              }
+            })
+          )
+        )
       }
       .width('100%')
     }
     .width('100%')
     .padding({ left: 16, right: 20, top: 4, bottom: 4 })
+  }
+
+  @Builder
+  AssistantAvatarIcon(size: number) {
+    if (this.assistantAvatar.length > 0) {
+      Image('file://' + this.assistantAvatar)
+        .width(size)
+        .height(size)
+        .borderRadius(size / 2)
+        .objectFit(ImageFit.Cover)
+    } else {
+      Text(this.getAssistantInitial())
+        .fontSize(size * 0.43)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(Color.White)
+        .textAlign(TextAlign.Center)
+        .width(size)
+        .height(size)
+        .borderRadius(size / 2)
+        .backgroundColor('#D2691E')
+    }
   }
 
   @Builder
@@ -71,16 +135,10 @@ export struct MessageBubble {
         .margin({ bottom: 4 })
 
       Row() {
-        Text('C')
-          .fontSize(13)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(Color.White)
-          .textAlign(TextAlign.Center)
-          .width(30)
-          .height(30)
-          .borderRadius(15)
-          .backgroundColor('#D2691E')
-          .margin({ right: 8, top: 2 })
+        Column() {
+          this.AssistantAvatarIcon(30)
+        }
+        .margin({ right: 8, top: 2 })
 
         Column() {
           MarkdownText({
@@ -90,13 +148,12 @@ export struct MessageBubble {
           })
         }
         .alignItems(HorizontalAlign.Start)
-        .padding({ left: 12, right: 16, top: 12, bottom: 12 })
+        .padding({ left: 14, right: 14, top: 12, bottom: 12 })
         .backgroundColor('#F0F0F0')
         .borderRadius({
           topLeft: 4, topRight: 16, bottomLeft: 16, bottomRight: 16
         })
-        .constraintSize({ maxWidth: '80%' })
-        .clip(true)
+        .layoutWeight(1)
         .gesture(LongPressGesture().onAction(() => {
           this.copyToClipboard(this.message.content);
         }))
@@ -225,6 +282,7 @@ export struct MessageBubble {
   }
 
   private async toggleAudioPlayback(): Promise<void> {
+    this.log.info('AudioPlay', `toggleAudioPlayback called, playing=${this.audioPlaying}, path=${this.message.audioPath}`);
     if (this.audioPlaying) {
       // Stop
       try {
@@ -236,31 +294,59 @@ export struct MessageBubble {
       } catch { /* ignore */ }
       this.audioPlaying = false;
     } else {
-      // Play
+      // Play using fdSrc (HarmonyOS AVPlayer requires fd:// for local files)
       try {
+        let filePath = this.message.audioPath;
+        let stat = fileIo.statSync(filePath);
+        let file = fileIo.openSync(filePath, fileIo.OpenMode.READ_ONLY);
+        this.log.info('AudioPlay', `File opened: fd=${file.fd}, size=${stat.size}`);
+
         let player = await media.createAVPlayer();
         this.avPlayer = player;
+        this.log.info('AudioPlay', 'AVPlayer created');
+
         player.on('stateChange', (state: string) => {
-          if (state === 'completed' || state === 'error' || state === 'stopped') {
-            this.audioPlaying = false;
-            try {
-              player.release();
-            } catch { /* ignore */ }
-            this.avPlayer = undefined;
+          this.log.info('AudioPlay', `stateChange: ${state}`);
+          switch (state) {
+            case 'initialized':
+              player.prepare();
+              break;
+            case 'prepared':
+              player.play();
+              break;
+            case 'completed':
+            case 'stopped':
+            case 'error':
+              this.audioPlaying = false;
+              try { player.release(); } catch { /* ignore */ }
+              try { fileIo.closeSync(file); } catch { /* ignore */ }
+              this.avPlayer = undefined;
+              break;
           }
         });
-        player.url = `file://${this.message.audioPath}`;
-        // AVPlayer auto-prepares when url is set; wait for prepared then play
-        player.on('stateChange', (state: string) => {
-          if (state === 'prepared') {
-            player.play();
-          }
+        player.on('error', (err: Error) => {
+          this.log.error('AudioPlay', `error event: ${err.message ?? 'unknown'}`);
+          this.audioPlaying = false;
+          try { player.release(); } catch { /* ignore */ }
+          try { fileIo.closeSync(file); } catch { /* ignore */ }
+          this.avPlayer = undefined;
         });
+
+        // Use fdSrc to trigger state machine
+        player.fdSrc = { fd: file.fd, offset: 0, length: stat.size };
         this.audioPlaying = true;
-      } catch {
+      } catch (e) {
+        this.log.error('AudioPlay', `Exception: ${(e as Error).message ?? String(e)}`);
         this.audioPlaying = false;
       }
     }
+  }
+
+  private getAssistantInitial(): string {
+    if (this.assistantName.length > 0) {
+      return this.assistantName.charAt(0).toUpperCase();
+    }
+    return 'C';
   }
 
   private copyToClipboard(text: string): void {
