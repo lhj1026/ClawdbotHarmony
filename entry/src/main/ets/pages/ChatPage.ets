@@ -63,6 +63,7 @@ export struct ChatPage {
   private gwIdleTimer: number = -1; // auto-finish after no events for N seconds
   private gwReceivedDelta: boolean = false; // whether we got at least one delta with text
   private gwAccumulatedText: string = ''; // accumulated text from delta events
+  @State gwLastSeq: number = 0;
 
   aboutToAppear(): void {
     this.loadHistory();
@@ -816,71 +817,28 @@ Keep it short but preserve all important information. Use the same language as t
 
   /** Send message through the gateway operator session (chat.send RPC). */
   private async sendViaGateway(text: string): Promise<void> {
+    // 1. 状态准备
+    this.gwAccumulatedText = '';
+    this.gwReceivedDelta = false;
+    this.isLoading = true; // 锁上！
+    this.startDotAnimation();
+
+    // 2. 占坑
+    let assistantMsg = new ChatMessage('assistant', '');
+    this.gwAssistantMsgId = assistantMsg.id;
+    this.messages.push(assistantMsg);
+    this.messages = [...this.messages]; // 立即刷新 UI，确保泡泡显示
+    this.scrollToEnd();
+
     try {
-      this.log.info('ChatPage', `Sending via gateway: ${text.substring(0, 100)}`);
-
-      // Reset state flags
-      this.gwEarlyFinish = false;
-      this.gwReceivedDelta = false;
-      this.gwAccumulatedText = '';
-      if (this.gwIdleTimer >= 0) {
-        clearTimeout(this.gwIdleTimer);
-        this.gwIdleTimer = -1;
-      }
-
-      // Create placeholder assistant message BEFORE sending RPC
-      // to avoid race condition where events arrive before gwRunId is set.
-      // The handleGatewayChatEvent will adopt any runId it receives while gwRunId is empty.
-      let assistantMsg = new ChatMessage('assistant', '');
-      this.gwAssistantMsgId = assistantMsg.id;
-      this.gwRunId = ''; // will be set from RPC response or adopted from events
-      this.messages.push(assistantMsg);
-      this.scrollToEnd();
-
       let runtime = NodeRuntime.getInstance();
+      // 3. 发送（此时 handleGatewayChatEvent 已经准备好接收了）
       let runId = await runtime.sendChatMessage(text);
-      this.log.info('ChatPage', `chat.send returned runId=${runId}, current gwRunId=${this.gwRunId}`);
+      this.gwRunId = runId;
 
-      // Only set gwRunId from RPC if events haven't already set it
-      if (this.gwRunId.length === 0) {
-        this.gwRunId = runId;
-        this.log.info('ChatPage', `Set gwRunId from RPC response: ${runId}`);
-      } else {
-        this.log.info('ChatPage', `gwRunId already adopted from events: ${this.gwRunId} (RPC returned: ${runId})`);
-      }
-
-      // Check if we already received a final/error event while awaiting the RPC
-      if (this.gwEarlyFinish) {
-        this.log.info('ChatPage', `Early finish detected for runId=${this.gwRunId}`);
-        this.gwEarlyFinish = false;
-        this.isLoading = false;
-    this.stopDotAnimation();
-        return;
-      }
-
-      // Wait for final/error event (up to 120 seconds)
-      await this.waitForGatewayChatComplete(this.gwRunId, 120000);
-
+      await this.waitForGatewayChatComplete(runId, 120000);
     } catch (e) {
-      let errMsg = (e as Error).message ?? String(e);
-      this.log.error('ChatPage', `Gateway chat error: ${errMsg}`);
-      // Update placeholder or add new error message
-      let idx = this.findGwAssistantIndex();
-      if (idx >= 0) {
-        this.messages[idx].content = `Gateway error: ${errMsg}`;
-      } else {
-        this.messages.push(new ChatMessage('assistant', `Gateway error: ${errMsg}`));
-      }
-      this.isLoading = false;
-    this.stopDotAnimation();
-      this.gwRunId = '';
-      this.gwAssistantMsgId = '';
-      this.gwReceivedDelta = false;
-      this.gwAccumulatedText = '';
-      if (this.gwIdleTimer >= 0) {
-        clearTimeout(this.gwIdleTimer);
-        this.gwIdleTimer = -1;
-      }
+      this.finishGatewayChat();
     }
   }
 
@@ -928,181 +886,99 @@ Keep it short but preserve all important information. Use the same language as t
 
   /** Handle incoming gateway chat events (delta / final / error / aborted). */
   private handleGatewayChatEvent(event: GatewayChatEvent): void {
-    // Extract text from content blocks
-    let text = '';
+    // 1. 提取文字
+    let incomingText = '';
     if (event.message && event.message.content) {
       for (let block of event.message.content) {
         if (block.type === 'text' && block.text) {
-          text += block.text;
+          incomingText = block.text;
         }
       }
     }
 
-    this.log.info('ChatPage', `gwChatEvent: state=${event.state} runId=${event.runId} myRunId=${this.gwRunId} msgId=${this.gwAssistantMsgId} textLen=${text.length} text(80)="${text.substring(0, 80)}"`);
+    // 2. 状态记录
+    this.log.info('ChatPage', `gwEvent: state=${event.state} runId=${event.runId} textLen=${incomingText.length}`);
 
-    // Accept events if:
-    // 1. We have a pending assistant message (gwAssistantMsgId is set)
-    // 2. AND either: runId matches, OR we haven't locked to a runId yet, OR
-    //    the event carries actual text (agent events may use a different server-generated runId)
-    let isWaiting = this.gwAssistantMsgId.length > 0;
-    let runIdMatch = this.gwRunId.length === 0 || event.runId === this.gwRunId;
-
-    if (!isWaiting) {
-      // Not waiting for any response — ignore
-      this.log.info('ChatPage', `Ignoring chat event: not waiting for response`);
-      return;
-    }
-
-    if (!runIdMatch) {
-      // RunId doesn't match — but if we got an empty final from chat.send's runId,
-      // the real response comes via a different server-side runId (agent stream).
-      // Accept it if we have no accumulated text yet (the real response hasn't started).
-      if (this.gwAccumulatedText.length === 0 && text.length > 0) {
-        this.log.info('ChatPage', `Accepting agent event with different runId (no text yet): event.runId=${event.runId} gwRunId=${this.gwRunId}`);
-        this.gwRunId = event.runId; // Switch to tracking this runId
-      } else if (this.gwAccumulatedText.length === 0 && event.state === 'final') {
-        // Empty final for a different runId — might be a lifecycle end, skip it
-        this.log.info('ChatPage', `Ignoring empty final from different runId: ${event.runId}`);
-        return;
-      } else {
-        this.log.info('ChatPage', `Ignoring chat event: runId mismatch event=${event.runId} my=${this.gwRunId}`);
-        return;
-      }
-    }
-
-    // If we haven't set gwRunId yet, adopt this event's runId
-    if (this.gwRunId.length === 0 && event.runId.length > 0) {
-      this.log.info('ChatPage', `Adopting runId from event: ${event.runId}`);
-      this.gwRunId = event.runId;
-    }
-
-    if (event.state === 'delta') {
-      // Streaming: accumulate text and update the placeholder assistant message
-      if (text.length > 0) {
-        this.gwAccumulatedText += text;
-      }
-      let idx = this.findGwAssistantIndex();
-      if (idx >= 0 && this.gwAccumulatedText.length > 0) {
-        // Mutate the @Observed object directly so @ObjectLink in MessageBubble detects the change
-        this.messages[idx].content = this.gwAccumulatedText;
-        this.scrollToEnd();
+    // 3. 只有在加载中才处理逻辑
+    if (this.isLoading) {
+      // 如果收到了新文字
+      if (incomingText.length > 0) {
         this.gwReceivedDelta = true;
-        this.log.info('ChatPage', `Updated msg idx=${idx} chunkLen=${text.length} totalLen=${this.gwAccumulatedText.length}`);
-      } else {
-        this.log.warn('ChatPage', `Delta but no update: idx=${idx} chunkLen=${text.length} accLen=${this.gwAccumulatedText.length}`);
+
+        // 核心修复：支持增量追加 (Delta) 和全量覆盖 (Full Text) 两种模式
+        // 如果 incomingText 包含了当前已有的全部内容，说明是全量包，直接覆盖
+        if (incomingText.length > this.gwAccumulatedText.length && incomingText.startsWith(this.gwAccumulatedText)) {
+          this.gwAccumulatedText = incomingText;
+        }
+        // 否则默认为增量包，进行追加 (排除重复的前缀)
+        else if (!this.gwAccumulatedText.startsWith(incomingText)) {
+          this.gwAccumulatedText += incomingText;
+        }
+
+        // 更新目标泡泡
+        let idx = -1;
+        for (let i = this.messages.length - 1; i >= 0; i--) {
+          if (this.messages[i].id === this.gwAssistantMsgId) {
+            idx = i;
+            break;
+          }
+        }
+
+        if (idx >= 0) {
+          this.messages[idx].content = this.gwAccumulatedText;
+          // 强制刷新
+          this.messages = [...this.messages];
+          this.scrollToEnd();
+        }
       }
 
-      // Reset idle timer: if no new events for 15 seconds after receiving text, treat as final
-      if (this.gwIdleTimer >= 0) {
-        clearTimeout(this.gwIdleTimer);
-      }
-      if (this.gwReceivedDelta) {
-        this.gwIdleTimer = setTimeout(() => {
-          if (this.gwAssistantMsgId.length > 0) {
-            this.log.info('ChatPage', 'Idle timeout — treating accumulated text as final');
-            this.finishGatewayChat();
-          }
-        }, 15000);
-      }
-    } else if (event.state === 'final') {
-      // Final message: if final event has text, it might be:
-      // 1. The complete accumulated text (use it directly)
-      // 2. A last delta chunk (accumulate it)
-      // We check: if final text is longer than our accumulated text, use it directly.
-      // Otherwise, accumulate it and use the accumulated text.
-      if (text.length > 0) {
-        if (text.length > this.gwAccumulatedText.length) {
-          // Final text is likely the complete response
-          this.gwAccumulatedText = text;
-        } else {
-          // Final text is a last chunk — accumulate
-          this.gwAccumulatedText += text;
+      // 4. 【关键防御逻辑】：判断是否真的结束了
+      // 只有满足以下条件之一，才允许调用 finishGatewayChat：
+      // A. 状态为 final 且没有任何文字（纯信号包）
+      // B. 状态为 error 或 aborted
+      // C. 服务器明确发送了 agent 协议下的 final 信号
+
+      let isError = event.state === 'error' || event.state === 'aborted';
+      let isFinalSignal = event.state === 'final';
+
+      if (isError) {
+        this.log.info('ChatPage', 'Stream stopped due to error signal');
+        this.finishGatewayChat();
+      } else if (isFinalSignal) {
+        // 关键防御：如果当前正在高频吐字（agent包），忽略此时插进来的 chat.final 信号
+        // 我们给它 2 秒的静默期，或者直到收到真正没有文字变化的 final 包
+        if (incomingText.length > 0 && incomingText.length > this.gwAccumulatedText.length) {
+          this.log.info('ChatPage', 'Ignoring premature final signal while text is still growing');
+          return;
         }
+
+        this.log.info('ChatPage', 'Received genuine final signal');
+        this.finishGatewayChat();
       }
-      let idx = this.findGwAssistantIndex();
-      if (idx >= 0) {
-        let finalText = this.gwAccumulatedText.length > 0 ? this.gwAccumulatedText : text;
-        if (finalText.length > 0) {
-          // Mutate the @Observed object directly for proper re-render
-          this.messages[idx].content = finalText;
-        }
-        // If final event has no text and no accumulated text, keep placeholder "..."
-      }
-      this.log.info('ChatPage', `Gateway chat FINAL: chunkLen=${text.length} accLen=${this.gwAccumulatedText.length} text(200)="${this.gwAccumulatedText.substring(0, 200)}"`);
-      this.finishGatewayChat();
-    } else if (event.state === 'error' || event.state === 'aborted') {
-      let errText = event.errorMessage ?? (event.state === 'aborted' ? 'Response aborted' : 'Unknown error');
-      let idx = this.findGwAssistantIndex();
-      if (idx >= 0) {
-        // If we already have text from deltas, keep it; otherwise show error
-        if (this.messages[idx].content.length === 0 || this.messages[idx].content.length === 0) {
-          this.messages[idx].content = `Gateway: ${errText}`;
-        }
-      }
-      this.log.error('ChatPage', `Gateway chat ${event.state}: ${errText}`);
-      this.finishGatewayChat();
     }
   }
 
   /** Clean up state after a gateway chat run completes. */
   private finishGatewayChat(): void {
-    this.log.info('ChatPage', `finishGatewayChat: gwRunId=${this.gwRunId} hadDelta=${this.gwReceivedDelta} accLen=${this.gwAccumulatedText.length}`);
+    if (!this.isLoading) return; // 如果已经结束了，不再重复执行
 
-    let accText = this.gwAccumulatedText;
+    this.log.info('ChatPage', 'Actually finishing gateway chat session');
 
-    // If we received an empty final (no accumulated text and no deltas),
-    // the real response may arrive via a separate agent event stream with a different runId.
-    // Don't clean up yet — wait for agent events to arrive.
-    if (accText.length === 0 && !this.gwReceivedDelta) {
-      this.log.info('ChatPage', 'Empty final received — waiting for agent events (up to 30s)');
-      // Reset gwRunId so we can accept agent events with any runId
-      this.gwRunId = '';
-      // Set a timeout to eventually clean up if nothing arrives
-      if (this.gwIdleTimer >= 0) {
-        clearTimeout(this.gwIdleTimer);
-      }
-      this.gwIdleTimer = setTimeout(() => {
-        if (this.gwAssistantMsgId.length > 0) {
-          this.log.info('ChatPage', 'Timeout waiting for agent events after empty final');
-          let idx = this.findGwAssistantIndex();
-          if (idx >= 0 && (this.messages[idx].content.length === 0 || this.messages[idx].content.length === 0)) {
-            this.messages[idx].content = 'No response received';
-          }
-          this.doCleanupGatewayChat();
-        }
-      }, 30000);
-      // Resolve the wait promise but keep gwAssistantMsgId active
-      if (this.gwChatResolve) {
-        this.gwChatResolve();
-        this.gwChatResolve = undefined;
-      } else {
-        this.gwEarlyFinish = true;
-      }
-      return;
+    this.isLoading = false;
+    this.stopDotAnimation();
+
+    if (this.gwIdleTimer >= 0) {
+      clearTimeout(this.gwIdleTimer);
+      this.gwIdleTimer = -1;
     }
 
-    // Check if the response contains a MEDIA: reference (server-side TTS audio)
-    // The text may contain additional text like "MEDIA:/tmp/tts-xxx/voice.mp3\n\n其他文字"
-    // Use regex to extract the MEDIA path
-    let mediaMatch = /MEDIA:(\/[^\s\n]+\.(?:mp3|m4a|wav|aac|ogg))/i.exec(accText);
-    if (mediaMatch && mediaMatch[1]) {
-      let mediaPath = `MEDIA:${mediaMatch[1]}`;
-      // Extract remaining text (anything after the MEDIA path)
-      let remainingText = accText.replace(mediaMatch[0], '').trim();
-      this.log.info('ChatPage', `Detected MEDIA audio: path=${mediaPath} remaining="${remainingText.substring(0, 100)}"`);
-      this.handleMediaPlayback(mediaPath, remainingText);
-    } else {
-      // Auto-extract memory from both user text and assistant's response in gateway mode
-      if (accText.length > 0) {
-        this.autoExtractMemoryFromGatewayChat(accText);
-      }
-      // Auto-read the response aloud if TTS auto-read is enabled
-      if (accText.length > 0) {
-        this.autoReadAloud(accText);
-      }
-    }
+    // 结束后最后强制同步一次历史记录
+    this.saveHistory().catch(() => {});
 
-    this.doCleanupGatewayChat();
+    if (this.gwChatResolve) {
+      this.gwChatResolve();
+      this.gwChatResolve = undefined;
+    }
   }
 
   /** Actually reset all gateway chat state */

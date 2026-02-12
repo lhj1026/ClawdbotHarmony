@@ -264,6 +264,12 @@ function buildEmailToolSchemas(): ToolSchema[] {
   let searchProps: Record<string, JsonSchemaProperty> = {};
   searchProps['query'] = { type: 'string', description: 'Search keyword (matches subject)' };
 
+
+  let sendProps: Record<string, JsonSchemaProperty> = {};
+  sendProps['to'] = { type: 'string', description: 'Recipient email address' };
+  sendProps['subject'] = { type: 'string', description: 'Email subject' };
+  sendProps['body'] = { type: 'string', description: 'Email body content' };
+
   return [
     makeTool('list_emails', 'List recent emails from the user email inbox (IMAP). Use this when user asks about 邮件/邮箱/email/mail. Returns sender, subject, and date.',
       makeSchema(listProps)),
@@ -271,6 +277,9 @@ function buildEmailToolSchemas(): ToolSchema[] {
       makeSchema(readProps, ['id'])),
     makeTool('search_emails', 'Search emails by subject keyword. Returns matching email summaries.',
       makeSchema(searchProps, ['query'])),
+
+    makeTool('send_email', 'Compose and open the system email app to send an email. Use this when the user wants to send/reply/forward an email.',
+      makeSchema(sendProps, ['to', 'subject', 'body'])),
   ];
 }
 

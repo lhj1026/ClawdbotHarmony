@@ -657,99 +657,61 @@ export class NodeRuntime {
   }
 
   private handleOperatorEvent(event: string, payloadJson: string | undefined): void {
-    this.log.info(TAG, `operator event: "${event}" payloadLen=${payloadJson ? payloadJson.length : 0} payload(500)=${payloadJson ? payloadJson.substring(0, 500) : '(none)'}`);
+    this.log.info(TAG, `operator event: "${event}" payloadLen=${payloadJson ? payloadJson.length : 0}`);
 
     if (!payloadJson) return;
 
     // Handle 'agent' event format (streaming from gateway)
-    // Wire format: { runId, stream, data: { text }, delta, sessionKey, seq, ts }
-    // Or: { runId, stream, text, delta, sessionKey, seq, ts }
-    // delta=true means streaming chunk, delta=false or done=true means final
     if (event === 'agent') {
       try {
         let raw = JSON.parse(payloadJson) as Record<string, Object>;
-
-        // Log the raw keys for debugging
-        let rawKeys = Object.keys(raw);
-        this.log.info(TAG, `agent event keys: [${rawKeys.join(',')}] payload(300): ${payloadJson.substring(0, 300)}`);
-
         let runId: string = (raw['runId'] as string) ?? '';
         let stream: string = (raw['stream'] as string) ?? '';
         let seq: number = (raw['seq'] as number) ?? 0;
         let sessionKey: string = (raw['sessionKey'] as string) ?? '';
 
-        // Extract INCREMENTAL text (delta) from agent events.
-        // Wire format: data.text = accumulated full text, data.delta = incremental chunk.
-        // We use data.delta (incremental) because ChatPage accumulates text on its side.
-        // Fallback order:
-        // 1. data.delta (incremental chunk — preferred)
-        // 2. data.text (accumulated — only if delta not available)
-        // 3. top-level text field
-        // 4. message.content[].text (chat-style message format)
-        // 5. content[].text (direct content blocks)
-        // 6. data (if data is a string directly)
+        // --- 1. 提取文本 (Text Extraction) ---
         let fullText: string = '';
         let dataObj = raw['data'] as Record<string, Object> | undefined;
+
+        // 优先获取 delta (增量文本)，其次是 text (全量文本)
         if (dataObj !== undefined && dataObj !== null) {
           if (typeof dataObj === 'string') {
             fullText = String(dataObj);
           } else if (dataObj['delta'] !== undefined && String(dataObj['delta']).length > 0) {
-            // Prefer incremental delta text — ChatPage accumulates these
             fullText = String(dataObj['delta']);
-          } else if (dataObj['text'] !== undefined) {
-            // Fallback to accumulated text (used for final events that have no delta)
+          } else if (dataObj['text'] !== undefined && String(dataObj['text']).length > 0) {
             fullText = String(dataObj['text']);
           }
         }
-        if (fullText.length === 0 && raw['text'] !== undefined) {
-          fullText = String(raw['text']);
-        }
-        // Try message.content[].text format
+        // 备选路径
+        if (fullText.length === 0 && raw['text'] !== undefined) fullText = String(raw['text']);
+
+        // 解析 message.content 结构
         if (fullText.length === 0 && raw['message'] !== undefined) {
           let msgObj = raw['message'] as Record<string, Object>;
-          if (msgObj !== null && msgObj['content'] !== undefined) {
+          if (msgObj && msgObj['content']) {
             let contentVal = msgObj['content'];
             if (Array.isArray(contentVal)) {
               let arr: Object[] = contentVal as Object[];
               for (let i = 0; i < arr.length; i++) {
-                let block: Record<string, string> = arr[i] as Record<string, string>;
+                let block = arr[i] as Record<string, string>;
                 if (block['type'] === 'text' && block['text']) {
                   fullText += block['text'];
                 }
               }
             } else if (typeof contentVal === 'string') {
-              fullText = contentVal as string;
+              fullText = contentVal;
             }
-          }
-        }
-        // Try top-level content array
-        if (fullText.length === 0 && raw['content'] !== undefined) {
-          let contentVal = raw['content'];
-          if (Array.isArray(contentVal)) {
-            let arr: Object[] = contentVal as Object[];
-            for (let i = 0; i < arr.length; i++) {
-              let block: Record<string, string> = arr[i] as Record<string, string>;
-              if (block['type'] === 'text' && block['text']) {
-                fullText += block['text'];
-              }
-            }
-          } else if (typeof contentVal === 'string') {
-            fullText = contentVal as string;
           }
         }
 
-        // Determine state from multiple signals:
-        // 1. Explicit 'state' field
-        // 2. 'done' boolean field
-        // 3. 'delta' boolean field (delta=false on last chunk means final)
-        // 4. 'type' field (some gateways use type='done')
+        // --- 2. 状态判断 (State Detection) ---
+        // 默认状态为 delta (流式传输中)
         let chatState: string = 'delta';
+        let explicitState: string = String(raw['state'] ?? '');
 
-        let explicitState: string = '';
-        if (raw['state'] !== undefined) {
-          explicitState = String(raw['state']);
-        }
-
+        // 显式结束状态
         if (explicitState === 'final' || explicitState === 'done' || explicitState === 'complete' || explicitState === 'finished') {
           chatState = 'final';
         } else if (explicitState === 'error') {
@@ -758,166 +720,98 @@ export class NodeRuntime {
           chatState = 'aborted';
         }
 
-        // Check 'done' boolean
-        if (chatState === 'delta' && raw['done'] !== undefined) {
-          let doneVal = raw['done'];
-          if (doneVal === true || doneVal as boolean === true || String(doneVal) === 'true') {
+        // 辅助结束条件
+        if (chatState === 'delta') {
+          // done=true 标志
+          if (String(raw['done']) === 'true' || raw['done'] === true) {
+            chatState = 'final';
+          }
+          // stopReason 存在且不为空
+          if (raw['stopReason'] && String(raw['stopReason']).length > 0) {
+            chatState = 'final';
+          }
+          // 生命周期结束信号
+          if (stream === 'lifecycle' && dataObj && dataObj['phase'] === 'end') {
             chatState = 'final';
           }
         }
 
-        // Check 'delta' boolean — delta=false on a non-zero seq means final
-        if (chatState === 'delta' && raw['delta'] !== undefined) {
-          let deltaVal = raw['delta'];
-          if (deltaVal === false || String(deltaVal) === 'false') {
-            chatState = 'final';
-          }
-        }
+        // ⚠️ 关键修改：移除对 delta:false 的激进判断。
+        // 很多时候 delta:false 只是表示这个包是全量的，并不代表流结束。
+        // 我们只依赖明确的 final/done 信号。
 
-        // Check 'type' field
-        if (chatState === 'delta' && raw['type'] !== undefined) {
-          let typeVal = String(raw['type']);
-          if (typeVal === 'done' || typeVal === 'final' || typeVal === 'complete') {
-            chatState = 'final';
-          } else if (typeVal === 'error') {
-            chatState = 'error';
-          }
-        }
-
-        // Check stopReason — if present, this is likely the final event
-        let stopReason: string = '';
-        if (raw['stopReason'] !== undefined) {
-          stopReason = String(raw['stopReason']);
-          if (chatState === 'delta' && stopReason.length > 0) {
-            chatState = 'final';
-          }
-        }
-
-        // Check lifecycle stream: stream=lifecycle, data.phase=end means the run is complete
-        if (chatState === 'delta' && stream === 'lifecycle' && dataObj !== undefined && dataObj !== null) {
-          let phase = dataObj['phase'];
-          if (phase !== undefined && String(phase) === 'end') {
-            chatState = 'final';
-            this.log.info(TAG, `lifecycle phase=end detected, marking as final`);
-          }
-        }
-
-        // Build GatewayChatEvent with text
-        let errorMsg: string | undefined = undefined;
-        if (raw['errorMessage'] !== undefined) {
-          errorMsg = String(raw['errorMessage']);
-        } else if (raw['error'] !== undefined) {
-          errorMsg = String(raw['error']);
-        }
-
-        // Always build the message with content blocks (even if empty)
+        // --- 3. 构建并分发事件 ---
+        let errorMsg: string | undefined = raw['errorMessage'] ? String(raw['errorMessage']) : (raw['error'] ? String(raw['error']) : undefined);
         let blocks: GatewayChatContentBlock[] = [];
         if (fullText.length > 0) {
-          let block: GatewayChatContentBlock = { type: 'text', text: fullText };
-          blocks.push(block);
+          blocks.push({ type: 'text', text: fullText });
         }
-
-        let msgRole: string = stream.length > 0 ? stream : 'assistant';
-        let msgTs: number | undefined = (raw['ts'] as number) ?? undefined;
 
         let chatEvent: GatewayChatEvent = {
           runId: runId,
           sessionKey: sessionKey,
           seq: seq,
           state: chatState,
-          message: { role: msgRole, content: blocks, timestamp: msgTs },
+          message: { role: stream || 'assistant', content: blocks, timestamp: (raw['ts'] as number) },
           errorMessage: errorMsg,
-          stopReason: stopReason.length > 0 ? stopReason : undefined,
         };
 
-        this.log.info(TAG, `agentChat: state=${chatState} runId=${runId} seq=${seq} textLen=${fullText.length} blocks=${blocks.length} text(100)="${fullText.substring(0, 100)}"`);
+        this.log.info(TAG, `agentChat: state=${chatState} seq=${seq} textLen=${fullText.length}`);
 
-        // Track this runId+seq so we can skip duplicate 'chat' events for the same data
-        this._agentActiveRunId = runId;
-        let dedupKey = `${runId}:${seq}`;
-        this._agentProcessedSeqs.add(dedupKey);
-        // Keep set small: clear old entries when final
-        if (chatState === 'final' || chatState === 'error' || chatState === 'aborted') {
-          // Schedule cleanup after a short delay so any lagging chat events still get filtered
-          setTimeout(() => {
-            this._agentProcessedSeqs.clear();
-            this._agentActiveRunId = '';
-          }, 3000);
-        }
+        // ⚠️ 关键修改：移除 agentProcessedSeqs 的去重逻辑！
+        // 允许所有 agent 事件通过，防止因 seq 重复导致丢包。
+        // this._agentProcessedSeqs.add(...)  <-- 删掉
 
         this.dispatchChatEvent(chatEvent);
+
       } catch (err) {
         this.log.error(TAG, `Failed to parse agent event: ${(err as Error).message ?? ''}`);
       }
       return;
     }
 
-    // Handle 'chat' event format (legacy / direct chat.send response)
-    // Skip if we already processed the same runId+seq from 'agent' events (dedup)
+    // Handle 'chat' event format (legacy)
     if (event === 'chat') {
       try {
         let raw = JSON.parse(payloadJson) as Record<string, Object>;
-        let runId: string = (raw['runId'] as string) ?? '';
-        let state: string = (raw['state'] as string) ?? '';
-        let chatSeq: number = (raw['seq'] as number) ?? 0;
+        let runId = (raw['runId'] as string) ?? '';
+        let state = (raw['state'] as string) ?? '';
 
-        // Dedup: if this runId+seq was already handled by an 'agent' event, skip it
-        let dedupKey = `${runId}:${chatSeq}`;
-        if (this._agentProcessedSeqs.has(dedupKey)) {
-          this.log.info(TAG, `chat event SKIPPED (dedup): runId=${runId} seq=${chatSeq} state=${state}`);
-          return;
-        }
-        // Also skip if we have an active agent run for this runId (agent events are preferred)
-        if (this._agentActiveRunId.length > 0 && runId === this._agentActiveRunId) {
-          this.log.info(TAG, `chat event SKIPPED (agent active): runId=${runId} seq=${chatSeq} state=${state}`);
-          return;
-        }
+        // 这里的 Chat 事件可以保留简单的去重，因为它通常不是高频流
 
         let chatEvent: GatewayChatEvent = {
           runId: runId,
           sessionKey: (raw['sessionKey'] as string) ?? '',
-          seq: chatSeq,
+          seq: (raw['seq'] as number) ?? 0,
           state: state,
-          errorMessage: (raw['errorMessage'] as string) ?? undefined,
-          stopReason: (raw['stopReason'] as string) ?? undefined,
+          errorMessage: (raw['errorMessage'] as string),
         };
 
+        // ... (提取 message 内容逻辑保持不变)
         let msgRaw = raw['message'] as Record<string, Object> | undefined;
         if (msgRaw) {
-          let contentRaw: Object = msgRaw['content'];
+          // 简单的文本提取
+          let contentRaw = msgRaw['content'];
           let blocks: GatewayChatContentBlock[] = [];
-          if (Array.isArray(contentRaw)) {
-            let contentArr: Object[] = contentRaw as Object[];
-            for (let i = 0; i < contentArr.length; i++) {
-              let block: Record<string, string> = contentArr[i] as Record<string, string>;
-              let blockText: string = block['text'] ?? '';
-              let b: GatewayChatContentBlock = {
-                type: block['type'] ?? 'text',
-                text: blockText.length > 0 ? blockText : undefined,
-              };
-              blocks.push(b);
-            }
-          } else if (typeof contentRaw === 'string') {
-            let b: GatewayChatContentBlock = { type: 'text', text: contentRaw as string };
-            blocks.push(b);
+          if (typeof contentRaw === 'string') {
+            blocks.push({type: 'text', text: contentRaw});
+          } else if (Array.isArray(contentRaw)) {
+            // 简化处理，直接透传
+            blocks = contentRaw as GatewayChatContentBlock[];
           }
           chatEvent.message = {
             role: (msgRaw['role'] as string) ?? 'assistant',
-            content: blocks,
-            timestamp: (msgRaw['timestamp'] as number) ?? undefined,
+            content: blocks
           };
         }
 
         this.dispatchChatEvent(chatEvent);
       } catch (err) {
-        this.log.error(TAG, `Failed to parse chat event: ${(err as Error).message ?? ''}`);
+        this.log.error(TAG, `Failed to parse chat event: ${(err as Error).message}`);
       }
       return;
     }
-
-    // Other operator events: voice wake, branding, presence, health, etc.
   }
-
   private _displayName: string = '';
 
   private buildClientInfo(clientId: string, clientMode: string): ClientInfo {

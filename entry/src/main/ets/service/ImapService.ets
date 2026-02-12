@@ -109,13 +109,30 @@ export class ImapService {
    * Login with username and password.
    */
   async login(user: string, pass: string): Promise<string> {
+    // 1. 发送 ID 命令 (网易邮箱必须)
+    // 格式: ID ("name" "client_name" "version" "1.0.0")
+    try {
+      let idTag = this.nextTag();
+      let idCmd = `${idTag} ID ("name" "ClawdBot" "version" "1.0.0")\r\n`;
+      await this.sendCommand(idTag, idCmd);
+      this.log.info(this.TAG, 'Sent IMAP ID command');
+    } catch (e) {
+      // 部分服务器不支持 ID 命令，忽略错误继续尝试登录
+      this.log.warn(this.TAG, 'ID command failed/ignored: ' + (e as Error).message);
+    }
+
+    // 2. 发送 LOGIN 命令
     let tag = this.nextTag();
     let cmd = `${tag} LOGIN ${this.quoteStr(user)} ${this.quoteStr(pass)}\r\n`;
     let response = await this.sendCommand(tag, cmd);
     let lastLine = response.length > 0 ? response[response.length - 1] : '';
+
+    // 网易邮箱有时会返回 "Unsafe Login" 作为 LOGIN 的响应，或者在 SELECT 时报错
+    // 如果 LOGIN 这一步就报错：
     if (!lastLine.includes('OK')) {
       throw new Error('Login failed: ' + lastLine);
     }
+
     this.log.info(this.TAG, 'Login successful');
     return lastLine;
   }
