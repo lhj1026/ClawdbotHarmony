@@ -115,17 +115,24 @@ export class EmailCapability {
 
       await this.smtpCommand('DATA', '354');
 
-      // Build email message
+      // Build email message with all required headers
+      let now = new Date();
+      let dateStr = this.formatRfc2822Date(now);
+      let msgId = `<${Date.now()}.${Math.floor(Math.random() * 100000)}@${config.smtpHost}>`;
+
       let msg = '';
+      msg += `Date: ${dateStr}\r\n`;
       msg += `From: ${config.user}\r\n`;
       msg += `To: ${to}\r\n`;
       if (cc.length > 0) {
         msg += `Cc: ${cc}\r\n`;
       }
       msg += `Subject: ${this.encodeMimeHeader(subject)}\r\n`;
+      msg += `Message-ID: ${msgId}\r\n`;
       msg += `MIME-Version: 1.0\r\n`;
       msg += `Content-Type: text/plain; charset=UTF-8\r\n`;
       msg += `Content-Transfer-Encoding: base64\r\n`;
+      msg += `X-Mailer: ClawdBot\r\n`;
       msg += `\r\n`;
       msg += this.toBase64(body);
       msg += `\r\n.\r\n`;
@@ -318,6 +325,24 @@ export class EmailCapability {
       result += i + 2 < bytes.length ? chars[b3 & 0x3F] : '=';
     }
     return result;
+  }
+
+  private formatRfc2822Date(d: Date): string {
+    let days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    let months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    let day = days[d.getDay()];
+    let date = d.getDate();
+    let mon = months[d.getMonth()];
+    let year = d.getFullYear();
+    let h = d.getHours().toString().padStart(2, '0');
+    let m = d.getMinutes().toString().padStart(2, '0');
+    let s = d.getSeconds().toString().padStart(2, '0');
+    let tz = -d.getTimezoneOffset();
+    let tzSign = tz >= 0 ? '+' : '-';
+    let tzAbs = Math.abs(tz);
+    let tzH = Math.floor(tzAbs / 60).toString().padStart(2, '0');
+    let tzM = (tzAbs % 60).toString().padStart(2, '0');
+    return `${day}, ${date} ${mon} ${year} ${h}:${m}:${s} ${tzSign}${tzH}${tzM}`;
   }
 
   private encodeMimeHeader(text: string): string {
