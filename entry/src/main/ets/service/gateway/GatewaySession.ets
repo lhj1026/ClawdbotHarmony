@@ -297,6 +297,19 @@ export class GatewaySession {
     let connectHeader: Record<string, string> = {
       'User-Agent': this.options.userAgent ?? 'ClawdBotHarmony/1.0.0',
     };
+
+    // let originScheme = ep.useTls ? 'https' : 'http';
+    // let origin = `${originScheme}://${ep.host}:${ep.port}`;
+    //
+    // let connectHeader: Record<string, string> = {
+    //   'User-Agent': this.options.userAgent ?? 'ClawdBotHarmony/1.0.0',
+    //   'Origin': origin  // 强制指定 Origin
+    // };
+    //
+    // this.log.info(this.logTag, `Using Origin: ${origin}`);
+
+
+
     this.log.info(this.logTag, `ws.connect() with header: ${JSON.stringify(connectHeader)}`);
     ws.connect(url, { header: connectHeader }, (err, _connected) => {
       if (gen !== this.wsGeneration) return;

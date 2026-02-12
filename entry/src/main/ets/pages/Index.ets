@@ -9,8 +9,8 @@ import { Constants } from '../common/Constants';
 import { NodeRuntime } from '../service/gateway/NodeRuntime';
 import { ConnectionState, GatewayEndpoint } from '../service/gateway/GatewayModels';
 import { preferences } from '@kit.ArkData';
-import { common } from '@kit.AbilityKit';
-import { router } from '@kit.ArkUI';
+import { common, abilityAccessCtrl } from '@kit.AbilityKit';
+import { router, promptAction } from '@kit.ArkUI';
 
 @Entry
 @Component
@@ -39,6 +39,25 @@ struct Index {
 
   onLangChange(): void {
     // triggers UI re-render
+  }
+
+  private async requestCameraPermission(): Promise<void> {
+    try {
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let atManager = abilityAccessCtrl.createAtManager();
+      LogService.getInstance().info('App', 'Requesting camera permission on settings tab entry');
+      let result = await atManager.requestPermissionsFromUser(ctx, ['ohos.permission.CAMERA']);
+
+      if (result.authResults[0] === 0) {
+        // 授权成功
+        // promptAction.showToast({ message: '相机权限已授予', duration: 2000 });
+      } else {
+        // 授权失败
+        promptAction.showToast({ message: '相机权限被拒绝', duration: 2000 });
+      }
+    } catch (err) {
+      LogService.getInstance().error('App', 'Camera permission request failed: ' + JSON.stringify(err));
+    }
   }
 
   /** Auto-connect to Gateway if Node Mode is enabled in settings */
@@ -152,7 +171,11 @@ struct Index {
       .barHeight(56)
       .barBackgroundColor(Color.White)
       .animationDuration(200)
-      .onChange((index: number) => { this.currentTab = index; })
+      .onChange((index: number) => { this.currentTab = index;
+        if (index === 3) {
+          this.requestCameraPermission();
+        }
+      })
     }
     .width('100%')
     .height('100%')

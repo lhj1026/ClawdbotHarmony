@@ -169,7 +169,7 @@ export class CameraCapability {
       let origH = info.size.height;
 
       // Scale down to max 1280px on longest side
-      let maxDim = 1280;
+      let maxDim = 1024;
       let targetW = origW;
       let targetH = origH;
       if (origW > maxDim || origH > maxDim) {
@@ -190,7 +190,7 @@ export class CameraCapability {
       let pixelMap = await imageSource.createPixelMap(decodingOptions);
 
       let packer = image.createImagePacker();
-      let packOptions: image.PackingOption = { format: 'image/jpeg', quality: 75 };
+      let packOptions: image.PackingOption = { format: 'image/jpeg', quality: 65 };
       let packed: ArrayBuffer = await packer.packing(pixelMap, packOptions);
 
       this.log.info(TAG, `compress done: ${origW}x${origH} -> ${targetW}x${targetH} = ${packed.byteLength} bytes`);
@@ -225,7 +225,7 @@ export class CameraCapability {
    */
   private tryReadFile(resultUri: string, savePath: string): FileReadResult {
     // Strategy 1: savePath directly
-    this.log.info(TAG, `tryRead strategy 1: savePath="${savePath}"`);
+    this.log.info(TAG, `chen tryRead strategy 1: savePath="${savePath}"`);
     try {
       return this.readFromPath(savePath);
     } catch (e1) {

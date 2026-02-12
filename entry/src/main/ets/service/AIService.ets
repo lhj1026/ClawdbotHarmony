@@ -2,7 +2,7 @@ import { http } from '@kit.NetworkKit';
 import { preferences } from '@kit.ArkData';
 import { fileIo, picker } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
-import { common, abilityAccessCtrl } from '@kit.AbilityKit';
+import { common, abilityAccessCtrl, Want } from '@kit.AbilityKit';
 import { camera, cameraPicker } from '@kit.CameraKit';
 import { media } from '@kit.MediaKit';
 import { geoLocationManager } from '@kit.LocationKit';
@@ -1041,68 +1041,69 @@ export class AIService {
             return JSON.stringify(r);
           }
           let camFacing = input['camera'] ?? 'back';
-          // Save to persistent filesDir/photos (not cacheDir which gets cleaned up)
-          let photoDir = context.filesDir + '/photos';
-          try { fileIo.mkdirSync(photoDir); } catch { /* may already exist */ }
-          let camSavePath = `${photoDir}/snap_${Date.now()}.jpg`;
-          let camSaveUri = `file://${camSavePath}`;
-          let camPos: camera.CameraPosition = camFacing === 'front'
-            ? camera.CameraPosition.CAMERA_POSITION_FRONT
-            : camera.CameraPosition.CAMERA_POSITION_BACK;
-          let pickerProfile: cameraPicker.PickerProfile = {
-            cameraPosition: camPos,
-            saveUri: camSaveUri,
-          };
+
           try {
+            let camPos: camera.CameraPosition = camFacing === 'front'
+              ? camera.CameraPosition.CAMERA_POSITION_FRONT
+              : camera.CameraPosition.CAMERA_POSITION_BACK;
+
+            // 1. 设置保存路径（虽然系统可能会忽略，但最好还是传）
+            let photoDir = context.filesDir + '/photos';
+            try { fileIo.mkdirSync(photoDir); } catch { /* ignore */ }
+            let destPath = `${photoDir}/snap_${Date.now()}.jpg`;
+            let destUri = `file://${destPath}`;
+
+            let pickerProfile: cameraPicker.PickerProfile = {
+              cameraPosition: camPos,
+              saveUri: destUri
+            };
+
+            // 2. 启动相机
             let camResult: cameraPicker.PickerResult =
-              await cameraPicker.pick(context,
-                [cameraPicker.PickerMediaType.PHOTO], pickerProfile);
+              await cameraPicker.pick(context, [cameraPicker.PickerMediaType.PHOTO], pickerProfile);
+
             if (camResult.resultCode !== 0) {
               let r: ToolResultObj = { error: `Camera cancelled (code=${camResult.resultCode})` };
               return JSON.stringify(r);
             }
-            // Find the photo using multiple strategies (same as CameraCapability)
-            let foundPath = '';
-            let tryPaths: string[] = [camSavePath];
-            if (camResult.resultUri.length > 0) {
-              tryPaths.push(camResult.resultUri);
-              if (camResult.resultUri.startsWith('file://')) {
-                tryPaths.push(camResult.resultUri.substring(7));
-              }
+
+            // 3. 关键修正：必须使用返回的 resultUri，不管它是不是我们指定的那个
+            const sourceUri = camResult.resultUri;
+            this.log.info(this.TAG, `Camera returned URI: ${sourceUri}`);
+
+            // 4. 读取源文件 (sourceUri) 并写入到沙箱 (destPath)
+            // 注意：openSync 支持直接传入 uri 字符串 (file://...)
+            let srcFile = fileIo.openSync(sourceUri, fileIo.OpenMode.READ_ONLY);
+            let stat = fileIo.statSync(srcFile.fd);
+
+            // 限制文件大小处理，避免内存溢出（例如限制在10MB内）
+            if (stat.size > 10 * 1024 * 1024) {
+              fileIo.closeSync(srcFile);
+              throw new Error("Captured image is too large (>10MB)");
             }
-            for (let p of tryPaths) {
-              try {
-                fileIo.statSync(p);
-                foundPath = p;
-                break;
-              } catch { /* try next */ }
-            }
-            if (foundPath.length === 0) {
-              let r: ToolResultObj = { error: 'Photo file not found after capture' };
-              return JSON.stringify(r);
-            }
-            // Copy to our persistent path if needed
-            if (foundPath !== camSavePath) {
-              try {
-                let srcFile = fileIo.openSync(foundPath, fileIo.OpenMode.READ_ONLY);
-                let dstFile = fileIo.openSync(camSavePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
-                let stat = fileIo.statSync(foundPath);
-                let buf = new ArrayBuffer(stat.size);
-                fileIo.readSync(srcFile.fd, buf);
-                fileIo.writeSync(dstFile.fd, buf);
-                fileIo.closeSync(srcFile);
-                fileIo.closeSync(dstFile);
-                foundPath = camSavePath;
-              } catch { /* use original path */ }
-            }
-            let camStat = fileIo.statSync(foundPath);
+
+            let buf = new ArrayBuffer(stat.size);
+            fileIo.readSync(srcFile.fd, buf);
+            fileIo.closeSync(srcFile);
+
+            // 5. 写入到我们要显示的沙箱路径
+            let destFile = fileIo.openSync(destPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+            fileIo.writeSync(destFile.fd, buf);
+            fileIo.closeSync(destFile);
+
+            this.log.info(this.TAG, `Saved to sandbox: ${destPath} size=${stat.size}`);
+
+            // 6. 返回结果，UI将使用 destPath 显示图片
             let r: ToolResultObj = {
-              note: `Photo captured (${camStat.size} bytes)`,
-              path: foundPath,
+              note: `Photo captured (${stat.size} bytes)`,
+              path: destPath, // MessageBubble 会加载这个路径 'file://' + path
             };
             return JSON.stringify(r);
+
           } catch (e) {
-            let r: ToolResultObj = { error: 'Camera failed: ' + ((e as Error).message ?? String(e)) };
+            let errMsg = (e as Error).message ?? String(e);
+            this.log.error(this.TAG, `Camera error details: ${errMsg}`); // 增加错误日志以便排查
+            let r: ToolResultObj = { error: 'Camera failed: ' + errMsg };
             return JSON.stringify(r);
           }
         }
@@ -1462,6 +1463,60 @@ export class AIService {
           } catch (e) {
             let r: ToolResultObj = { error: 'Search emails failed: ' + (e as Error).message };
             return JSON.stringify(r);
+          }
+        }
+        case 'send_email': {
+          if (!context) {
+            let r: ToolResultObj = { error: 'No UI context available for email' };
+            return JSON.stringify(r);
+          }
+
+          let to = input['to'] ?? '';
+          let subject = input['subject'] ?? '';
+          let body = input['body'] ?? '';
+
+          if (to.length === 0) {
+            return JSON.stringify({ error: 'Recipient (to) is required' });
+          }
+
+          // 构造 mailto URI
+          let mailto = `mailto:${encodeURIComponent(to)}`;
+          let queryParts: string[] = [];
+          if (subject.length > 0) queryParts.push(`subject=${encodeURIComponent(subject)}`);
+
+          // 内容截断保护，防止 URI 过长
+          if (body.length > 2000) {
+            body = body.substring(0, 2000) + '...\n(Truncated)';
+          }
+          if (body.length > 0) queryParts.push(`body=${encodeURIComponent(body)}`);
+
+          if (queryParts.length > 0) {
+            mailto += '?' + queryParts.join('&');
+          }
+
+          this.log.info(this.TAG, `Executing send_email: ${mailto.substring(0, 50)}...`);
+
+          // 使用 viewData 动作唤起邮件客户端
+          let want: Want = {
+            action: 'ohos.want.action.viewData',
+            uri: mailto
+          };
+
+          try {
+            await context.startAbility(want);
+            return JSON.stringify({ sent: true, note: 'Email compose window opened' });
+          } catch (e) {
+            // 失败回退尝试 sendToData
+            try {
+              let fallbackWant: Want = {
+                action: 'ohos.want.action.sendToData',
+                uri: mailto
+              };
+              await context.startAbility(fallbackWant);
+              return JSON.stringify({ sent: true, note: 'Email compose window opened (fallback)' });
+            } catch (e2) {
+              return JSON.stringify({ error: 'Failed to open email app: ' + (e as Error).message });
+            }
           }
         }
         default: {
