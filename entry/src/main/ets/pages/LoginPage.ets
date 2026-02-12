@@ -406,8 +406,10 @@ struct LoginPage {
       }
     }, LOGIN_TIMEOUT_MS);
 
-    // Connect with token auth
-    runtime.connect(ctx, endpoint, tkn, undefined);
+    // Load display name and connect with token auth
+    runtime.loadDisplayName(ctx).then(() => {
+      runtime.connect(ctx, endpoint, tkn, undefined);
+    });
   }
 
   private async onSignUpSuccess(ctx: common.UIAbilityContext, host: string, port: number, token: string, password: string): Promise<void> {
@@ -497,9 +499,11 @@ struct LoginPage {
       }
     }, LOGIN_TIMEOUT_MS);
 
-    runtime.connect(ctx, endpoint,
-      tkn.length > 0 ? tkn : undefined,
-      pwd);
+    runtime.loadDisplayName(ctx).then(() => {
+      runtime.connect(ctx, endpoint,
+        tkn.length > 0 ? tkn : undefined,
+        pwd);
+    });
   }
 
   private async onSignInSuccess(ctx: common.UIAbilityContext): Promise<void> {

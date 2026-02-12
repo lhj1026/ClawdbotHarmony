@@ -38,6 +38,7 @@ export interface RpcFrame {
 export interface RpcError {
   code: string;
   message: string;
+  details?: Record<string, string>;
 }
 
 // --------------- Connect handshake ---------------

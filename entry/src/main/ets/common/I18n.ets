@@ -41,6 +41,24 @@ function buildZh(): Map<string, string> {
   m.set('chat.ttsReading', '🔊 正在朗读...');
   m.set('chat.ttsReadDone', '🔊 已朗读');
   m.set('chat.ttsReadFailed', '朗读失败');
+  m.set('chat.conversationSaved', '对话已保存');
+  m.set('chat.memoryUpdated', '记忆已更新');
+  m.set('chat.history', '对话历史');
+  m.set('chat.historyEmpty', '暂无历史对话');
+  m.set('chat.back', '返回');
+  m.set('chat.deleteConfirm', '确定删除这条对话记录？');
+  m.set('chat.deleted', '已删除');
+  m.set('chat.extractMemory', '提取记忆');
+  m.set('chat.extracting', '正在分析对话...');
+  m.set('chat.memoryExtracted', '提取了 {0} 条新记忆');
+  m.set('chat.noNewMemory', '未发现新记忆');
+  m.set('chat.extractFailed', '提取失败');
+  m.set('chat.exported', '已复制到剪贴板');
+  m.set('chat.compressing', '正在压缩对话...');
+  m.set('chat.compressed', '对话已压缩');
+  m.set('chat.compressFailed', '压缩失败');
+  m.set('chat.deleteHistoryConfirm', '确定删除这条历史对话？');
+  m.set('chat.historyDeleted', '已删除');
 
   // SettingsPage - TTS auto-read
   m.set('settings.ttsAutoRead', '语音朗读');
@@ -194,6 +212,35 @@ function buildZh(): Map<string, string> {
   m.set('settings.confirm', '确定');
   m.set('settings.gatewayAddress', '网关地址');
 
+  // Cron
+  m.set('cron.executing', '正在执行定时任务...');
+  m.set('cron.created', '定时任务已创建');
+  m.set('cron.cancelled', '定时任务已取消');
+  m.set('cron.notFound', '未找到该定时任务');
+  m.set('cron.noTasks', '暂无定时任务');
+
+  // Talk Mode
+  m.set('chat.talkMode', '对话模式');
+  m.set('chat.talkModeOn', '对话模式已开启');
+  m.set('chat.talkModeOff', '对话模式已关闭');
+  m.set('chat.talkListening', '正在聆听...');
+  m.set('chat.talkThinking', '正在思考...');
+  m.set('chat.talkSpeaking', '正在说话...');
+  m.set('chat.talkSilence', '静默超时，对话模式已关闭');
+
+  // Email / IMAP
+  m.set('settings.email', '邮箱 / IMAP');
+  m.set('settings.emailEnabled', '启用邮箱');
+  m.set('settings.emailEnabledDesc', '通过 IMAP 直连读取邮件');
+  m.set('settings.imapHost', 'IMAP 服务器');
+  m.set('settings.imapPort', '端口');
+  m.set('settings.imapUser', '邮箱地址');
+  m.set('settings.imapPass', '密码 / 应用专用密码');
+  m.set('settings.emailTest', '测试连接');
+  m.set('settings.emailTesting', '连接中...');
+  m.set('settings.emailTestOk', '连接成功');
+  m.set('settings.emailTestFail', '连接失败：');
+
   // Connection states
   m.set('state.offline', '离线');
   m.set('state.connecting', '连接中...');
@@ -239,6 +286,24 @@ function buildEn(): Map<string, string> {
   m.set('chat.ttsReading', '🔊 Reading aloud...');
   m.set('chat.ttsReadDone', '🔊 Read aloud');
   m.set('chat.ttsReadFailed', 'TTS read failed');
+  m.set('chat.conversationSaved', 'Conversation saved');
+  m.set('chat.memoryUpdated', 'Memory updated');
+  m.set('chat.history', 'Chat History');
+  m.set('chat.historyEmpty', 'No saved conversations');
+  m.set('chat.back', 'Back');
+  m.set('chat.deleteConfirm', 'Delete this conversation?');
+  m.set('chat.deleted', 'Deleted');
+  m.set('chat.extractMemory', 'Extract Memory');
+  m.set('chat.extracting', 'Analyzing conversation...');
+  m.set('chat.memoryExtracted', 'Extracted {0} new memories');
+  m.set('chat.noNewMemory', 'No new memories found');
+  m.set('chat.extractFailed', 'Extract failed');
+  m.set('chat.exported', 'Copied to clipboard');
+  m.set('chat.compressing', 'Compressing conversation...');
+  m.set('chat.compressed', 'Conversation compressed');
+  m.set('chat.compressFailed', 'Compress failed');
+  m.set('chat.deleteHistoryConfirm', 'Delete this conversation?');
+  m.set('chat.historyDeleted', 'Deleted');
 
   // SettingsPage - TTS auto-read
   m.set('settings.ttsAutoRead', 'Auto Read Aloud');
@@ -391,6 +456,35 @@ function buildEn(): Map<string, string> {
   m.set('settings.cancel', 'Cancel');
   m.set('settings.confirm', 'Confirm');
   m.set('settings.gatewayAddress', 'Gateway Address');
+
+  // Cron
+  m.set('cron.executing', 'Executing scheduled task...');
+  m.set('cron.created', 'Scheduled task created');
+  m.set('cron.cancelled', 'Scheduled task cancelled');
+  m.set('cron.notFound', 'Scheduled task not found');
+  m.set('cron.noTasks', 'No scheduled tasks');
+
+  // Talk Mode
+  m.set('chat.talkMode', 'Talk Mode');
+  m.set('chat.talkModeOn', 'Talk mode activated');
+  m.set('chat.talkModeOff', 'Talk mode deactivated');
+  m.set('chat.talkListening', 'Listening...');
+  m.set('chat.talkThinking', 'Thinking...');
+  m.set('chat.talkSpeaking', 'Speaking...');
+  m.set('chat.talkSilence', 'Silence timeout, talk mode ended');
+
+  // Email / IMAP
+  m.set('settings.email', 'EMAIL / IMAP');
+  m.set('settings.emailEnabled', 'Enable Email');
+  m.set('settings.emailEnabledDesc', 'Read emails via IMAP direct connection');
+  m.set('settings.imapHost', 'IMAP Server');
+  m.set('settings.imapPort', 'Port');
+  m.set('settings.imapUser', 'Email Address');
+  m.set('settings.imapPass', 'Password / App Password');
+  m.set('settings.emailTest', 'Test Connection');
+  m.set('settings.emailTesting', 'Connecting...');
+  m.set('settings.emailTestOk', 'Connection successful');
+  m.set('settings.emailTestFail', 'Connection failed: ');
 
   // Connection states
   m.set('state.offline', 'Offline');

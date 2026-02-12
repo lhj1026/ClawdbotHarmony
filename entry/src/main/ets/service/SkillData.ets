@@ -70,6 +70,12 @@ export function getDefaultSkills(): SkillItem[] {
     new SkillItem('skill_media', 'Media Tools',
       'Capture photos, record audio',
       'media', true, true, 2),
+    new SkillItem('skill_scheduler', 'Scheduler',
+      'Create and manage scheduled/recurring tasks',
+      'automation', true, true, 3),
+    new SkillItem('skill_email', 'Email',
+      'Read emails from inbox via IMAP',
+      'productivity', true, true, 3),
   ];
 }
 
@@ -103,6 +109,10 @@ const SKILL_PROMPTS: Map<string, string> = new Map([
     'You can list calendar events, create events, and set reminders.'],
   ['skill_media',
     'You can capture photos and record audio on the device.'],
+  ['skill_scheduler',
+    'You can create, list, and cancel scheduled tasks. Tasks can be one-shot (run once at a specific time) or recurring (run periodically). Schedule formats: "every 30m", "every 2h", "daily 09:00", or ISO 8601 datetime for one-shot. When the user says things like "remind me every 30 minutes to drink water" or "check the weather every morning at 9", use create_scheduled_task.'],
+  ['skill_email',
+    'You have access to the user\'s email inbox via IMAP. When the user mentions 邮件/邮箱/email/inbox/mail, use these email tools:\n- list_emails: list recent emails (NOT calendar events)\n- read_email: read email body by sequence number\n- search_emails: search emails by subject\nIMPORTANT: Do NOT use list_events for email requests. list_events is for calendar only.'],
 ]);
 
 function buildSystemToolSchemas(): ToolSchema[] {
@@ -219,7 +229,47 @@ function buildMemoryToolSchemas(): ToolSchema[] {
       'Save important information to persistent memory. Use this when the user shares personal facts, preferences, or instructions they want you to remember across conversations.',
       makeSchema(saveProps, ['mem_type', 'content'])),
     makeTool('search_memory',
-      'Search saved memories by keywords. Use this to recall information about the user before answering questions that might relate to previously saved facts or preferences.',
+      'Search saved memories using semantic similarity. Can find related memories even when exact keywords don\'t match. For example, searching "drink preference" can find "I like coffee".',
+      makeSchema(searchProps, ['query'])),
+  ];
+}
+
+function buildSchedulerToolSchemas(): ToolSchema[] {
+  let createProps: Record<string, JsonSchemaProperty> = {};
+  createProps['prompt'] = { type: 'string', description: 'The AI prompt to execute when the task triggers' };
+  createProps['schedule'] = { type: 'string', description: 'Schedule expression: "every 30m", "every 2h", "daily 09:00", or ISO 8601 datetime for one-shot (e.g. "2026-02-12T14:00:00")' };
+
+  let emptyProps: Record<string, JsonSchemaProperty> = {};
+
+  let cancelProps: Record<string, JsonSchemaProperty> = {};
+  cancelProps['task_id'] = { type: 'string', description: 'The ID of the scheduled task to cancel' };
+
+  return [
+    makeTool('create_scheduled_task', 'Create a scheduled or recurring task that automatically runs an AI prompt at specified times',
+      makeSchema(createProps, ['prompt', 'schedule'])),
+    makeTool('list_scheduled_tasks', 'List all active scheduled tasks',
+      makeSchema(emptyProps)),
+    makeTool('cancel_scheduled_task', 'Cancel a scheduled task by its ID',
+      makeSchema(cancelProps, ['task_id'])),
+  ];
+}
+
+function buildEmailToolSchemas(): ToolSchema[] {
+  let listProps: Record<string, JsonSchemaProperty> = {};
+  listProps['count'] = { type: 'number', description: 'Number of recent emails to fetch (default 10, max 30)' };
+
+  let readProps: Record<string, JsonSchemaProperty> = {};
+  readProps['id'] = { type: 'string', description: 'Email sequence number (from list_emails result)' };
+
+  let searchProps: Record<string, JsonSchemaProperty> = {};
+  searchProps['query'] = { type: 'string', description: 'Search keyword (matches subject)' };
+
+  return [
+    makeTool('list_emails', 'List recent emails from the user email inbox (IMAP). Use this when user asks about 邮件/邮箱/email/mail. Returns sender, subject, and date.',
+      makeSchema(listProps)),
+    makeTool('read_email', 'Read the full body of a specific email by its sequence number.',
+      makeSchema(readProps, ['id'])),
+    makeTool('search_emails', 'Search emails by subject keyword. Returns matching email summaries.',
       makeSchema(searchProps, ['query'])),
   ];
 }
@@ -231,4 +281,6 @@ const TOOL_SCHEMAS: Map<string, ToolSchema[]> = new Map([
   ['skill_calendar', buildCalendarToolSchemas()],
   ['skill_media', buildMediaToolSchemas()],
   ['skill_memory', buildMemoryToolSchemas()],
+  ['skill_scheduler', buildSchedulerToolSchemas()],
+  ['skill_email', buildEmailToolSchemas()],
 ]);

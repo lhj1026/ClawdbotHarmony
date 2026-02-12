@@ -1,7 +1,7 @@
 import { preferences } from '@kit.ArkData';
 import { common, abilityAccessCtrl } from '@kit.AbilityKit';
 import { MessageBubble } from '../components/MessageBubble';
-import { ChatMessage, SettingsData, MemoryItem } from '../model/Models';
+import { ChatMessage, SettingsData, MemoryItem, ConversationFile, CronTask } from '../model/Models';
 import { AIService, AIResult } from '../service/AIService';
 import { MemoryService } from '../service/MemoryService';
 import { getEnabledToolSchemas, getSkillSystemPrompt, getDefaultSkills } from '../service/SkillData';
@@ -11,6 +11,9 @@ import { ConnectionState, GatewayChatEvent } from '../service/gateway/GatewayMod
 import { NotificationInfo } from '../service/gateway/NotificationCapability';
 import { LogService } from '../common/LogService';
 import { I18n } from '../common/I18n';
+import { ConversationLogger } from '../service/ConversationLogger';
+import { promptAction } from '@kit.ArkUI';
+import { pasteboard } from '@kit.BasicServicesKit';
 import { audio } from '@kit.AudioKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { http } from '@kit.NetworkKit';
@@ -28,10 +31,19 @@ export struct ChatPage {
   @State isRecording: boolean = false;
   @State assistantName: string = '';
   @State assistantAvatar: string = '';
+  @State showHistory: boolean = false;
+  @State historyFiles: ConversationFile[] = [];
+  @State historyContent: string = '';
+  @State historyFilename: string = '';
+  @State isTalkMode: boolean = false;
+  @State talkStatus: string = '';
   private dotTimer: number = -1;
   private audioCapturer: audio.AudioCapturer | undefined = undefined;
   private asrReading: boolean = false;
   private pcmBuffers: ArrayBuffer[] = [];
+  private cronTimer: number = -1;
+  private talkModeActive: boolean = false;
+  private ttsCompletionResolve: (() => void) | undefined = undefined;
 
   private scroller: Scroller = new Scroller();
   private ai: AIService = AIService.getInstance();
@@ -82,11 +94,21 @@ export struct ChatPage {
     };
     NodeRuntime.getInstance().addMediaListener(this.mediaListener);
     this.lang = I18n.lang;
-    this.langListener = () => { this.lang = I18n.lang; };
+    this.langListener = () => { this.lang = I18n.lang; this.loadAssistantSettings(); };
     I18n.addListener(this.langListener);
+    this.startCronTimer();
   }
 
   aboutToDisappear(): void {
+    // Auto-save conversation if there are enough messages
+    if (this.messages.length > 2) {
+      let msgCopy = this.messages.slice();
+      ConversationLogger.getInstance()
+        .saveConversation(getContext(this), msgCopy)
+        .catch(() => { /* ignore */ });
+      // Auto-extract memories from conversation (fire-and-forget)
+      this.autoExtractMemoriesFromMessages(msgCopy);
+    }
     if (this.gwListener) {
       NodeRuntime.getInstance().removeStateListener(this.gwListener);
       this.gwListener = undefined;
@@ -110,6 +132,11 @@ export struct ChatPage {
     this.stopDotAnimation();
     this.asrReading = false;
     this.cleanupAsr();
+    this.stopTalkMode();
+    if (this.cronTimer !== -1) {
+      clearInterval(this.cronTimer);
+      this.cronTimer = -1;
+    }
   }
 
   onLangChange(): void {
@@ -120,77 +147,118 @@ export struct ChatPage {
     Column() {
       // -- header --
       Row() {
-        if (this.assistantAvatar.length > 0) {
-          Image('file://' + this.assistantAvatar)
-            .width(34)
-            .height(34)
-            .borderRadius(17)
-            .objectFit(ImageFit.Cover)
-            .margin({ right: 10 })
-        } else {
-          Text(this.getAssistantInitial())
-            .fontSize(16)
+        if (this.showHistory) {
+          // History mode header
+          Text('\u2190')
+            .fontSize(22)
+            .fontColor('#1A1A1A')
+            .padding(8)
+            .onClick(() => { this.closeHistory(); })
+          Text(this.historyContent.length > 0 ? this.historyFilename : I18n.t('chat.history'))
+            .fontSize(18)
             .fontWeight(FontWeight.Bold)
-            .fontColor(Color.White)
-            .textAlign(TextAlign.Center)
-            .width(34)
-            .height(34)
-            .borderRadius(17)
-            .backgroundColor('#D2691E')
-            .margin({ right: 10 })
-        }
-        Column() {
-          Row({ space: 6 }) {
-            Text(this.getAssistantDisplayName())
-              .fontSize(18)
+            .fontColor('#1A1A1A')
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .margin({ left: 4 })
+          if (this.historyContent.length > 0) {
+            // Export (copy to clipboard)
+            Text('\uD83D\uDCE4')
+              .fontSize(20)
+              .padding(6)
+              .onClick(() => { this.exportHistory(); })
+            // Compress (AI summarize)
+            Text('\uD83D\uDCE6')
+              .fontSize(20)
+              .padding(6)
+              .onClick(() => { this.compressHistory(); })
+            // Delete
+            Text('\uD83D\uDDD1')
+              .fontSize(20)
+              .padding(6)
+              .onClick(() => { this.deleteHistory(); })
+          }
+        } else {
+          // Normal chat header
+          if (this.assistantAvatar.length > 0) {
+            Image('file://' + this.assistantAvatar)
+              .width(34)
+              .height(34)
+              .borderRadius(17)
+              .objectFit(ImageFit.Cover)
+              .margin({ right: 10 })
+          } else {
+            Text(this.getAssistantInitial())
+              .fontSize(16)
               .fontWeight(FontWeight.Bold)
-              .fontColor('#1A1A1A')
-            Text('v2.3')
-              .fontSize(11)
-              .fontColor('#999999')
-              .margin({ top: 4 })
+              .fontColor(Color.White)
+              .textAlign(TextAlign.Center)
+              .width(34)
+              .height(34)
+              .borderRadius(17)
+              .backgroundColor('#D2691E')
+              .margin({ right: 10 })
           }
-          Row({ space: 6 }) {
-            Text(this.isLoading ? I18n.t('chat.thinking') : I18n.t('chat.online'))
-              .fontSize(12)
-              .fontColor(this.isLoading ? '#FF9800' : '#4CAF50')
-            if (this.gwConnected) {
-              Row({ space: 3 }) {
-                Circle({ width: 6, height: 6 })
-                  .fill('#4CAF50')
-                Text(I18n.t('chat.gatewayMode'))
-                  .fontSize(10)
-                  .fontColor('#4CAF50')
-                  .fontWeight(FontWeight.Medium)
+          Column() {
+            Row({ space: 6 }) {
+              Text(this.getAssistantDisplayName())
+                .fontSize(18)
+                .fontWeight(FontWeight.Bold)
+                .fontColor('#1A1A1A')
+              Text('v2.5')
+                .fontSize(11)
+                .fontColor('#999999')
+                .margin({ top: 4 })
+            }
+            Row({ space: 6 }) {
+              Text(this.isLoading ? I18n.t('chat.thinking') : I18n.t('chat.online'))
+                .fontSize(12)
+                .fontColor(this.isLoading ? '#FF9800' : '#4CAF50')
+              if (this.gwConnected) {
+                Row({ space: 3 }) {
+                  Circle({ width: 6, height: 6 })
+                    .fill('#4CAF50')
+                  Text(I18n.t('chat.gatewayMode'))
+                    .fontSize(10)
+                    .fontColor('#4CAF50')
+                    .fontWeight(FontWeight.Medium)
+                }
+                .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                .borderRadius(8)
+                .backgroundColor('#E8F5E9')
               }
-              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-              .borderRadius(8)
-              .backgroundColor('#E8F5E9')
             }
           }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          // History button
+          Text('\uD83D\uDCCB')
+            .fontSize(20)
+            .padding(8)
+            .onClick(() => { this.openHistory(); })
+
+          // TTS auto-read quick toggle
+          Text(this.ttsAutoRead ? '\uD83D\uDD0A' : '\uD83D\uDD07')
+            .fontSize(20)
+            .padding(8)
+            .onClick(() => {
+              this.ttsAutoRead = !this.ttsAutoRead;
+              this.saveTtsAutoReadSetting();
+              this.log.info('ChatPage', `TTS auto-read toggled: ${this.ttsAutoRead}`);
+              // Immediately stop any in-progress TTS/audio when muting
+              if (!this.ttsAutoRead) {
+                NodeRuntime.getInstance().stopSpeaker().catch(() => { /* ignore */ });
+              }
+            })
+
+          // clear button
+          Text('\uD83D\uDDD1')
+            .fontSize(20)
+            .padding(8)
+            .onClick(() => { this.clearMessages(); })
         }
-        .alignItems(HorizontalAlign.Start)
-        .layoutWeight(1)
-
-        // TTS auto-read quick toggle
-        Text(this.ttsAutoRead ? '\uD83D\uDD0A' : '\uD83D\uDD07')
-          .fontSize(20)
-          .padding(8)
-          .onClick(() => {
-            this.ttsAutoRead = !this.ttsAutoRead;
-            this.saveTtsAutoReadSetting();
-            this.log.info('ChatPage', `TTS auto-read toggled: ${this.ttsAutoRead}`);
-            // Immediately stop any in-progress TTS/audio when muting
-            if (!this.ttsAutoRead) {
-              NodeRuntime.getInstance().stopSpeaker().catch(() => { /* ignore */ });
-            }
-          })
-
-        // clear button
-        Text('\uD83D\uDDD1')
-          .fontSize(20)
-          .padding(8)
-          .onClick(() => { this.clearMessages(); })
       }
       .width('100%')
       .height(56)
@@ -198,8 +266,70 @@ export struct ChatPage {
       .backgroundColor(Color.White)
       .shadow({ radius: 2, color: '#00000008', offsetY: 1 })
 
-      // -- message list --
-      if (this.messages.length === 0) {
+      // -- message list / history views --
+      if (this.showHistory) {
+        if (this.historyContent.length > 0) {
+          // Viewing a single conversation
+          Scroll() {
+            Text(this.historyContent)
+              .fontSize(14)
+              .fontColor('#333333')
+              .lineHeight(22)
+              .padding(16)
+              .width('100%')
+          }
+          .layoutWeight(1)
+          .scrollBar(BarState.Auto)
+          .edgeEffect(EdgeEffect.Spring)
+        } else if (this.historyFiles.length === 0) {
+          // Empty history
+          Column() {
+            Text('\uD83D\uDCDA')
+              .fontSize(48)
+              .margin({ bottom: 12 })
+            Text(I18n.t('chat.historyEmpty'))
+              .fontSize(16)
+              .fontColor('#999999')
+          }
+          .layoutWeight(1)
+          .justifyContent(FlexAlign.Center)
+        } else {
+          // History file list
+          List() {
+            ForEach(this.historyFiles, (file: ConversationFile) => {
+              ListItem() {
+                Row() {
+                  Column() {
+                    Text(this.formatConversationDate(file.filename))
+                      .fontSize(15)
+                      .fontWeight(FontWeight.Medium)
+                      .fontColor('#1A1A1A')
+                    Text(`~${file.messageCount} messages`)
+                      .fontSize(12)
+                      .fontColor('#999999')
+                      .margin({ top: 4 })
+                  }
+                  .alignItems(HorizontalAlign.Start)
+                  .layoutWeight(1)
+
+                  Text('\u203A')
+                    .fontSize(22)
+                    .fontColor('#CCCCCC')
+                }
+                .width('100%')
+                .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+                .backgroundColor(Color.White)
+                .borderRadius(10)
+                .onClick(() => { this.viewConversation(file.filename); })
+              }
+              .padding({ left: 12, right: 12, top: 4 })
+            }, (file: ConversationFile): string => file.filename)
+          }
+          .layoutWeight(1)
+          .edgeEffect(EdgeEffect.Spring)
+          .scrollBar(BarState.Off)
+        }
+      } else if (this.messages.length === 0) {
         this.EmptyState()
       } else {
         List({ scroller: this.scroller }) {
@@ -256,29 +386,47 @@ export struct ChatPage {
         .scrollBar(BarState.Off)
       }
 
-      // -- input bar --
+      // -- input bar (hidden in history mode) --
+      if (!this.showHistory) {
       Row({ space: 8 }) {
-        // Mic button for voice input (press & hold)
+        // Mic button: tap = toggle Talk Mode, long press = single voice input
         Column() {
-          Text('\uD83C\uDFA4').fontSize(18)
+          Text(this.isTalkMode ? '\uD83D\uDDE3' : '\uD83C\uDFA4').fontSize(18)
         }
         .width(42)
         .height(42)
         .borderRadius(21)
-        .backgroundColor(this.isRecording ? '#F44336' : '#F0F0F0')
+        .backgroundColor(this.isTalkMode ? '#4CAF50' : (this.isRecording ? '#F44336' : '#F0F0F0'))
         .justifyContent(FlexAlign.Center)
-        .onTouch((event: TouchEvent) => {
-          if (event.type === TouchType.Down) {
-            this.startRecording();
-          } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-            if (this.isRecording) {
-              this.stopRecording();
-            }
-          }
-        })
+        .gesture(
+          GestureGroup(GestureMode.Exclusive,
+            LongPressGesture({ repeat: false, duration: 500 })
+              .onAction(() => {
+                if (this.isTalkMode) {
+                  this.stopTalkMode();
+                  return;
+                }
+                this.startRecording();
+              })
+              .onActionEnd(() => {
+                if (this.isRecording) {
+                  this.stopRecording();
+                }
+              }),
+            TapGesture({ count: 1 })
+              .onAction(() => {
+                if (this.isRecording) return;
+                if (this.isTalkMode) {
+                  this.stopTalkMode();
+                } else {
+                  this.startTalkMode();
+                }
+              })
+          )
+        )
 
         TextInput({ text: this.inputText,
-          placeholder: this.isRecording ? I18n.t('chat.recording') : I18n.t('chat.placeholder') })
+          placeholder: this.isTalkMode ? this.talkStatus : (this.isRecording ? I18n.t('chat.recording') : I18n.t('chat.placeholder')) })
           .layoutWeight(1)
           .height(42)
           .borderRadius(21)
@@ -302,6 +450,7 @@ export struct ChatPage {
       .padding(10)
       .backgroundColor(Color.White)
       .shadow({ radius: 4, color: '#00000008', offsetY: -1 })
+      } // end if (!showHistory)
     }
     .width('100%')
     .height('100%')
@@ -381,6 +530,254 @@ export struct ChatPage {
       return this.assistantName;
     }
     return 'ClawdBot';
+  }
+
+  // ---- History UI ----
+
+  private openHistory(): void {
+    let ctx = getContext(this);
+    ConversationLogger.getInstance().listConversations(ctx).then((files: ConversationFile[]) => {
+      this.historyFiles = files;
+      this.historyContent = '';
+      this.historyFilename = '';
+      this.showHistory = true;
+    }).catch(() => {
+      this.historyFiles = [];
+      this.historyContent = '';
+      this.historyFilename = '';
+      this.showHistory = true;
+    });
+  }
+
+  private viewConversation(filename: string): void {
+    let ctx = getContext(this);
+    ConversationLogger.getInstance().readConversation(ctx, filename).then((content: string) => {
+      this.historyContent = content;
+      this.historyFilename = this.formatConversationDate(filename);
+    }).catch(() => { /* ignore */ });
+  }
+
+  private closeHistory(): void {
+    if (this.historyContent.length > 0) {
+      // Go back to file list
+      this.historyContent = '';
+      this.historyFilename = '';
+    } else {
+      // Go back to chat
+      this.showHistory = false;
+      this.historyFiles = [];
+    }
+  }
+
+  /**
+   * Auto-extract memories from a conversation using AI.
+   * Called automatically when a conversation is saved (fire-and-forget).
+   * Builds conversation text from messages, sends to AI for analysis,
+   * and saves any extracted memories via MemoryService.
+   */
+  private autoExtractMemoriesFromMessages(messages: ChatMessage[]): void {
+    // Filter to user + assistant text messages, skip tool calls
+    let lines: string[] = [];
+    for (let msg of messages) {
+      if (msg.role === 'user') {
+        lines.push(`User: ${msg.content}`);
+      } else if (msg.role === 'assistant' && !msg.isToolCall && msg.content.length > 0) {
+        lines.push(`Assistant: ${msg.content}`);
+      }
+    }
+    if (lines.length < 2) return; // too short to extract from
+
+    let conversationText = lines.join('\n');
+    // Truncate if too long
+    if (conversationText.length > 8000) {
+      conversationText = conversationText.substring(0, 4000) + '\n...\n' + conversationText.substring(conversationText.length - 4000);
+    }
+
+    let ctx: common.UIAbilityContext;
+    try {
+      ctx = getContext(this) as common.UIAbilityContext;
+    } catch { return; }
+
+    this.loadSettings(ctx).then((settings: SettingsData) => {
+      let systemPrompt = `You are a memory extraction assistant. Analyze the conversation and extract important facts, preferences, and instructions worth remembering across sessions.
+
+Return ONLY a JSON array of objects with:
+- "type": "fact" | "preference" | "instruction"
+- "content": the memory text (concise, 1 sentence)
+
+Extract:
+- Personal facts: name, birthday, job, family, location, hobbies
+- Preferences: likes, dislikes, communication style, favorite things
+- Instructions: "always do X", "never do Y", recurring requests
+
+Do NOT extract:
+- Trivial or temporary info (weather, one-time queries, greetings)
+- Tool call details or errors
+- Things the AI said (only extract user-revealed info)
+
+If nothing worth saving, return: []
+Respond ONLY with the JSON array.`;
+
+      this.ai.simpleChat(systemPrompt, conversationText, settings).then((result: string) => {
+        let jsonMatch = /\[[\s\S]*\]/.exec(result);
+        if (!jsonMatch) {
+          this.log.info('ChatPage', 'autoExtractMemories: no memories found');
+          return;
+        }
+        let memories = JSON.parse(jsonMatch[0]) as MemoryExtractItem[];
+        let addedCount = 0;
+        let chain = Promise.resolve();
+        for (let mem of memories) {
+          if (mem.content && mem.content.length > 0) {
+            let memType = mem.type ?? 'fact';
+            let content = mem.content;
+            chain = chain.then(() => {
+              return this.memSvc.addIfNew(ctx, memType, content, 0.8).then((item) => {
+                if (item !== null) addedCount++;
+              });
+            });
+          }
+        }
+        chain.then(() => {
+          this.log.info('ChatPage', `autoExtractMemories: AI found ${memories.length}, added ${addedCount} new`);
+          if (addedCount > 0) {
+            promptAction.showToast({
+              message: I18n.t('chat.memoryExtracted').replace('{0}', addedCount.toString()),
+              duration: 2000
+            });
+          }
+        });
+      }).catch((e: Error) => {
+        this.log.warn('ChatPage', `autoExtractMemories failed: ${e.message ?? ''}`);
+      });
+    }).catch(() => { /* ignore settings load error */ });
+  }
+
+  /** Export: copy conversation content to clipboard */
+  private exportHistory(): void {
+    if (this.historyContent.length === 0) return;
+    let pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, this.historyContent);
+    let sysBoard = pasteboard.getSystemPasteboard();
+    sysBoard.setData(pasteData).then(() => {
+      promptAction.showToast({ message: I18n.t('chat.exported'), duration: 1500 });
+    }).catch(() => {
+      promptAction.showToast({ message: 'Export failed', duration: 1500 });
+    });
+  }
+
+  /**
+   * Compress: use AI to summarize the conversation, replacing the file content.
+   */
+  private async compressHistory(): Promise<void> {
+    if (this.historyContent.length === 0 || this.historyFilename.length === 0) return;
+    promptAction.showToast({ message: I18n.t('chat.compressing'), duration: 2000 });
+
+    try {
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let settings = await this.loadSettings(ctx);
+
+      let systemPrompt = `You are a conversation summarizer. Compress the following conversation into a concise summary in the SAME language as the original conversation.
+
+Format:
+# Summary
+<date from the original title>
+
+## Key Points
+- point 1
+- point 2
+...
+
+## Decisions / Outcomes
+- outcome 1
+...
+
+## Memories (facts/preferences learned)
+- memory 1
+...
+
+Keep it short but preserve all important information. Use the same language as the conversation.`;
+
+      let content = this.historyContent;
+      let result = await this.ai.simpleChat(systemPrompt, content, settings);
+
+      if (result.length > 0) {
+        // Find original filename to overwrite
+        let origFilename = this.findOriginalFilename();
+        if (origFilename.length > 0) {
+          let filePath = ctx.filesDir + '/conversations/' + origFilename;
+          let encoder = new util.TextEncoder();
+          let encoded = encoder.encodeInto(result);
+          let file = fileIo.openSync(filePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+          fileIo.writeSync(file.fd, encoded.buffer);
+          fileIo.closeSync(file);
+
+          this.historyContent = result;
+          promptAction.showToast({ message: I18n.t('chat.compressed'), duration: 1500 });
+          this.log.info('ChatPage', `Conversation compressed: ${content.length} -> ${result.length} bytes`);
+        }
+      }
+    } catch (e) {
+      this.log.error('ChatPage', `compressHistory error: ${(e as Error).message ?? ''}`);
+      promptAction.showToast({ message: I18n.t('chat.compressFailed'), duration: 1500 });
+    }
+  }
+
+  /** Delete the currently viewed conversation file */
+  private deleteHistory(): void {
+    if (this.historyFilename.length === 0) return;
+    let origFilename = this.findOriginalFilename();
+    if (origFilename.length === 0) return;
+
+    promptAction.showDialog({
+      title: '',
+      message: I18n.t('chat.deleteHistoryConfirm'),
+      buttons: [
+        { text: I18n.t('memory.cancel'), color: '#999999' },
+        { text: I18n.t('settings.confirm'), color: '#F44336' }
+      ]
+    }).then((result) => {
+      if (result.index === 1) {
+        let ctx = getContext(this) as common.UIAbilityContext;
+        let filePath = ctx.filesDir + '/conversations/' + origFilename;
+        try {
+          fileIo.unlinkSync(filePath);
+        } catch { /* ignore */ }
+        promptAction.showToast({ message: I18n.t('chat.historyDeleted'), duration: 1500 });
+        // Go back to file list and refresh
+        this.historyContent = '';
+        this.historyFilename = '';
+        this.openHistory();
+      }
+    }).catch(() => { /* cancelled */ });
+  }
+
+  /**
+   * Recover original filename from the display title.
+   * historyFilename is formatted as "2026-02-11 15:30:45"
+   * original filename is "chat_2026-02-11_153045.md"
+   */
+  private findOriginalFilename(): string {
+    // Try to match from historyFiles list
+    for (let f of this.historyFiles) {
+      if (this.formatConversationDate(f.filename) === this.historyFilename) {
+        return f.filename;
+      }
+    }
+    // Fallback: reconstruct from formatted name
+    let match = /(\d{4}-\d{2}-\d{2})\s+(\d{2}):(\d{2}):(\d{2})/.exec(this.historyFilename);
+    if (match) {
+      return `chat_${match[1]}_${match[2]}${match[3]}${match[4]}.md`;
+    }
+    return '';
+  }
+
+  private formatConversationDate(filename: string): string {
+    // filename: chat_2026-02-11_153045.md
+    let match = /chat_(\d{4}-\d{2}-\d{2})_(\d{2})(\d{2})(\d{2})\.md/.exec(filename);
+    if (match) {
+      return `${match[1]} ${match[2]}:${match[3]}:${match[4]}`;
+    }
+    return filename.replace('.md', '');
   }
 
   private async loadAssistantSettings(): Promise<void> {
@@ -1199,9 +1596,18 @@ export struct ChatPage {
 ## Soul
 ${this.soulText}
 
+## Response Style
+- ULTRA SHORT responses. 1-2 sentences max. No filler words.
+- 极简回复。直接给关键信息，一两句话搞定。
+- 禁止"好的"、"当然可以"、"没问题"、"请稍等"等废话开头。
+- 禁止重复用户的问题或要求。
+- For tool results, give the answer in one line. NEVER repeat raw JSON.
+- 不要用 markdown 格式（不要用 **加粗**、- 列表等），用纯文本回复。
+
 ## Capabilities
 You are capable of performing real actions through tools.
-IMPORTANT: When the user asks you to do something, ALWAYS use the appropriate tool to perform the action. Never refuse or guess the outcome — try it first. For example, if asked to run a command, use execute_command; if asked to create a calendar event, use create_event; if asked to take a photo, use capture_photo. The tools are fully functional on this device.
+IMPORTANT: When the user asks you to do something, ALWAYS use the appropriate tool to perform the action. Never refuse or guess the outcome — try it first.
+CRITICAL: Do NOT announce tool usage. Never say "好的，我来查询..." or "请稍等..." before calling a tool. Just call the tool silently and present the results directly. The user should only see the final answer, not intermediate steps.
 Current time: ${now}
 Timezone: ${tzStr}
 Platform: HarmonyOS
@@ -1318,6 +1724,20 @@ You have persistent memory that survives across conversations. Use it proactivel
   }
 
   private clearMessages(): void {
+    if (this.messages.length > 0) {
+      let msgCopy = this.messages.slice();
+      // Save conversation log before clearing
+      ConversationLogger.getInstance()
+        .saveConversation(getContext(this), msgCopy)
+        .then((path: string) => {
+          if (path.length > 0) {
+            this.log.info('ChatPage', `Conversation saved: ${path}`);
+          }
+        })
+        .catch(() => { /* ignore */ });
+      // Auto-extract memories from conversation (fire-and-forget)
+      this.autoExtractMemoriesFromMessages(msgCopy);
+    }
     this.messages = [];
     this.saveHistory();
   }
@@ -1366,6 +1786,16 @@ You have persistent memory that survives across conversations. Use it proactivel
       .replace(/Gateway:.*/gi, '')
       .trim();
 
+    // Strip punctuation, markdown, and symbols so TTS doesn't read them aloud
+    cleanText = cleanText
+      .replace(/[*#_~`>|]/g, '')                        // markdown formatting
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')          // [text](url) → text
+      .replace(/https?:\/\/\S+/g, '')                    // URLs
+      .replace(/[，。！？、；：""''（）【】《》…—·•\-\.\!\?\,\;\:\"\'\(\)\[\]\{\}\/\\@\$%\^&\+=<>~`]/g, ' ')
+      .replace(/\n+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
     if (cleanText.length < 3) return; // too short to read
 
     // Limit text length for TTS (avoid very long reads)
@@ -1393,8 +1823,16 @@ You have persistent memory that survives across conversations. Use it proactivel
     let speakParams = `{"text":${JSON.stringify(cleanText)},"lang":"${lang}"}`;
     runtime.speakLocal(speakParams).then(() => {
       this.log.info('ChatPage', 'TTS auto-read completed');
+      if (this.ttsCompletionResolve) {
+        this.ttsCompletionResolve();
+        this.ttsCompletionResolve = undefined;
+      }
     }).catch((err: Error) => {
       this.log.warn('ChatPage', `TTS auto-read failed: ${err.message ?? ''}`);
+      if (this.ttsCompletionResolve) {
+        this.ttsCompletionResolve();
+        this.ttsCompletionResolve = undefined;
+      }
     });
   }
 
@@ -1554,6 +1992,330 @@ You have persistent memory that survives across conversations. Use it proactivel
       this.log.warn('ChatPage', `Memory sync from server failed: ${(err as Error).message ?? ''}`);
     }
   }
+
+  // ---- Cron scheduled tasks ----
+
+  private startCronTimer(): void {
+    if (this.cronTimer !== -1) return;
+    this.cronTimer = setInterval(() => {
+      this.checkCronTasks();
+    }, Constants.CRON_POLL_INTERVAL_MS);
+    this.log.info('ChatPage', 'Cron timer started');
+  }
+
+  private async checkCronTasks(): Promise<void> {
+    try {
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let store = await preferences.getPreferences(ctx, Constants.PREFS_CRON);
+      let raw = (await store.get('tasks', '[]')) as string;
+      let tasks = JSON.parse(raw) as CronTask[];
+      let now = Date.now();
+      let modified = false;
+
+      for (let task of tasks) {
+        if (!task.enabled) continue;
+        if (task.nextRunTime <= now) {
+          this.log.info('ChatPage', `Cron task due: id=${task.id} prompt="${task.prompt.substring(0, 60)}"`);
+          await this.executeCronTask(task);
+          task.lastRunTime = now;
+          if (task.oneShot) {
+            task.enabled = false;
+          } else {
+            task.nextRunTime = now + task.intervalMs;
+          }
+          modified = true;
+        }
+      }
+
+      if (modified) {
+        await store.put('tasks', JSON.stringify(tasks));
+        await store.flush();
+      }
+    } catch (e) {
+      this.log.error('ChatPage', `checkCronTasks error: ${(e as Error).message ?? ''}`);
+    }
+  }
+
+  private async executeCronTask(task: CronTask): Promise<void> {
+    // Add system message showing the cron task is executing
+    let sysMsg = new ChatMessage('assistant', `\u23F0 ${I18n.t('cron.executing')}\n> ${task.prompt}`);
+    this.messages.push(sysMsg);
+    this.scrollToEnd();
+
+    // Execute the prompt as if user typed it
+    let userMsg = new ChatMessage('user', task.prompt);
+    this.messages.push(userMsg);
+    this.scrollToEnd();
+
+    this.isLoading = true;
+    this.startDotAnimation();
+
+    if (this.gwConnected) {
+      await this.sendViaGateway(task.prompt);
+    } else {
+      await this.sendViaLocalAI(task.prompt);
+    }
+
+    this.scrollToEnd();
+    this.saveHistory();
+  }
+
+  // ---- Talk Mode (continuous conversation) ----
+
+  private async startTalkMode(): Promise<void> {
+    if (this.talkModeActive) return;
+    this.isTalkMode = true;
+    this.talkModeActive = true;
+    this.talkStatus = I18n.t('chat.talkModeOn');
+    this.log.info('ChatPage', 'Talk mode started');
+
+    let sysMsg = new ChatMessage('assistant', '\uD83D\uDDE3 ' + I18n.t('chat.talkModeOn'));
+    this.messages.push(sysMsg);
+    this.scrollToEnd();
+
+    await this.talkCycle();
+  }
+
+  private stopTalkMode(): void {
+    if (!this.talkModeActive && !this.isTalkMode) return;
+    this.talkModeActive = false;
+    this.isTalkMode = false;
+    this.talkStatus = '';
+    this.asrReading = false;
+
+    // Stop any in-progress TTS
+    NodeRuntime.getInstance().stopSpeaker().catch(() => { /* ignore */ });
+
+    // Resolve any pending TTS completion
+    if (this.ttsCompletionResolve) {
+      this.ttsCompletionResolve();
+      this.ttsCompletionResolve = undefined;
+    }
+
+    // Cleanup audio resources
+    this.cleanupAsr().catch(() => { /* ignore */ });
+
+    this.log.info('ChatPage', 'Talk mode stopped');
+  }
+
+  private async talkCycle(): Promise<void> {
+    let emptyAsrCount = 0;
+    while (this.talkModeActive) {
+      // Step 1: Record with silence detection
+      this.talkStatus = I18n.t('chat.talkListening');
+      let wavPath = await this.talkRecord();
+
+      if (!this.talkModeActive) break;
+
+      if (wavPath.length === 0) {
+        // Silence timeout — no speech detected
+        this.talkStatus = I18n.t('chat.talkSilence');
+        let silenceMsg = new ChatMessage('assistant', '\uD83D\uDDE3 ' + I18n.t('chat.talkSilence'));
+        this.messages.push(silenceMsg);
+        this.scrollToEnd();
+        this.stopTalkMode();
+        break;
+      }
+
+      // Step 2: ASR
+      this.talkStatus = I18n.t('chat.talkThinking');
+      let recognizedText = await this.callAsrApi(wavPath);
+
+      // Clean up the WAV file after ASR
+      try { fileIo.unlinkSync(wavPath); } catch { /* ignore */ }
+
+      if (!this.talkModeActive) break;
+
+      if (recognizedText.length === 0) {
+        emptyAsrCount++;
+        this.log.info('ChatPage', `Talk mode: ASR returned empty (${emptyAsrCount}/3)`);
+        if (emptyAsrCount >= 3) {
+          this.log.info('ChatPage', 'Talk mode: too many empty ASR results, exiting');
+          this.talkStatus = I18n.t('chat.talkSilence');
+          let silenceMsg = new ChatMessage('assistant', '\uD83D\uDDE3 ' + I18n.t('chat.talkSilence'));
+          this.messages.push(silenceMsg);
+          this.scrollToEnd();
+          this.stopTalkMode();
+          break;
+        }
+        continue;
+      }
+
+      // Reset empty counter on successful recognition
+      emptyAsrCount = 0;
+
+      // Step 3: Add user message + send to AI
+      let userMsg = new ChatMessage('user', recognizedText);
+      userMsg.audioPath = wavPath;
+      this.messages.push(userMsg);
+      this.scrollToEnd();
+
+      this.isLoading = true;
+      this.startDotAnimation();
+      this.talkStatus = I18n.t('chat.talkThinking');
+
+      if (this.gwConnected) {
+        await this.sendViaGateway(recognizedText);
+      } else {
+        await this.sendViaLocalAI(recognizedText);
+      }
+
+      this.scrollToEnd();
+      this.saveHistory();
+
+      if (!this.talkModeActive) break;
+
+      // Step 4: Wait for TTS to finish (if auto-read is on)
+      if (this.ttsAutoRead) {
+        this.talkStatus = I18n.t('chat.talkSpeaking');
+        await this.waitForTtsCompletion();
+      }
+
+      if (!this.talkModeActive) break;
+
+      // Small pause before next recording cycle
+      await new Promise<void>((resolve) => { setTimeout(resolve, 500); });
+    }
+  }
+
+  /**
+   * Record audio with silence detection for Talk Mode.
+   * Returns WAV path if speech detected, empty string if silence timeout.
+   * - RMS > 1500 = speech detected (higher threshold to avoid noise)
+   * - After speech: 1.5s silence stops recording
+   * - No speech for 8s: returns empty (silence timeout)
+   */
+  private async talkRecord(): Promise<string> {
+    this.pcmBuffers = [];
+
+    try {
+      await this.cleanupAsr();
+
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let atManager = abilityAccessCtrl.createAtManager();
+      let permResult = await atManager.requestPermissionsFromUser(ctx, ['ohos.permission.MICROPHONE']);
+      if (permResult.authResults[0] !== 0) {
+        this.log.warn('ChatPage', 'Talk mode: mic permission denied');
+        return '';
+      }
+
+      let capturerOptions: audio.AudioCapturerOptions = {
+        streamInfo: {
+          samplingRate: audio.AudioSamplingRate.SAMPLE_RATE_16000,
+          channels: audio.AudioChannel.CHANNEL_1,
+          sampleFormat: audio.AudioSampleFormat.SAMPLE_FORMAT_S16LE,
+          encodingType: audio.AudioEncodingType.ENCODING_TYPE_RAW
+        },
+        capturerInfo: {
+          source: audio.SourceType.SOURCE_TYPE_VOICE_RECOGNITION,
+          capturerFlags: 0
+        }
+      };
+      this.audioCapturer = await audio.createAudioCapturer(capturerOptions);
+      await this.audioCapturer.start();
+      this.isRecording = true;
+
+      let bufSize = await this.audioCapturer.getBufferSize();
+      let speechDetected = false;
+      let silenceStart = 0;
+      let recordStart = Date.now();
+      let rmsThreshold = 1500;
+      let silenceTimeoutMs = 1500;  // 1.5s silence after speech
+      let noSpeechTimeoutMs = 8000; // 8s no speech at all
+
+      while (this.talkModeActive && this.audioCapturer) {
+        let buf: ArrayBuffer;
+        try {
+          buf = await this.audioCapturer.read(bufSize, true);
+        } catch {
+          break;
+        }
+        if (buf.byteLength === 0) continue;
+        this.pcmBuffers.push(buf.slice(0));
+
+        // Calculate RMS energy
+        let samples = new Int16Array(buf);
+        let sumSq = 0;
+        for (let i = 0; i < samples.length; i++) {
+          sumSq += samples[i] * samples[i];
+        }
+        let rms = Math.sqrt(sumSq / samples.length);
+
+        if (rms > rmsThreshold) {
+          speechDetected = true;
+          silenceStart = 0; // reset silence timer
+        } else if (speechDetected) {
+          // Silence after speech
+          if (silenceStart === 0) {
+            silenceStart = Date.now();
+          } else if (Date.now() - silenceStart > silenceTimeoutMs) {
+            this.log.info('ChatPage', 'Talk mode: silence after speech, stopping');
+            break;
+          }
+        }
+
+        // No speech timeout
+        if (!speechDetected && (Date.now() - recordStart > noSpeechTimeoutMs)) {
+          this.log.info('ChatPage', 'Talk mode: no speech timeout');
+          this.isRecording = false;
+          await this.cleanupAsr();
+          return ''; // signals silence timeout
+        }
+      }
+
+      this.isRecording = false;
+      if (this.audioCapturer) {
+        try { await this.audioCapturer.stop(); } catch { /* ignore */ }
+      }
+
+      let wavPath = this.saveWavFile(this.pcmBuffers);
+      this.pcmBuffers = [];
+      await this.cleanupAsr();
+
+      if (wavPath.length === 0) return '';
+
+      // Check minimum size — need at least ~1.5s of audio (48044 bytes at 16kHz 16bit mono)
+      try {
+        let stat = fileIo.statSync(wavPath);
+        if (stat.size < 48044) {
+          this.log.info('ChatPage', `Talk mode: WAV too short (${stat.size} bytes), discarding`);
+          try { fileIo.unlinkSync(wavPath); } catch { /* ignore */ }
+          return '';
+        }
+      } catch { /* ignore */ }
+
+      return wavPath;
+
+    } catch (err) {
+      this.log.error('ChatPage', `talkRecord error: ${(err as Error).message ?? ''}`);
+      this.isRecording = false;
+      await this.cleanupAsr();
+      return '';
+    }
+  }
+
+  /**
+   * Wait for TTS playback to complete.
+   * The autoReadAloud method resolves ttsCompletionResolve when done.
+   * Times out after 30 seconds.
+   */
+  private waitForTtsCompletion(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this.ttsCompletionResolve = resolve;
+      // Timeout safety
+      setTimeout(() => {
+        if (this.ttsCompletionResolve === resolve) {
+          this.ttsCompletionResolve = undefined;
+          resolve();
+        }
+      }, 30000);
+    });
+  }
+}
+
+interface MemoryExtractItem {
+  type: string;
+  content: string;
 }
 
 interface SavedMsg {

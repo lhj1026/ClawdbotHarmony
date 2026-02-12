@@ -76,22 +76,23 @@ export class SpeakerCapability {
       this.ttsEngine = undefined;
     }
 
+    let ttsLang = lang.startsWith('en') ? 'en-US' : 'zh-CN';
     let initParams: textToSpeech.CreateEngineParams = {
-      language: lang.startsWith('zh') ? 'zh-CN' : 'zh-CN', // HarmonyOS TTS only supports zh-CN for now
+      language: ttsLang,
       person: 0,
-      online: 1, // Use online TTS (offline may not be available on all devices)
+      online: 0, // Use offline TTS first (more stable, no pitch drift)
       extraParams: { style: 'interaction-broadcast', locate: 'CN', name: 'EngineName' },
     };
 
     try {
       this.ttsEngine = await textToSpeech.createEngine(initParams);
-      this.log.info(TAG, 'TTS engine created (online mode)');
+      this.log.info(TAG, `TTS engine created (offline, lang=${ttsLang})`);
     } catch (err) {
-      this.log.warn(TAG, `Online TTS failed, trying offline: ${(err as Error).message}`);
-      // Fallback to offline mode
-      initParams.online = 0;
+      this.log.warn(TAG, `Offline TTS failed, trying online: ${(err as Error).message}`);
+      // Fallback to online mode
+      initParams.online = 1;
       this.ttsEngine = await textToSpeech.createEngine(initParams);
-      this.log.info(TAG, 'TTS engine created (offline mode)');
+      this.log.info(TAG, `TTS engine created (online, lang=${ttsLang})`);
     }
 
     // Speak the text

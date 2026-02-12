@@ -31,7 +31,9 @@ import {
   GatewayChatContentBlock,
 } from './GatewayModels';
 import { image } from '@kit.ImageKit';
+import { preferences } from '@kit.ArkData';
 import { LogService } from '../../common/LogService';
+import { Constants } from '../../common/Constants';
 
 const TAG = 'NodeRuntime';
 const APP_VERSION = '2.2.2';
@@ -89,6 +91,11 @@ export class NodeRuntime {
 
   // Current endpoint (for media URL building)
   private _endpoint: GatewayEndpoint | undefined = undefined;
+
+  // Store connect params for reconnect/re-auth
+  private _context: common.UIAbilityContext | undefined = undefined;
+  private _connectToken: string | undefined = undefined;
+  private _connectPassword: string | undefined = undefined;
 
   // Notification-to-chat listeners
   private _notifListeners: Array<(info: NotificationInfo) => void> = [];
@@ -360,13 +367,26 @@ export class NodeRuntime {
     }
   }
 
+  /** Pre-load display name from preferences. Call before connect(). */
+  async loadDisplayName(context: common.UIAbilityContext): Promise<void> {
+    try {
+      let store = await preferences.getPreferences(context, Constants.PREFS_SETTINGS);
+      this._displayName = (await store.get('assistant_name', '')) as string;
+      this.log.info(TAG, `Loaded displayName: "${this._displayName}"`);
+    } catch { /* ignore */ }
+  }
+
   connect(context: common.UIAbilityContext, endpoint: GatewayEndpoint, token?: string, password?: string): void {
     // Disconnect existing sessions if any
     this.disconnect();
 
     this._endpoint = endpoint;
-    this.log.info(TAG, `connect() called: ${endpoint.host}:${endpoint.port} tls=${endpoint.useTls} token=${token ? 'yes' : 'no'} password=${password ? 'yes' : 'no'}`);
-
+    this._context = context;
+    this._connectToken = token;
+    this._connectPassword = password;
+    this._pairingApproved = false;
+    this._pairingInProgress = false;
+    this.log.info(TAG, `connect() called: ${endpoint.host}:${endpoint.port} tls=${endpoint.useTls} token=${token ? 'yes' : 'no'} password=${password ? 'yes' : 'no'} displayName="${this._displayName}"`);
     // Set context for capabilities that need file system access
     this.cameraCapability.setContext(context);
     this.screenCapability.setContext(context);
@@ -414,6 +434,9 @@ export class NodeRuntime {
     this.nodeSession.onInvokeRequest = async (req: InvokeRequest): Promise<InvokeResult> => {
       return await this.handleInvoke(req);
     };
+    this.nodeSession.onPairingRequired = (requestId: string) => {
+      this.autoApproveNodePairing(requestId);
+    };
 
     // Connect both sessions (fire-and-forget, state updates via callbacks)
     this.log.info(TAG, 'Connecting operator session...');
@@ -438,6 +461,58 @@ export class NodeRuntime {
     this._operatorState = ConnectionState.Disconnected;
     this._nodeState = ConnectionState.Disconnected;
     this.updateStatus();
+  }
+
+  private _pairingApproved: boolean = false;
+  private _pairingInProgress: boolean = false;
+  private _pairingScopeMissing: boolean = false;
+
+  private async autoApproveNodePairing(requestId: string): Promise<void> {
+    if (this._pairingApproved) {
+      return;
+    }
+    if (this._pairingInProgress) {
+      return;
+    }
+    // If we already know the operator lacks the pairing scope, don't retry
+    if (this._pairingScopeMissing) {
+      return;
+    }
+    this._pairingInProgress = true;
+
+    // Wait for operator session to be connected (poll every 1s, up to 15s)
+    let waitedMs = 0;
+    while ((!this.operatorSession || this._operatorState !== ConnectionState.Connected) && waitedMs < 15000) {
+      this.log.info(TAG, `Auto-pair: waiting for operator to connect... (${waitedMs}ms)`);
+      await new Promise<void>((resolve) => { setTimeout(() => { resolve(); }, 1000); });
+      waitedMs += 1000;
+    }
+
+    if (!this.operatorSession || this._operatorState !== ConnectionState.Connected) {
+      this.log.warn(TAG, 'Auto-pair: operator not connected after 15s, cannot approve');
+      this._pairingInProgress = false;
+      return;
+    }
+
+    this.log.info(TAG, `Auto-pair: approving requestId=${requestId} via node.pair.approve`);
+    let params = `{"requestId":${JSON.stringify(requestId)}}`;
+    try {
+      let res = await this.operatorSession.request('node.pair.approve', params, 10000);
+      this.log.info(TAG, `Auto-pair: succeeded: ${res.substring(0, 300)}`);
+      this._pairingApproved = true;
+      if (this.nodeSession) {
+        this.log.info(TAG, 'Auto-pair: forcing node reconnect...');
+        this.nodeSession.forceReconnect();
+      }
+    } catch (err) {
+      let errMsg = (err as Error).message ?? '';
+      this.log.error(TAG, `Auto-pair: failed: ${errMsg}`);
+      if (errMsg.includes('missing scope')) {
+        this._pairingScopeMissing = true;
+        this.log.warn(TAG, 'Auto-pair: operator lacks pairing scope. Set gateway.devices.autoApprove="all" in gateway config, or run: openclaw nodes approve ' + requestId);
+      }
+    }
+    this._pairingInProgress = false;
   }
 
   private updateStatus(): void {
@@ -843,20 +918,26 @@ export class NodeRuntime {
     // Other operator events: voice wake, branding, presence, health, etc.
   }
 
+  private _displayName: string = '';
+
   private buildClientInfo(clientId: string, clientMode: string): ClientInfo {
-    return {
+    let info: ClientInfo = {
       id: clientId,
       version: APP_VERSION,
       platform: 'HarmonyOS',
       mode: clientMode,
       deviceFamily: 'HarmonyOS',
     };
+    if (this._displayName.length > 0) {
+      info.displayName = this._displayName;
+    }
+    return info;
   }
 
   private buildOperatorOptions(): ConnectOptions {
     return {
       role: 'operator',
-      scopes: ['operator.read', 'operator.write'],
+      scopes: ['operator.read', 'operator.write', 'operator.pairing'],
       caps: [],
       commands: [],
       permissions: {} as Record<string, boolean>,

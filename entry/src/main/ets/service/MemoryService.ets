@@ -1,19 +1,34 @@
 import { preferences } from '@kit.ArkData';
-import { MemoryItem, MemoryData } from '../model/Models';
+import { fileIo } from '@kit.CoreFileKit';
+import { http } from '@kit.NetworkKit';
+import { util } from '@kit.ArkTS';
+import { MemoryItem, MemoryData, VectorData, VectorStore } from '../model/Models';
 import { Constants } from '../common/Constants';
+import { LogService } from '../common/LogService';
 
 interface ScoredMemory {
   item: MemoryItem;
   score: number;
 }
 
+interface EmbeddingResponse {
+  data: EmbeddingDataItem[];
+}
+
+interface EmbeddingDataItem {
+  embedding: number[];
+}
+
 /**
- * Persistent memory service.
+ * Persistent memory service with vector embedding support.
  * Stores facts, preferences, and instructions across sessions.
  * Memory is injected into the system prompt for personalisation.
+ * Supports semantic search via embedding API (SiliconFlow bge-m3).
  */
 export class MemoryService {
   private static instance: MemoryService | undefined = undefined;
+  private log: LogService = LogService.getInstance();
+  private readonly TAG = 'MemoryService';
 
   static getInstance(): MemoryService {
     if (!MemoryService.instance) {
@@ -57,6 +72,9 @@ export class MemoryService {
     let item = new MemoryItem(memType, content, importance);
     items.push(item);
     await this.save(context, items);
+    // Async: embed vector + regenerate memory.md (fire-and-forget)
+    this.embedAndStore(context, item).catch(() => { /* ignore */ });
+    this.generateMemoryMd(context).catch(() => { /* ignore */ });
     return item;
   }
 
@@ -64,10 +82,17 @@ export class MemoryService {
     let items = await this.loadAll(context);
     let filtered = items.filter((m): boolean => m.id !== id);
     await this.save(context, filtered);
+    // Remove vector for this id
+    this.removeVector(context, id).catch(() => { /* ignore */ });
+    this.generateMemoryMd(context).catch(() => { /* ignore */ });
   }
 
   async clearAll(context: Context): Promise<void> {
     await this.save(context, []);
+    // Clear all vectors
+    let emptyStore: VectorStore = { model: Constants.EMBEDDING_MODEL, vectors: [] };
+    await this.saveVectors(context, emptyStore);
+    this.generateMemoryMd(context).catch(() => { /* ignore */ });
   }
 
   /**
@@ -169,5 +194,264 @@ export class MemoryService {
         await this.addIfNew(context, type, match[1].trim(), 0.8);
       }
     }
+  }
+
+  // ==================== Vector Embedding ====================
+
+  /**
+   * Call embedding API to generate a vector for the given text.
+   * Returns empty array on failure.
+   */
+  async embed(text: string, apiKey: string): Promise<number[]> {
+    if (apiKey.length === 0 || text.length === 0) return [];
+    try {
+      let bodyStr = JSON.stringify({ model: Constants.EMBEDDING_MODEL, input: text });
+      let req = http.createHttp();
+      let resp = await req.request(Constants.EMBEDDING_URL, {
+        method: http.RequestMethod.POST,
+        header: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        } as Record<string, string>,
+        extraData: bodyStr,
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 15000,
+        readTimeout: 30000
+      });
+      req.destroy();
+      if (resp.responseCode !== 200) {
+        this.log.warn(this.TAG, `embed API error: HTTP ${resp.responseCode}`);
+        return [];
+      }
+      let data = JSON.parse(resp.result as string) as EmbeddingResponse;
+      if (data.data && data.data.length > 0 && data.data[0].embedding) {
+        this.log.info(this.TAG, `embed OK: dim=${data.data[0].embedding.length} textLen=${text.length}`);
+        return data.data[0].embedding;
+      }
+      return [];
+    } catch (e) {
+      this.log.warn(this.TAG, `embed failed: ${(e as Error).message ?? String(e)}`);
+      return [];
+    }
+  }
+
+  /**
+   * Load vector store from file.
+   */
+  async loadVectors(context: Context): Promise<VectorStore> {
+    let filePath = context.filesDir + '/memory_vectors.json';
+    try {
+      let stat = fileIo.statSync(filePath);
+      if (!stat.isFile()) {
+        return { model: Constants.EMBEDDING_MODEL, vectors: [] };
+      }
+      let file = fileIo.openSync(filePath, fileIo.OpenMode.READ_ONLY);
+      let buf = new ArrayBuffer(stat.size);
+      fileIo.readSync(file.fd, buf);
+      fileIo.closeSync(file);
+      let decoder = util.TextDecoder.create('utf-8');
+      let text = decoder.decodeWithStream(new Uint8Array(buf));
+      return JSON.parse(text) as VectorStore;
+    } catch {
+      return { model: Constants.EMBEDDING_MODEL, vectors: [] };
+    }
+  }
+
+  /**
+   * Save vector store to file.
+   */
+  async saveVectors(context: Context, store: VectorStore): Promise<void> {
+    let filePath = context.filesDir + '/memory_vectors.json';
+    let json = JSON.stringify(store);
+    let encoder = new util.TextEncoder();
+    let encoded = encoder.encodeInto(json);
+    let file = fileIo.openSync(filePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+    fileIo.writeSync(file.fd, encoded.buffer);
+    fileIo.closeSync(file);
+  }
+
+  /**
+   * Embed a memory item and store its vector.
+   */
+  private async embedAndStore(context: Context, item: MemoryItem): Promise<void> {
+    let apiKey = await this.getEmbeddingApiKey(context);
+    if (apiKey.length === 0) {
+      this.log.info(this.TAG, 'No embedding API key configured, skipping embed');
+      return;
+    }
+    let vector = await this.embed(item.content, apiKey);
+    if (vector.length === 0) return;
+
+    let store = await this.loadVectors(context);
+    // Replace if exists, otherwise add
+    let found = false;
+    for (let i = 0; i < store.vectors.length; i++) {
+      if (store.vectors[i].id === item.id) {
+        store.vectors[i].vector = vector;
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      let vd: VectorData = { id: item.id, vector: vector };
+      store.vectors.push(vd);
+    }
+    await this.saveVectors(context, store);
+    this.log.info(this.TAG, `Vector stored for ${item.id}, total vectors: ${store.vectors.length}`);
+  }
+
+  /**
+   * Remove a vector by memory id.
+   */
+  private async removeVector(context: Context, id: string): Promise<void> {
+    let store = await this.loadVectors(context);
+    store.vectors = store.vectors.filter((v): boolean => v.id !== id);
+    await this.saveVectors(context, store);
+  }
+
+  /**
+   * Cosine similarity between two vectors.
+   */
+  cosineSimilarity(a: number[], b: number[]): number {
+    if (a.length !== b.length || a.length === 0) return 0;
+    let dot = 0;
+    let normA = 0;
+    let normB = 0;
+    for (let i = 0; i < a.length; i++) {
+      dot += a[i] * b[i];
+      normA += a[i] * a[i];
+      normB += b[i] * b[i];
+    }
+    let denom = Math.sqrt(normA) * Math.sqrt(normB);
+    if (denom === 0) return 0;
+    return dot / denom;
+  }
+
+  /**
+   * Semantic vector search across memories.
+   * Falls back to keyword search if embedding fails.
+   */
+  async vectorSearch(context: Context, query: string, apiKey: string,
+    topK: number = Constants.VECTOR_SEARCH_TOP_K,
+    filterType: string = ''): Promise<MemoryItem[]> {
+    // Get query embedding
+    let queryVec = await this.embed(query, apiKey);
+    if (queryVec.length === 0) {
+      this.log.info(this.TAG, 'vectorSearch: embed failed, falling back to keyword search');
+      return [];
+    }
+
+    let store = await this.loadVectors(context);
+    if (store.vectors.length === 0) {
+      this.log.info(this.TAG, 'vectorSearch: no vectors stored');
+      return [];
+    }
+
+    let items = await this.loadAll(context);
+    // Build id -> item map
+    let itemMap = new Map<string, MemoryItem>();
+    for (let item of items) {
+      if (filterType.length === 0 || item.memType === filterType) {
+        itemMap.set(item.id, item);
+      }
+    }
+
+    // Score each vector
+    let scored: ScoredMemory[] = [];
+    for (let vd of store.vectors) {
+      let item = itemMap.get(vd.id);
+      if (!item) continue;
+      let sim = this.cosineSimilarity(queryVec, vd.vector);
+      if (sim >= Constants.VECTOR_SEARCH_THRESHOLD) {
+        scored.push({ item: item, score: sim });
+      }
+    }
+
+    scored.sort((a: ScoredMemory, b: ScoredMemory): number => b.score - a.score);
+    let results = scored.slice(0, topK).map((s: ScoredMemory): MemoryItem => s.item);
+    this.log.info(this.TAG, `vectorSearch: query="${query.substring(0, 50)}" found=${scored.length} returned=${results.length}`);
+    return results;
+  }
+
+  /**
+   * Get the embedding API key from settings.
+   * Reuses the ASR key (both are SiliconFlow).
+   */
+  async getEmbeddingApiKey(context: Context): Promise<string> {
+    try {
+      let store = await preferences.getPreferences(context, Constants.PREFS_SETTINGS);
+      // Try dedicated embedding key first, then fall back to ASR key
+      let embKey = (await store.get('embedding_key', '')) as string;
+      if (embKey.length > 0) return embKey;
+      let asrKey = (await store.get('asr_key', '')) as string;
+      if (asrKey.length > 0) return asrKey;
+      // Fall back to OpenAI provider key (if using SiliconFlow)
+      let provider = (await store.get('provider', '')) as string;
+      if (provider === 'openai') {
+        let apiKey = (await store.get('key_openai', '')) as string;
+        if (apiKey.length > 0) return apiKey;
+      }
+      return '';
+    } catch {
+      return '';
+    }
+  }
+
+  // ==================== memory.md generation ====================
+
+  /**
+   * Generate a human-readable memory.md summary file.
+   * Called automatically after memory changes.
+   */
+  async generateMemoryMd(context: Context): Promise<string> {
+    let items = await this.loadAll(context);
+    let now = new Date();
+    let dateStr = `${now.getFullYear()}-${(now.getMonth()+1).toString().padStart(2,'0')}-${now.getDate().toString().padStart(2,'0')} ${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}`;
+
+    let lines: string[] = [];
+    lines.push('# ClawdBot Memory');
+    lines.push(`Last updated: ${dateStr}`);
+    lines.push(`Total: ${items.length} items`);
+    lines.push('');
+
+    // Group by type, sorted by importance desc
+    let facts = items.filter((m): boolean => m.memType === 'fact')
+      .sort((a: MemoryItem, b: MemoryItem): number => b.importance - a.importance);
+    let prefs = items.filter((m): boolean => m.memType === 'preference')
+      .sort((a: MemoryItem, b: MemoryItem): number => b.importance - a.importance);
+    let instr = items.filter((m): boolean => m.memType === 'instruction')
+      .sort((a: MemoryItem, b: MemoryItem): number => b.importance - a.importance);
+
+    if (facts.length > 0) {
+      lines.push('## Facts');
+      for (let f of facts) {
+        lines.push(`- ${f.content} (importance: ${f.importance})`);
+      }
+      lines.push('');
+    }
+    if (prefs.length > 0) {
+      lines.push('## Preferences');
+      for (let p of prefs) {
+        lines.push(`- ${p.content} (importance: ${p.importance})`);
+      }
+      lines.push('');
+    }
+    if (instr.length > 0) {
+      lines.push('## Instructions');
+      for (let ins of instr) {
+        lines.push(`- ${ins.content} (importance: ${ins.importance})`);
+      }
+      lines.push('');
+    }
+
+    let content = lines.join('\n');
+    let filePath = context.filesDir + '/memory.md';
+    let encoder = new util.TextEncoder();
+    let encoded = encoder.encodeInto(content);
+    let file = fileIo.openSync(filePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+    fileIo.writeSync(file.fd, encoded.buffer);
+    fileIo.closeSync(file);
+    this.log.info(this.TAG, `memory.md generated: ${items.length} items, ${content.length} bytes`);
+    return filePath;
   }
 }

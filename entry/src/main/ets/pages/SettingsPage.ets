@@ -6,6 +6,7 @@ import { Constants } from '../common/Constants';
 import { NodeRuntime } from '../service/gateway/NodeRuntime';
 import { ConnectionState, GatewayEndpoint } from '../service/gateway/GatewayModels';
 import { I18n, LangCode } from '../common/I18n';
+import { ImapService } from '../service/ImapService';
 
 @Component
 export struct SettingsPage {
@@ -44,6 +45,15 @@ export struct SettingsPage {
   @State asrModel: string = 'FunAudioLLM/SenseVoiceSmall';
   @State showAsrKey: boolean = false;
 
+  // Email / IMAP
+  @State emailEnabled: boolean = false;
+  @State imapHost: string = 'imap.gmail.com';
+  @State imapPort: string = '993';
+  @State imapUser: string = '';
+  @State imapPass: string = '';
+  @State showImapPass: boolean = false;
+  @State emailTestStatus: string = '';
+
   // Gateway / Node Mode
   @State gwEnabled: boolean = false;
   @State gwHost: string = '192.168.1.68';
@@ -71,6 +81,7 @@ export struct SettingsPage {
   aboutToAppear(): void {
     this.load();
     this.loadGateway();
+    this.loadEmail();
     this.lang = I18n.lang;
     this.langListener = () => { this.lang = I18n.lang; };
     I18n.addListener(this.langListener);
@@ -439,6 +450,132 @@ export struct SettingsPage {
         .backgroundColor(Color.White)
         .borderRadius(12)
 
+        // ---- Email / IMAP ----
+        this.SectionTitle(I18n.t('settings.email'))
+        Column() {
+          // Enable toggle
+          Row() {
+            Column({ space: 2 }) {
+              Text(I18n.t('settings.emailEnabled'))
+                .fontSize(14)
+                .fontColor('#1A1A1A')
+              Text(I18n.t('settings.emailEnabledDesc'))
+                .fontSize(11)
+                .fontColor('#999999')
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
+
+            Toggle({ type: ToggleType.Switch, isOn: this.emailEnabled })
+              .selectedColor('#D2691E')
+              .onChange((isOn: boolean) => { this.emailEnabled = isOn; })
+          }
+          .width('100%')
+
+          if (this.emailEnabled) {
+            Divider().margin({ top: 14, bottom: 14 }).color('#F0F0F0')
+
+            // IMAP Host
+            Text(I18n.t('settings.imapHost'))
+              .fontSize(14)
+              .fontColor('#1A1A1A')
+              .width('100%')
+            TextInput({ text: this.imapHost, placeholder: 'imap.gmail.com' })
+              .height(40)
+              .backgroundColor('#F5F5F5')
+              .borderRadius(8)
+              .margin({ top: 6 })
+              .onChange((v: string) => { this.imapHost = v; })
+
+            Divider().margin({ top: 14, bottom: 14 }).color('#F0F0F0')
+
+            // Port
+            Row() {
+              Text(I18n.t('settings.imapPort'))
+                .fontSize(14)
+                .fontColor('#1A1A1A')
+                .layoutWeight(1)
+              TextInput({ text: this.imapPort, placeholder: '993' })
+                .width(100)
+                .height(40)
+                .backgroundColor('#F5F5F5')
+                .borderRadius(8)
+                .type(InputType.Number)
+                .onChange((v: string) => { this.imapPort = v; })
+            }
+            .width('100%')
+
+            Divider().margin({ top: 14, bottom: 14 }).color('#F0F0F0')
+
+            // Email address
+            Text(I18n.t('settings.imapUser'))
+              .fontSize(14)
+              .fontColor('#1A1A1A')
+              .width('100%')
+            TextInput({ text: this.imapUser, placeholder: 'user@gmail.com' })
+              .height(40)
+              .backgroundColor('#F5F5F5')
+              .borderRadius(8)
+              .margin({ top: 6 })
+              .onChange((v: string) => { this.imapUser = v; })
+
+            Divider().margin({ top: 14, bottom: 14 }).color('#F0F0F0')
+
+            // Password
+            Text(I18n.t('settings.imapPass'))
+              .fontSize(14)
+              .fontColor('#1A1A1A')
+              .width('100%')
+            Row() {
+              TextInput({ text: this.imapPass, placeholder: '••••••••' })
+                .layoutWeight(1)
+                .height(40)
+                .backgroundColor('#F5F5F5')
+                .borderRadius(8)
+                .type(this.showImapPass ? InputType.Normal : InputType.Password)
+                .onChange((v: string) => { this.imapPass = v; })
+              Button(this.showImapPass ? I18n.t('settings.hide') : I18n.t('settings.show'))
+                .fontSize(12)
+                .height(34)
+                .backgroundColor('#F0F0F0')
+                .fontColor('#666666')
+                .borderRadius(8)
+                .margin({ left: 8 })
+                .onClick(() => { this.showImapPass = !this.showImapPass; })
+            }
+            .margin({ top: 6 })
+            .width('100%')
+
+            Divider().margin({ top: 14, bottom: 14 }).color('#F0F0F0')
+
+            // Test Connection button + status
+            Button(this.emailTestStatus === I18n.t('settings.emailTesting')
+              ? I18n.t('settings.emailTesting')
+              : I18n.t('settings.emailTest'))
+              .width('100%')
+              .height(44)
+              .backgroundColor('#4CAF50')
+              .fontColor(Color.White)
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .borderRadius(10)
+              .onClick(() => { this.testEmailConnection(); })
+
+            if (this.emailTestStatus.length > 0) {
+              Text(this.emailTestStatus)
+                .fontSize(12)
+                .fontColor(this.emailTestStatus.includes(I18n.t('settings.emailTestOk')) ? '#4CAF50' : '#D32F2F')
+                .margin({ top: 8 })
+                .width('100%')
+            }
+          }
+        }
+        .width('100%')
+        .padding(16)
+        .margin({ left: 16, right: 16 })
+        .backgroundColor(Color.White)
+        .borderRadius(12)
+
         // ---- Gateway / Node Mode ----
         this.SectionTitle(I18n.t('settings.gateway'))
         Column() {
@@ -771,7 +908,12 @@ export struct SettingsPage {
       if (result.photoUris.length === 0) return;
       let srcUri = result.photoUris[0];
 
-      let destPath = ctx.filesDir + '/assistant_avatar.jpg';
+      // Delete old avatar file
+      if (this.assistantAvatar.length > 0) {
+        try { fileIo.unlinkSync(this.assistantAvatar); } catch { /* ignore */ }
+      }
+
+      let destPath = ctx.filesDir + `/assistant_avatar_${Date.now()}.jpg`;
 
       // Copy from picker URI to app sandbox
       let srcFile = fileIo.openSync(srcUri, fileIo.OpenMode.READ_ONLY);
@@ -786,6 +928,8 @@ export struct SettingsPage {
       fileIo.closeSync(destFile);
 
       this.assistantAvatar = destPath;
+      // Notify other pages (ChatPage) to reload avatar
+      I18n.setLang(I18n.lang);
     } catch { /* user cancelled or error */ }
   }
 
@@ -804,7 +948,7 @@ export struct SettingsPage {
     } catch { /* ignore */ }
   }
 
-  private toggleGateway(): void {
+  private async toggleGateway(): Promise<void> {
     if (this.gwIsConnected()) {
       NodeRuntime.getInstance().disconnect();
       return;
@@ -824,12 +968,14 @@ export struct SettingsPage {
     let token = this.gwToken.trim().length > 0 ? this.gwToken.trim() : undefined;
     let password = this.gwPassword.trim().length > 0 ? this.gwPassword.trim() : undefined;
     // Apply capability config before connecting
-    NodeRuntime.getInstance().updateCapabilities(
+    let runtime = NodeRuntime.getInstance();
+    runtime.updateCapabilities(
       this.capLocation, this.capCamera, this.capCanvas,
       this.capScreen, this.capNotification, undefined,
       this.capMicrophone, this.capSpeaker, this.capEmail
     );
-    NodeRuntime.getInstance().connect(ctx, endpoint, token, password);
+    await runtime.loadDisplayName(ctx);
+    runtime.connect(ctx, endpoint, token, password);
   }
 
   private async load(): Promise<void> {
@@ -899,6 +1045,36 @@ export struct SettingsPage {
     } catch { /* first launch defaults */ }
   }
 
+  private async loadEmail(): Promise<void> {
+    try {
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let store = await preferences.getPreferences(ctx, Constants.PREFS_EMAIL);
+      this.emailEnabled = (await store.get('enabled', false)) as boolean;
+      let savedHost = (await store.get('imapHost', '')) as string;
+      if (savedHost.length > 0) this.imapHost = savedHost;
+      let savedPort = (await store.get('imapPort', '')) as string;
+      if (savedPort.length > 0) this.imapPort = savedPort;
+      this.imapUser = (await store.get('imapUser', '')) as string;
+      this.imapPass = (await store.get('imapPass', '')) as string;
+    } catch { /* first launch defaults */ }
+  }
+
+  private async testEmailConnection(): Promise<void> {
+    this.emailTestStatus = I18n.t('settings.emailTesting');
+    let imap = new ImapService();
+    try {
+      let port = parseInt(this.imapPort) || 993;
+      await imap.connect(this.imapHost.trim(), port);
+      await imap.login(this.imapUser.trim(), this.imapPass);
+      let count = await imap.selectMailbox('INBOX');
+      await imap.logout();
+      this.emailTestStatus = `${I18n.t('settings.emailTestOk')} (${count} messages)`;
+    } catch (e) {
+      this.emailTestStatus = I18n.t('settings.emailTestFail') + (e as Error).message;
+      try { await imap.logout(); } catch { /* ignore */ }
+    }
+  }
+
   private async save(): Promise<void> {
     try {
       let ctx = getContext(this) as common.UIAbilityContext;
@@ -952,6 +1128,15 @@ export struct SettingsPage {
       await gwStore.put('capEmail', this.capEmail);
       await gwStore.put('ttsAutoRead', this.ttsAutoRead);
       await gwStore.flush();
+
+      // Save email settings
+      let emailStore = await preferences.getPreferences(ctx, Constants.PREFS_EMAIL);
+      await emailStore.put('enabled', this.emailEnabled);
+      await emailStore.put('imapHost', this.imapHost);
+      await emailStore.put('imapPort', this.imapPort);
+      await emailStore.put('imapUser', this.imapUser);
+      await emailStore.put('imapPass', this.imapPass);
+      await emailStore.flush();
 
       // Update NodeRuntime capability config
       NodeRuntime.getInstance().updateCapabilities(

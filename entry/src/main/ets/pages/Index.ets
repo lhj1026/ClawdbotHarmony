@@ -83,6 +83,7 @@ struct Index {
       };
       runtime.addStateListener(authFailListener);
 
+      await runtime.loadDisplayName(ctx);
       runtime.connect(ctx, endpoint,
         token.length > 0 ? token : undefined,
         password.length > 0 ? password : undefined);

@@ -111,3 +111,38 @@ export interface SettingsData {
   baseUrl: string;
   temperature: number;
 }
+
+// Vector embedding data for semantic memory search
+export interface VectorData {
+  id: string;           // corresponds to MemoryItem.id
+  vector: number[];     // embedding vector (1024-dim for bge-m3)
+}
+
+export interface VectorStore {
+  model: string;        // embedding model used
+  vectors: VectorData[];
+}
+
+export interface ConversationFile {
+  filename: string;
+  timestamp: number;
+  messageCount: number;
+}
+
+export interface CronParseResult {
+  intervalMs: number;
+  nextRunTime: number;
+  oneShot: boolean;
+  error: string;
+}
+
+export interface CronTask {
+  id: string;
+  prompt: string;
+  cronExpr: string;
+  intervalMs: number;
+  nextRunTime: number;
+  lastRunTime: number;
+  enabled: boolean;
+  oneShot: boolean;
+}

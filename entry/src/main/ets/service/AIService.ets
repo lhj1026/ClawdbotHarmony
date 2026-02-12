@@ -1,17 +1,19 @@
 import { http } from '@kit.NetworkKit';
+import { preferences } from '@kit.ArkData';
 import { fileIo, picker } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { common, abilityAccessCtrl } from '@kit.AbilityKit';
 import { camera, cameraPicker } from '@kit.CameraKit';
 import { media } from '@kit.MediaKit';
 import { geoLocationManager } from '@kit.LocationKit';
-import { ChatMessage, ApiMessage, ToolSchema, SettingsData } from '../model/Models';
+import { ChatMessage, ApiMessage, ToolSchema, SettingsData, CronTask, CronParseResult } from '../model/Models';
 import { Constants } from '../common/Constants';
 import { LogService } from '../common/LogService';
 import { I18n } from '../common/I18n';
 import { calendarManager } from '@kit.CalendarKit';
 import { CalendarCapability } from './gateway/CalendarCapability';
 import { MemoryService } from './MemoryService';
+import { ImapService, EmailSummary, EmailBody } from './ImapService';
 
 /**
  * AI interaction service.
@@ -90,6 +92,13 @@ interface DeviceObj {
   status: string;
 }
 
+interface EmailConfig {
+  host: string;
+  port: number;
+  user: string;
+  pass: string;
+}
+
 // --------- result type ---------
 export class AIResult {
   messages: ChatMessage[] = [];
@@ -151,13 +160,59 @@ export class AIService {
       }
 
       // Add assistant text if present
-      if (response.text.length > 0) {
-        let msg = new ChatMessage('assistant', response.text);
+      // Skip trivial text (like "{}") when tool calls are present — it's likely
+      // an artifact from the model, not meaningful content for the user.
+      let hasToolCalls = response.toolCalls.length > 0;
+      let textToShow = response.text.trim();
+      if (hasToolCalls) {
+        // Strip JSON-like artifacts that some models emit alongside tool calls
+        let stripped = textToShow.replace(/^\{[\s]*\}$/, '').trim();
+        if (stripped.length > 0) {
+          textToShow = stripped;
+        } else {
+          textToShow = '';
+        }
+      }
+      if (textToShow.length > 0) {
+        let msg = new ChatMessage('assistant', textToShow);
         result.messages.push(msg);
       }
 
-      // No tool calls -> done
-      if (response.toolCalls.length === 0) {
+      // No tool calls -> check auto-dispatch, then done
+      if (!hasToolCalls) {
+        // Auto-dispatch: if model failed to call a tool but user clearly wants one,
+        // inject the tool call automatically (works around weak tool-calling models)
+        if (loopCount === 1 && context) {
+          let autoTool = this.detectAutoDispatch(history);
+          if (autoTool.length > 0) {
+            this.log.info(this.TAG, `Auto-dispatch: ${autoTool}`);
+            let autoInput = autoTool === 'list_emails' ? '{"count":"10"}' : '{}';
+            let autoOutput = '';
+            try {
+              autoOutput = await this.executeTool(autoTool, autoInput, context);
+            } catch (e) {
+              autoOutput = JSON.stringify({ error: (e as Error).message });
+            }
+            // Remove the hallucinated text response
+            if (result.messages.length > 0) {
+              result.messages = [];
+            }
+            // Show tool call + result
+            let callMsg = new ChatMessage('assistant', '');
+            callMsg.isToolCall = true;
+            callMsg.toolName = autoTool;
+            callMsg.toolInput = autoInput;
+            result.messages.push(callMsg);
+            let resultMsg = new ChatMessage('tool', autoOutput);
+            resultMsg.toolName = autoTool;
+            resultMsg.toolOutput = autoOutput;
+            result.messages.push(resultMsg);
+            // Feed tool result back to AI for summarization
+            allMessages.push({ role: 'assistant', content: `Calling ${autoTool}...` });
+            allMessages.push({ role: 'user', content: `Tool ${autoTool} returned:\n${autoOutput}\n\nSummarize the result concisely in the user's language.` });
+            continue; // re-enter the loop for AI to summarize
+          }
+        }
         break;
       }
 
@@ -530,6 +585,23 @@ export class AIService {
     } finally {
       req.destroy();
     }
+  }
+
+  /**
+   * Simple one-shot chat: send a system prompt + user message, return text only.
+   * Used for memory extraction, conversation compression, etc.
+   */
+  async simpleChat(systemPrompt: string, userMessage: string, settings: SettingsData): Promise<string> {
+    let messages: ApiMessage[] = [];
+    let msg: ApiMessage = { role: 'user', content: userMessage };
+    messages.push(msg);
+    let response: RawResponse;
+    if (settings.provider === 'anthropic') {
+      response = await this.callAnthropic(messages, settings, systemPrompt, []);
+    } else {
+      response = await this.callOpenAI(messages, settings, systemPrompt, []);
+    }
+    return response.text;
   }
 
   // --------- Tool execution ---------
@@ -1121,6 +1193,7 @@ export class AIService {
             let memSvc = MemoryService.getInstance();
             let item = await memSvc.addIfNew(context, memType, content, 0.8);
             if (item) {
+              // add() already triggers embedAndStore + generateMemoryMd async
               return JSON.stringify({ saved: true, id: item.id, type: memType, content: content });
             } else {
               return JSON.stringify({ saved: false, note: 'Already exists', type: memType, content: content });
@@ -1143,7 +1216,14 @@ export class AIService {
           try {
             let memSvc = MemoryService.getInstance();
             let filterType = input['mem_type'] ?? '';
-            let results = await memSvc.search(context, query, filterType);
+            // Try vector search first, fallback to keyword search
+            let apiKey = await memSvc.getEmbeddingApiKey(context);
+            let results = await memSvc.vectorSearch(context, query, apiKey, 5, filterType);
+            let searchMethod = 'vector';
+            if (results.length === 0) {
+              results = await memSvc.search(context, query, filterType);
+              searchMethod = 'keyword';
+            }
             let items = results.map((m): Record<string, string | number> => {
               let obj: Record<string, string | number> = {};
               obj['type'] = m.memType;
@@ -1151,9 +1231,236 @@ export class AIService {
               obj['created'] = new Date(m.createdAt).toLocaleDateString();
               return obj;
             });
-            return JSON.stringify({ query: query, found: results.length, items: items });
+            return JSON.stringify({ query: query, found: results.length, method: searchMethod, items: items });
           } catch (e) {
             let r: ToolResultObj = { error: 'Search memory failed: ' + (e as Error).message };
+            return JSON.stringify(r);
+          }
+        }
+        case 'create_scheduled_task': {
+          if (!context) {
+            let r: ToolResultObj = { error: 'No UI context available' };
+            return JSON.stringify(r);
+          }
+          let prompt = input['prompt'] ?? '';
+          let schedule = input['schedule'] ?? '';
+          if (prompt.length === 0 || schedule.length === 0) {
+            let r: ToolResultObj = { error: 'Both prompt and schedule are required' };
+            return JSON.stringify(r);
+          }
+          let parsed = this.parseCronExpression(schedule);
+          if (parsed.error.length > 0) {
+            let r: ToolResultObj = { error: parsed.error };
+            return JSON.stringify(r);
+          }
+          let taskId = `cron_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+          let task: CronTask = {
+            id: taskId,
+            prompt: prompt,
+            cronExpr: schedule,
+            intervalMs: parsed.intervalMs,
+            nextRunTime: parsed.nextRunTime,
+            lastRunTime: 0,
+            enabled: true,
+            oneShot: parsed.oneShot
+          };
+          try {
+            let store = await preferences.getPreferences(context, Constants.PREFS_CRON);
+            let raw = (await store.get('tasks', '[]')) as string;
+            let tasks = JSON.parse(raw) as CronTask[];
+            tasks.push(task);
+            await store.put('tasks', JSON.stringify(tasks));
+            await store.flush();
+            this.log.info(this.TAG, `Cron task created: id=${taskId} schedule=${schedule} nextRun=${new Date(parsed.nextRunTime).toISOString()}`);
+            return JSON.stringify({
+              created: true,
+              id: taskId,
+              schedule: schedule,
+              oneShot: parsed.oneShot,
+              nextRunTime: new Date(parsed.nextRunTime).toISOString()
+            });
+          } catch (e) {
+            let r: ToolResultObj = { error: 'Failed to save task: ' + (e as Error).message };
+            return JSON.stringify(r);
+          }
+        }
+        case 'list_scheduled_tasks': {
+          if (!context) {
+            let r: ToolResultObj = { error: 'No UI context available' };
+            return JSON.stringify(r);
+          }
+          try {
+            let store = await preferences.getPreferences(context, Constants.PREFS_CRON);
+            let raw = (await store.get('tasks', '[]')) as string;
+            let tasks = JSON.parse(raw) as CronTask[];
+            let active = tasks.filter((t: CronTask): boolean => t.enabled);
+            if (active.length === 0) {
+              return JSON.stringify({ count: 0, message: 'No active scheduled tasks' });
+            }
+            interface TaskSummary {
+              id: string;
+              prompt: string;
+              schedule: string;
+              nextRun: string;
+              oneShot: boolean;
+            }
+            let summaries: TaskSummary[] = active.map((t: CronTask): TaskSummary => {
+              let s: TaskSummary = {
+                id: t.id,
+                prompt: t.prompt.length > 80 ? t.prompt.substring(0, 80) + '...' : t.prompt,
+                schedule: t.cronExpr,
+                nextRun: new Date(t.nextRunTime).toISOString(),
+                oneShot: t.oneShot
+              };
+              return s;
+            });
+            return JSON.stringify({ count: active.length, tasks: summaries });
+          } catch (e) {
+            let r: ToolResultObj = { error: 'Failed to load tasks: ' + (e as Error).message };
+            return JSON.stringify(r);
+          }
+        }
+        case 'cancel_scheduled_task': {
+          if (!context) {
+            let r: ToolResultObj = { error: 'No UI context available' };
+            return JSON.stringify(r);
+          }
+          let cancelId = input['task_id'] ?? '';
+          if (cancelId.length === 0) {
+            let r: ToolResultObj = { error: 'task_id is required' };
+            return JSON.stringify(r);
+          }
+          try {
+            let store = await preferences.getPreferences(context, Constants.PREFS_CRON);
+            let raw = (await store.get('tasks', '[]')) as string;
+            let tasks = JSON.parse(raw) as CronTask[];
+            let found = false;
+            let remaining: CronTask[] = [];
+            for (let t of tasks) {
+              if (t.id === cancelId) {
+                found = true;
+              } else {
+                remaining.push(t);
+              }
+            }
+            if (!found) {
+              let r: ToolResultObj = { error: 'Task not found: ' + cancelId };
+              return JSON.stringify(r);
+            }
+            await store.put('tasks', JSON.stringify(remaining));
+            await store.flush();
+            this.log.info(this.TAG, `Cron task cancelled: ${cancelId}`);
+            return JSON.stringify({ cancelled: true, id: cancelId });
+          } catch (e) {
+            let r: ToolResultObj = { error: 'Failed to cancel task: ' + (e as Error).message };
+            return JSON.stringify(r);
+          }
+        }
+        case 'list_emails': {
+          if (!context) {
+            let r: ToolResultObj = { error: 'No UI context available' };
+            return JSON.stringify(r);
+          }
+          try {
+            let emailConfig = await this.loadEmailConfig(context);
+            if (!emailConfig.host || emailConfig.host.length === 0) {
+              let r: ToolResultObj = { error: 'Email not configured. Please set up IMAP in Settings.' };
+              return JSON.stringify(r);
+            }
+            let countStr = input['count'] ?? '10';
+            let count = parseInt(countStr) || 10;
+            if (count > 30) count = 30;
+            let imap = new ImapService();
+            await imap.connect(emailConfig.host, emailConfig.port);
+            await imap.login(emailConfig.user, emailConfig.pass);
+            await imap.selectMailbox('INBOX');
+            let emails: EmailSummary[] = await imap.fetchRecentEmails(count);
+            await imap.logout();
+            interface EmailListResult {
+              count: number;
+              emails: EmailSummary[];
+            }
+            let result: EmailListResult = { count: emails.length, emails: emails };
+            return JSON.stringify(result);
+          } catch (e) {
+            let r: ToolResultObj = { error: 'List emails failed: ' + (e as Error).message };
+            return JSON.stringify(r);
+          }
+        }
+        case 'read_email': {
+          if (!context) {
+            let r: ToolResultObj = { error: 'No UI context available' };
+            return JSON.stringify(r);
+          }
+          try {
+            let emailConfig = await this.loadEmailConfig(context);
+            if (!emailConfig.host || emailConfig.host.length === 0) {
+              let r: ToolResultObj = { error: 'Email not configured. Please set up IMAP in Settings.' };
+              return JSON.stringify(r);
+            }
+            let idStr = input['id'] ?? '';
+            let seq = parseInt(idStr);
+            if (isNaN(seq) || seq <= 0) {
+              let r: ToolResultObj = { error: 'Invalid email id (sequence number)' };
+              return JSON.stringify(r);
+            }
+            let imap = new ImapService();
+            await imap.connect(emailConfig.host, emailConfig.port);
+            await imap.login(emailConfig.user, emailConfig.pass);
+            await imap.selectMailbox('INBOX');
+            let email: EmailBody = await imap.fetchEmailBody(seq);
+            await imap.logout();
+            return JSON.stringify(email);
+          } catch (e) {
+            let r: ToolResultObj = { error: 'Read email failed: ' + (e as Error).message };
+            return JSON.stringify(r);
+          }
+        }
+        case 'search_emails': {
+          if (!context) {
+            let r: ToolResultObj = { error: 'No UI context available' };
+            return JSON.stringify(r);
+          }
+          try {
+            let emailConfig = await this.loadEmailConfig(context);
+            if (!emailConfig.host || emailConfig.host.length === 0) {
+              let r: ToolResultObj = { error: 'Email not configured. Please set up IMAP in Settings.' };
+              return JSON.stringify(r);
+            }
+            let query = input['query'] ?? '';
+            if (query.length === 0) {
+              let r: ToolResultObj = { error: 'No query provided' };
+              return JSON.stringify(r);
+            }
+            let imap = new ImapService();
+            await imap.connect(emailConfig.host, emailConfig.port);
+            await imap.login(emailConfig.user, emailConfig.pass);
+            await imap.selectMailbox('INBOX');
+            let seqNums = await imap.searchEmails(query);
+            // Fetch summaries for found messages (up to 20)
+            let emails: EmailSummary[] = [];
+            if (seqNums.length > 0) {
+              let fetchIds = seqNums.slice(-20); // last 20
+              for (let seq of fetchIds) {
+                try {
+                  // Use FETCH for individual messages
+                  let summaries = await imap.fetchRecentEmails(1);
+                  // Actually, we need individual fetch - use fetchEmailBody but only grab envelope
+                  let body = await imap.fetchEmailBody(seq);
+                  let summary: EmailSummary = {
+                    seq: body.seq,
+                    from: body.from,
+                    subject: body.subject,
+                    date: body.date
+                  };
+                  emails.push(summary);
+                } catch { /* skip individual failures */ }
+              }
+            }
+            await imap.logout();
+            return JSON.stringify({ query: query, found: seqNums.length, emails: emails });
+          } catch (e) {
+            let r: ToolResultObj = { error: 'Search emails failed: ' + (e as Error).message };
             return JSON.stringify(r);
           }
         }
@@ -1207,6 +1514,114 @@ export class AIService {
         }
       } catch { /* skip inaccessible entries */ }
     }
+  }
+
+  // --------- auto-dispatch: detect user intent when model fails to call tools ---------
+  private detectAutoDispatch(history: ChatMessage[]): string {
+    // Find the last user message
+    let lastUserMsg = '';
+    for (let i = history.length - 1; i >= 0; i--) {
+      if (history[i].role === 'user' && history[i].content.length > 0) {
+        lastUserMsg = history[i].content.toLowerCase();
+        break;
+      }
+    }
+    if (lastUserMsg.length === 0) return '';
+
+    // Email keywords
+    let emailKeywords = ['邮件', '邮箱', '收件箱', '未读邮件', '新邮件', '查邮件', '看邮件',
+      'email', 'inbox', 'mail', 'unread', 'check email', 'read email', 'list email'];
+    for (let kw of emailKeywords) {
+      if (lastUserMsg.includes(kw)) {
+        return 'list_emails';
+      }
+    }
+    return '';
+  }
+
+  // --------- email config helper ---------
+  private async loadEmailConfig(context: common.UIAbilityContext): Promise<EmailConfig> {
+    let store = await preferences.getPreferences(context, Constants.PREFS_EMAIL);
+    let config: EmailConfig = {
+      host: (await store.get('imapHost', '')) as string,
+      port: parseInt((await store.get('imapPort', '993')) as string) || 993,
+      user: (await store.get('imapUser', '')) as string,
+      pass: (await store.get('imapPass', '')) as string,
+    };
+    return config;
+  }
+
+  // --------- cron expression parser ---------
+  parseCronExpression(expr: string): CronParseResult {
+    let result: CronParseResult = { intervalMs: 0, nextRunTime: 0, oneShot: false, error: '' };
+    let trimmed = expr.trim().toLowerCase();
+    let now = Date.now();
+
+    // Pattern: "every Xm" or "every X minutes"
+    let minMatch = /^every\s+(\d+)\s*m(?:in(?:ute)?s?)?$/i.exec(trimmed);
+    if (minMatch) {
+      let mins = parseInt(minMatch[1]);
+      if (mins <= 0 || mins > 1440) {
+        result.error = 'Minutes must be between 1 and 1440';
+        return result;
+      }
+      result.intervalMs = mins * 60 * 1000;
+      result.nextRunTime = now + result.intervalMs;
+      result.oneShot = false;
+      return result;
+    }
+
+    // Pattern: "every Xh" or "every X hours"
+    let hourMatch = /^every\s+(\d+)\s*h(?:ours?)?$/i.exec(trimmed);
+    if (hourMatch) {
+      let hours = parseInt(hourMatch[1]);
+      if (hours <= 0 || hours > 24) {
+        result.error = 'Hours must be between 1 and 24';
+        return result;
+      }
+      result.intervalMs = hours * 60 * 60 * 1000;
+      result.nextRunTime = now + result.intervalMs;
+      result.oneShot = false;
+      return result;
+    }
+
+    // Pattern: "daily HH:MM"
+    let dailyMatch = /^daily\s+(\d{1,2}):(\d{2})$/i.exec(trimmed);
+    if (dailyMatch) {
+      let hour = parseInt(dailyMatch[1]);
+      let minute = parseInt(dailyMatch[2]);
+      if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+        result.error = 'Invalid time format (HH:MM, 00:00-23:59)';
+        return result;
+      }
+      result.intervalMs = 24 * 60 * 60 * 1000; // 24 hours
+      let today = new Date();
+      today.setHours(hour, minute, 0, 0);
+      let targetMs = today.getTime();
+      if (targetMs <= now) {
+        targetMs += result.intervalMs; // next day
+      }
+      result.nextRunTime = targetMs;
+      result.oneShot = false;
+      return result;
+    }
+
+    // Pattern: ISO 8601 datetime (one-shot)
+    try {
+      let isoMs = new Date(expr.trim()).getTime();
+      if (!isNaN(isoMs) && isoMs > now) {
+        result.intervalMs = 0;
+        result.nextRunTime = isoMs;
+        result.oneShot = true;
+        return result;
+      } else if (!isNaN(isoMs) && isoMs <= now) {
+        result.error = 'Scheduled time is in the past';
+        return result;
+      }
+    } catch { /* not ISO format */ }
+
+    result.error = `Unsupported schedule format: "${expr}". Use "every 30m", "every 2h", "daily 09:00", or ISO 8601 datetime.`;
+    return result;
   }
 
   // --------- message conversion ---------

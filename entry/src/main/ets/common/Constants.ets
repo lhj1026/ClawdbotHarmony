@@ -6,6 +6,9 @@ export class Constants {
   static readonly PREFS_DEVICE_IDENTITY: string = 'clawdbot_device_identity';
   static readonly PREFS_DEVICE_AUTH: string = 'clawdbot_device_auth';
   static readonly PREFS_LOGIN: string = 'clawdbot_login';
+  static readonly PREFS_CRON: string = 'clawdbot_cron';
+  static readonly PREFS_EMAIL: string = 'clawdbot_email';
+  static readonly CRON_POLL_INTERVAL_MS: number = 30000;
 
   static readonly ANTHROPIC_URL: string = 'https://api.anthropic.com/v1/messages';
   static readonly OPENAI_URL: string = 'https://api.siliconflow.cn/v1/chat/completions';
@@ -35,6 +38,13 @@ export class Constants {
 - 不需要敬语或过于正式的语气
 - 中文对话用中文回复，英文对话用英文回复
 - 该幽默时幽默，该严肃时严肃`;
+
+  // Embedding API (SiliconFlow bge-m3)
+  static readonly EMBEDDING_URL: string = 'https://api.siliconflow.cn/v1/embeddings';
+  static readonly EMBEDDING_MODEL: string = 'BAAI/bge-m3';
+  static readonly EMBEDDING_DIM: number = 1024;
+  static readonly VECTOR_SEARCH_TOP_K: number = 5;
+  static readonly VECTOR_SEARCH_THRESHOLD: number = 0.5;
 
   static readonly MAX_TOKENS: number = 4096;
   static readonly MAX_HISTORY: number = 50;

@@ -69,6 +69,7 @@ export class GatewaySession {
   onStateChanged: (state: ConnectionState, message: string) => void = () => {};
   onInvokeRequest: ((req: InvokeRequest) => Promise<InvokeResult>) | undefined = undefined;
   onEvent: (event: string, payloadJson: string | undefined) => void = () => {};
+  onPairingRequired: ((requestId: string) => void) | undefined = undefined;
 
   constructor(
     options: ConnectOptions,
@@ -116,6 +117,20 @@ export class GatewaySession {
   reconnect(): void {
     this.log.info(this.logTag, 'reconnect() called');
     this.closeSocket();
+  }
+
+  /** Cancel any pending reconnect timer and immediately attempt to reconnect. */
+  forceReconnect(): void {
+    this.log.info(this.logTag, 'forceReconnect() called');
+    if (this.reconnectTimer >= 0) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = -1;
+    }
+    this.closeSocket();
+    this.reconnectAttempt = 0;
+    if (this.shouldReconnect) {
+      this.connectOnce();
+    }
   }
 
   async request(method: string, paramsJson?: string, timeoutMs?: number): Promise<string> {
@@ -411,6 +426,9 @@ export class GatewaySession {
     }
 
     let clientJson: string = `{"id":${JSON.stringify(this.options.client.id)},"version":${JSON.stringify(this.options.client.version)},"platform":${JSON.stringify(this.options.client.platform)},"mode":${JSON.stringify(this.options.client.mode)}`;
+    if (this.options.client.displayName && this.options.client.displayName.length > 0) {
+      clientJson += `,"displayName":${JSON.stringify(this.options.client.displayName)}`;
+    }
     if (this.options.client.deviceFamily) {
       clientJson += `,"deviceFamily":${JSON.stringify(this.options.client.deviceFamily)}`;
     }
@@ -483,6 +501,14 @@ export class GatewaySession {
       let errMsg = frame.error ? `${frame.error.code}: ${frame.error.message}` : 'request failed';
       this.log.error(this.logTag, `RPC error: id=${id} ${errMsg}`);
       rpc.reject(new Error(errMsg));
+      // Handle NOT_PAIRED: notify caller to auto-approve pairing
+      if (frame.error && frame.error.code === 'NOT_PAIRED' && frame.error.details) {
+        let reqId = frame.error.details['requestId'] ?? '';
+        if (reqId.length > 0 && this.onPairingRequired) {
+          this.log.info(this.logTag, `NOT_PAIRED detected, requesting auto-pair: requestId=${reqId}`);
+          this.onPairingRequired(reqId);
+        }
+      }
     }
   }
 
