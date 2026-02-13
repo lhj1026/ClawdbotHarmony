@@ -367,12 +367,22 @@ export struct MessageBubble {
 
   private stripImagePaths(text: string): string {
     // Strip markdown image links: ![...](file:///data/...)
-    let cleaned = text.replace(/!\[[^\]]*\]\([^)]*\/(?:screenshots|camera_photos)\/[^)]+\)/g, '');
-    // Strip raw file paths: /data/storage/.../screenshots/xxx.jpg
-    cleaned = cleaned.replace(/\/data\/storage[^\s\n"'）》]*\.(?:jpg|jpeg|png)/gi, '');
+    let cleaned = text.replace(/!\[[^\]]*\]\([^)]*\/(?:screenshots|photos|camera_photos)\/[^)]+\)/g, '');
+    // Strip raw file paths: /data/storage/.../xxx.jpg or /data/app/.../photos/xxx.jpg
+    cleaned = cleaned.replace(/\/data\/[^\s\n"'）》]*\.(?:jpg|jpeg|png)/gi, '');
+    // Strip "文件路径[：:]..." pattern (Chinese)
+    cleaned = cleaned.replace(/文件路径[：:][^\n]*/g, '');
+    // Strip "照片/自拍/截图已保存[！!]?" with optional file size info
+    cleaned = cleaned.replace(/(?:照片|自拍|截图|图片)已保存[！!]?\s*(?:大小[^\n。]*)?[。.]?\s*/g, '');
+    // Strip standalone "大小X.XXMB" / "文件大小..." patterns
+    cleaned = cleaned.replace(/(?:文件)?大小[：:]?\s*\d+\.?\d*\s*[KMG]?B[。.]?\s*/gi, '');
     // Strip "这是截图的链接：" and similar phrases
     cleaned = cleaned.replace(/这是[^。]*链接[：:]\s*/g, '');
     cleaned = cleaned.replace(/你可以查看[：:]\s*/g, '');
+    // Strip "File path:" pattern (English)
+    cleaned = cleaned.replace(/[Ff]ile\s*[Pp]ath[：:][^\n]*/g, '');
+    // Strip "Photo saved!" / "Screenshot saved!"
+    cleaned = cleaned.replace(/(?:Photo|Screenshot|Image)\s*saved[!！]?\s*/gi, '');
     return cleaned.replace(/\n{3,}/g, '\n\n').trim();
   }
 

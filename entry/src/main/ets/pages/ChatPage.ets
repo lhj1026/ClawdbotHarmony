@@ -44,6 +44,9 @@ export struct ChatPage {
   @State previewImagePath: string = '';
   @State showWaveform: boolean = false;
   @State waveBars: number[] = [0, 0, 0, 0, 0, 0, 0];
+  @State gwRecordingTimer: number = -1;
+  private gwRecordingInterval: number = -1;
+  private gwRecordingDuration: number = 0;
   private dotTimer: number = -1;
   private audioCapturer: audio.AudioCapturer | undefined = undefined;
   private asrReading: boolean = false;
@@ -63,6 +66,7 @@ export struct ChatPage {
   private langListener: (() => void) | undefined = undefined;
   private mediaListener: ((type: string, path: string) => void) | undefined = undefined;
   private invokeListener: ((command: string, params: string, result: string, isError: boolean) => void) | undefined = undefined;
+  private recordingListener: ((recording: boolean, durationSec: number) => void) | undefined = undefined;
   private feishuConnected: boolean = false;
   private feishuSettings: SettingsData | undefined = undefined;
   private feishuHistory: ChatMessage[] = []; // Separate conversation history for Feishu
@@ -113,6 +117,11 @@ export struct ChatPage {
       this.handleInvokeInChat(command, params, result, isError);
     };
     NodeRuntime.getInstance().addInvokeListener(this.invokeListener);
+    // Register recording listener for AIService local record_audio tool
+    this.recordingListener = (recording: boolean, durationSec: number) => {
+      this.handleRecordingState(recording, durationSec);
+    };
+    this.ai.addRecordingListener(this.recordingListener);
     this.lang = I18n.lang;
     this.langListener = () => { this.lang = I18n.lang; this.loadAssistantSettings(); };
     I18n.addListener(this.langListener);
@@ -149,6 +158,10 @@ export struct ChatPage {
     if (this.invokeListener) {
       NodeRuntime.getInstance().removeInvokeListener(this.invokeListener);
       this.invokeListener = undefined;
+    }
+    if (this.recordingListener) {
+      this.ai.removeRecordingListener(this.recordingListener);
+      this.recordingListener = undefined;
     }
     if (this.langListener) {
       I18n.removeListener(this.langListener);
@@ -238,7 +251,7 @@ export struct ChatPage {
                 .fontSize(18)
                 .fontWeight(FontWeight.Bold)
                 .fontColor('#1A1A1A')
-              Text('v2.9.0')
+              Text('v2.9.1')
                 .fontSize(11)
                 .fontColor('#999999')
                 .margin({ top: 4 })
@@ -475,7 +488,22 @@ export struct ChatPage {
           )
         )
 
-        if (this.showWaveform && this.isTalkMode) {
+        if (this.gwRecordingTimer >= 0) {
+          Row({ space: 8 }) {
+            Circle({ width: 10, height: 10 })
+              .fill('#FF3B30')
+            Text(`${this.lang === 'zh' ? '\u5F55\u97F3\u4E2D' : 'Recording'} ${this.formatTimer(this.gwRecordingTimer)} / ${this.formatTimer(this.gwRecordingDuration)}`)
+              .fontSize(14)
+              .fontColor('#FF3B30')
+              .fontWeight(FontWeight.Medium)
+          }
+          .layoutWeight(1)
+          .height(42)
+          .borderRadius(21)
+          .backgroundColor('#FFF0F0')
+          .padding({ left: 16, right: 16 })
+          .justifyContent(FlexAlign.Center)
+        } else if (this.showWaveform && this.isTalkMode) {
           Row({ space: 8 }) {
             this.WaveformBar()
             Text(this.talkStatus)
@@ -1375,6 +1403,30 @@ Keep it short but preserve all important information. Use the same language as t
   /** Handle media files captured via gateway (audio recordings, photos). */
   private handleMediaCaptured(type: string, path: string): void {
     this.log.info('ChatPage', `Media captured: type=${type} path=${path}`);
+
+    if (type === 'recording_start') {
+      let durationMs = parseInt(path) || 5000;
+      this.gwRecordingDuration = Math.ceil(durationMs / 1000);
+      this.gwRecordingTimer = 0;
+      if (this.gwRecordingInterval >= 0) {
+        clearInterval(this.gwRecordingInterval);
+      }
+      this.gwRecordingInterval = setInterval(() => {
+        if (this.gwRecordingTimer >= 0) {
+          this.gwRecordingTimer++;
+        }
+      }, 1000);
+      return;
+    }
+    if (type === 'recording_stop') {
+      if (this.gwRecordingInterval >= 0) {
+        clearInterval(this.gwRecordingInterval);
+        this.gwRecordingInterval = -1;
+      }
+      this.gwRecordingTimer = -1;
+      return;
+    }
+
     // Insert a tool-result message with the media file for playback/display
     let msg = new ChatMessage('tool', `{"note":"${type} captured","path":"${path}"}`);
     msg.toolName = type === 'audio' ? 'record_audio' : 'capture_photo';
@@ -1387,6 +1439,28 @@ Keep it short but preserve all important information. Use the same language as t
     this.messages.push(msg);
     this.scrollToEnd();
     this.saveHistory();
+  }
+
+  /** Handle AIService recording start/stop for timer UI. */
+  private handleRecordingState(recording: boolean, durationSec: number): void {
+    if (recording) {
+      this.gwRecordingDuration = durationSec;
+      this.gwRecordingTimer = 0;
+      if (this.gwRecordingInterval >= 0) {
+        clearInterval(this.gwRecordingInterval);
+      }
+      this.gwRecordingInterval = setInterval(() => {
+        if (this.gwRecordingTimer >= 0) {
+          this.gwRecordingTimer++;
+        }
+      }, 1000);
+    } else {
+      if (this.gwRecordingInterval >= 0) {
+        clearInterval(this.gwRecordingInterval);
+        this.gwRecordingInterval = -1;
+      }
+      this.gwRecordingTimer = -1;
+    }
   }
 
   /** Handle gateway invoke requests: show them as tool call messages in chat. */
@@ -2032,6 +2106,12 @@ You have persistent memory that survives across conversations. Use it proactivel
       this.messages.push(errMsg);
       this.scrollToEnd();
     });
+  }
+
+  private formatTimer(seconds: number): string {
+    let m = Math.floor(seconds / 60);
+    let s = seconds % 60;
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
   }
 
   private scrollToEnd(): void {

@@ -36,7 +36,7 @@ import { LogService } from '../../common/LogService';
 import { Constants } from '../../common/Constants';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.9.0';
+const APP_VERSION = '2.9.1';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -626,7 +626,23 @@ export class NodeRuntime {
         }
         case Command.MIC_RECORD: {
           this.log.info(TAG, 'Executing mic.record capability...');
+          // Parse duration to notify UI for recording timer
+          let recDurationMs: number = 5000;
+          if (paramsJson && paramsJson.length > 0) {
+            try {
+              let rp = JSON.parse(paramsJson) as Record<string, Object>;
+              if (rp['durationMs'] !== undefined) {
+                recDurationMs = Math.max(1000, Math.min(120000, rp['durationMs'] as number));
+              }
+              if (rp['duration'] !== undefined) {
+                let ds: number = Math.max(1, Math.min(120, rp['duration'] as number));
+                recDurationMs = ds * 1000;
+              }
+            } catch { /* ignore */ }
+          }
+          this.dispatchMedia('recording_start', String(recDurationMs));
           result = await this.microphoneCapability.execute(paramsJson);
+          this.dispatchMedia('recording_stop', '');
           // Extract filePath and notify ChatPage for playback button
           try {
             let parsed = JSON.parse(result) as Record<string, Object>;

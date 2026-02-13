@@ -6,6 +6,7 @@
  */
 import { window, componentSnapshot } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
+import { fileIo } from '@kit.CoreFileKit';
 import { buffer } from '@kit.ArkTS';
 import { LogService } from '../../common/LogService';
 import { Command } from './GatewayProtocol';
@@ -89,6 +90,15 @@ export class ScreenCapability {
     let base64: string = buffer.from(jpegData).toString('base64');
     this.log.info(TAG, `Screenshot JPEG: ${jpegData.byteLength} bytes, base64 len=${base64.length}`);
 
-    return `{"format":"jpeg","width":${width},"height":${height},"base64":${JSON.stringify(base64)},"size":${jpegData.byteLength}}`;
+    // Save screenshot to persistent storage for display in chat
+    let screenshotsDir = `${this.filesDir}/screenshots`;
+    try { fileIo.mkdirSync(screenshotsDir); } catch { /* already exists */ }
+    let persistPath = `${screenshotsDir}/screen_${Date.now()}.jpg`;
+    let sf: fileIo.File = fileIo.openSync(persistPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
+    fileIo.writeSync(sf.fd, jpegData);
+    fileIo.closeSync(sf);
+    this.log.info(TAG, `Screenshot saved to: ${persistPath}`);
+
+    return `{"format":"jpeg","width":${width},"height":${height},"base64":${JSON.stringify(base64)},"size":${jpegData.byteLength},"filePath":${JSON.stringify(persistPath)}}`;
   }
 }

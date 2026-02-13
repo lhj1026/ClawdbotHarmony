@@ -126,6 +126,22 @@ export class AIService {
   private static instance: AIService | undefined = undefined;
   private log: LogService = LogService.getInstance();
   private readonly TAG = 'AIService';
+  private _recordingListeners: ((recording: boolean, durationSec: number) => void)[] = [];
+
+  addRecordingListener(listener: (recording: boolean, durationSec: number) => void): void {
+    this._recordingListeners.push(listener);
+  }
+
+  removeRecordingListener(listener: (recording: boolean, durationSec: number) => void): void {
+    let idx = this._recordingListeners.indexOf(listener);
+    if (idx >= 0) this._recordingListeners.splice(idx, 1);
+  }
+
+  private notifyRecording(recording: boolean, durationSec: number): void {
+    for (let l of this._recordingListeners) {
+      try { l(recording, durationSec); } catch { /* ignore */ }
+    }
+  }
 
   static getInstance(): AIService {
     if (!AIService.instance) {
@@ -153,6 +169,7 @@ export class AIService {
 
     let allMessages = this.buildApiMessages(history);
     let loopCount = 0;
+    let lastImagePath = ''; // track captured image path across loop iterations
 
     while (loopCount < Constants.MAX_TOOL_LOOPS) {
       loopCount++;
@@ -224,8 +241,29 @@ export class AIService {
               summaryForModel = saveResult.summary;
               savedImagePath = saveResult.path;
             }
+            // Fallback: extract path from tool output (capture_photo returns {path} without base64)
+            if (savedImagePath.length === 0) {
+              try {
+                let parsed = JSON.parse(autoOutput) as Record<string, Object>;
+                let pp = (parsed['path'] ?? '') as string;
+                if (pp.length > 0) savedImagePath = pp;
+              } catch { /* ignore */ }
+            }
+            if (savedImagePath.length > 0) {
+              lastImagePath = savedImagePath;
+            }
 
-            // Show tool call + result
+            // Extract audio path for record_audio (shown on tool result bubble with play button)
+            let savedAudioPath = '';
+            if (dispatch.tool === 'record_audio') {
+              try {
+                let parsed = JSON.parse(autoOutput) as Record<string, Object>;
+                let pp = (parsed['path'] ?? '') as string;
+                if (pp.length > 0) savedAudioPath = pp;
+              } catch { /* ignore */ }
+            }
+
+            // Show tool call + result (image will be shown on the final assistant message instead)
             let callMsg = new ChatMessage('assistant', '');
             callMsg.isToolCall = true;
             callMsg.toolName = dispatch.tool;
@@ -234,8 +272,8 @@ export class AIService {
             let resultMsg = new ChatMessage('tool', summaryForModel);
             resultMsg.toolName = dispatch.tool;
             resultMsg.toolOutput = summaryForModel;
-            if (savedImagePath.length > 0) {
-              resultMsg.imagePath = savedImagePath;
+            if (savedAudioPath.length > 0) {
+              resultMsg.audioPath = savedAudioPath;
             }
             result.messages.push(resultMsg);
             // Feed tool result back to AI for summarization
@@ -278,14 +316,14 @@ export class AIService {
         let resultMsg = new ChatMessage('tool', outputForModel);
         resultMsg.toolName = tc.name;
         resultMsg.toolOutput = outputForModel;
-        // Extract media paths from tool results
+        // Track image path for the final assistant message (not shown on tool result to avoid duplicates)
         if (imgPath.length > 0) {
-          resultMsg.imagePath = imgPath;
+          lastImagePath = imgPath;
         } else if (tc.name === 'capture_photo') {
           try {
             let parsed = JSON.parse(output) as Record<string, string>;
             if (parsed['path'] && parsed['path'].length > 0) {
-              resultMsg.imagePath = parsed['path'];
+              lastImagePath = parsed['path'];
             }
           } catch { /* ignore */ }
         }
@@ -350,6 +388,17 @@ export class AIService {
         }
       }
     }
+
+    // Attach captured image to the last assistant message for inline display
+    if (lastImagePath.length > 0) {
+      for (let i = result.messages.length - 1; i >= 0; i--) {
+        if (result.messages[i].role === 'assistant' && !result.messages[i].isToolCall) {
+          result.messages[i].imagePath = lastImagePath;
+          break;
+        }
+      }
+    }
+
     return result;
   }
 
@@ -1211,11 +1260,13 @@ export class AIService {
             };
             await recorder.prepare(recConfig);
             await recorder.start();
+            this.notifyRecording(true, recSeconds);
             await new Promise<void>((resolve) => {
               setTimeout(() => { resolve(); }, recSeconds * 1000);
             });
             await recorder.stop();
             await recorder.release();
+            this.notifyRecording(false, 0);
             fileIo.closeSync(audioFile);
             let audioStat = fileIo.statSync(audioPath);
             let r: ToolResultObj = {

@@ -32,6 +32,7 @@ export class EmailCapability {
 
   // SMTP socket state (mirrors ImapService pattern)
   private tlsSocket: socket.TLSSocket | null = null;
+  private tcpSocket: socket.TCPSocket | null = null;
   private dataBuffer: string = '';
   private pendingCode: string = '';
   private collectedLines: string[] = [];
@@ -77,7 +78,11 @@ export class EmailCapability {
     this.log.info(TAG, `Sending email via SMTP ${config.smtpHost}:${config.smtpPort} from=${config.user} to=${to}`);
 
     try {
-      await this.smtpConnect(config.smtpHost, config.smtpPort);
+      if (config.smtpPort === 465) {
+        await this.smtpConnect(config.smtpHost, config.smtpPort);
+      } else {
+        await this.smtpConnectStartTls(config.smtpHost, config.smtpPort);
+      }
       await this.smtpCommand('EHLO clawdbot', '250');
       this.log.info(TAG, '[smtp] EHLO OK');
 
@@ -175,7 +180,7 @@ export class EmailCapability {
           this.lineResolve = null;
           reject(new Error(`SMTP greeting timeout from ${host}:${port}`));
         }
-      }, 15000);
+      }, 20000);
       let origResolve = this.lineResolve;
       this.lineResolve = (line: string) => {
         clearTimeout(timer);
@@ -209,6 +214,84 @@ export class EmailCapability {
     }
   }
 
+  private async smtpConnectStartTls(host: string, port: number): Promise<void> {
+    this.dataBuffer = '';
+    this.pendingCode = '';
+    this.collectedLines = [];
+    this.lineResolve = null;
+
+    // Step 1: Create plain TCP socket
+    this.tcpSocket = socket.constructTCPSocketInstance();
+    await this.tcpSocket.bind({ address: '0.0.0.0' });
+
+    // Step 2: Prepare greeting promise BEFORE connect
+    let greetingPromise = new Promise<string>((resolve, reject) => {
+      this.lineResolve = resolve;
+      let timer = setTimeout(() => {
+        if (this.lineResolve) {
+          this.lineResolve = null;
+          reject(new Error(`SMTP STARTTLS greeting timeout from ${host}:${port}`));
+        }
+      }, 20000);
+      let origResolve = this.lineResolve;
+      this.lineResolve = (line: string) => {
+        clearTimeout(timer);
+        origResolve(line);
+      };
+    });
+
+    // Step 3: Set up TCP message handler
+    this.tcpSocket.on('message', (value: socket.SocketMessageInfo) => {
+      let data = buf2str(value.message);
+      this.log.info(TAG, `[smtp-tcp recv] ${data.length}b: ${data.substring(0, 120).replace(/\r\n/g, '\\r\\n')}`);
+      this.onSmtpData(data);
+    });
+
+    // Step 4: TCP connect (plaintext)
+    this.log.info(TAG, `[smtp] STARTTLS: TCP connecting to ${host}:${port}...`);
+    await this.tcpSocket.connect({ address: { address: host, port: port, family: 1 } });
+    this.log.info(TAG, '[smtp] TCP connected, waiting for greeting...');
+
+    // Step 5: Wait for 220 greeting (plaintext)
+    let greeting = await greetingPromise;
+    this.log.info(TAG, `[smtp] Greeting: ${greeting.substring(0, 80)}`);
+    if (!greeting.startsWith('220')) {
+      throw new Error(`SMTP unexpected greeting: ${greeting}`);
+    }
+
+    // Step 6: EHLO + STARTTLS (plaintext, smtpCommand uses tcpSocket via smtpSendRaw)
+    await this.smtpCommand('EHLO clawdbot', '250');
+    this.log.info(TAG, '[smtp] EHLO OK (plaintext)');
+    await this.smtpCommand('STARTTLS', '220');
+    this.log.info(TAG, '[smtp] STARTTLS accepted, upgrading to TLS...');
+
+    // Step 7: Remove TCP message handler, reset buffers
+    this.tcpSocket.off('message');
+    this.dataBuffer = '';
+    this.collectedLines = [];
+    this.lineResolve = null;
+
+    // Step 8: Create TLS socket from existing TCP socket
+    this.tlsSocket = socket.constructTLSSocketInstance(this.tcpSocket);
+
+    // Step 9: Register TLS message handler
+    this.tlsSocket.on('message', (value: socket.SocketMessageInfo) => {
+      let data = buf2str(value.message);
+      this.log.info(TAG, `[smtp-tls recv] ${data.length}b: ${data.substring(0, 120).replace(/\r\n/g, '\\r\\n')}`);
+      this.onSmtpData(data);
+    });
+
+    // Step 10: TLS handshake
+    let tlsOptions: socket.TLSConnectOptions = {
+      address: { address: host, port: port, family: 1 },
+      secureOptions: {
+        protocols: [socket.Protocol.TLSv12],
+      },
+    };
+    await this.tlsSocket.connect(tlsOptions);
+    this.log.info(TAG, '[smtp] TLS upgrade complete');
+  }
+
   private onSmtpData(data: string): void {
     this.dataBuffer += data;
     let nlIdx = this.dataBuffer.indexOf('\r\n');
@@ -236,7 +319,7 @@ export class EmailCapability {
     }
   }
 
-  private smtpWaitResponse(timeoutMs: number = 10000): Promise<string> {
+  private smtpWaitResponse(timeoutMs: number = 20000): Promise<string> {
     return new Promise<string>((resolve, reject) => {
       // Check if a line was already buffered
       if (this.collectedLines.length > 0) {
@@ -268,18 +351,27 @@ export class EmailCapability {
   }
 
   private async smtpSendRaw(data: string): Promise<void> {
-    if (!this.tlsSocket) throw new Error('SMTP not connected');
     let logData = data.trim();
     if (logData.length > 40) logData = logData.substring(0, 40) + '...';
     this.log.info(TAG, `[smtp send] ${logData}`);
-    let encoded = str2buf(data);
-    await this.tlsSocket.send(encoded);
+    if (this.tlsSocket) {
+      let encoded = str2buf(data);
+      await this.tlsSocket.send(encoded);
+    } else if (this.tcpSocket) {
+      await this.tcpSocket.send({ data: data });
+    } else {
+      throw new Error('SMTP not connected');
+    }
   }
 
   private async smtpClose(): Promise<void> {
     if (this.tlsSocket) {
       try { await this.tlsSocket.close(); } catch { /* ignore */ }
       this.tlsSocket = null;
+    }
+    if (this.tcpSocket) {
+      try { await this.tcpSocket.close(); } catch { /* ignore */ }
+      this.tcpSocket = null;
     }
     this.lineResolve = null;
   }

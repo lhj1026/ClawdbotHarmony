@@ -53,13 +53,24 @@ export class CameraCapability {
       } catch { /* defaults */ }
     }
 
-    let savePath = await this.autoCapture(facing, `${this.appContext.cacheDir}/snap_${Date.now()}.jpg`);
+    let timestamp = Date.now();
+    let savePath = await this.autoCapture(facing, `${this.appContext.cacheDir}/snap_${timestamp}.jpg`);
 
     // Compress image to avoid WebSocket frame size limit (code 1009)
     let readResult = await this.compressAndEncode('', savePath);
     this.log.info(TAG, `Photo: ${readResult.size} bytes (base64: ${readResult.base64.length})`);
 
-    return `{"format":"jpg","base64":${JSON.stringify(readResult.base64)},"width":${readResult.width},"height":${readResult.height}}`;
+    // Save compressed photo to persistent storage for display in chat
+    let photosDir = `${this.appContext!.filesDir}/photos`;
+    try { fileIo.mkdirSync(photosDir); } catch { /* already exists */ }
+    let persistPath = `${photosDir}/snap_${timestamp}.jpg`;
+    let photoData = buffer.from(readResult.base64, 'base64');
+    let pf: fileIo.File = fileIo.openSync(persistPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
+    fileIo.writeSync(pf.fd, photoData.buffer);
+    fileIo.closeSync(pf);
+    this.log.info(TAG, `Photo saved to: ${persistPath}`);
+
+    return `{"format":"jpg","base64":${JSON.stringify(readResult.base64)},"width":${readResult.width},"height":${readResult.height},"filePath":${JSON.stringify(persistPath)}}`;
   }
 
   /**
