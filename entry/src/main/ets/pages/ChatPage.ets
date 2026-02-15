@@ -1606,11 +1606,14 @@ Keep it short but preserve all important information. Use the same language as t
 
   /** Handle incoming gateway chat events (delta / final / error / aborted). */
   private handleGatewayChatEvent(event: GatewayChatEvent): void {
-    // Extract text from content blocks
+    // Extract text from content blocks (separate consecutive text blocks with blank line)
     let text = '';
     if (event.message && event.message.content) {
       for (let block of event.message.content) {
         if (block.type === 'text' && block.text) {
+          if (text.length > 0) {
+            text += '\n\n';
+          }
           text += block.text;
         }
       }
