@@ -185,6 +185,7 @@ function buildZh(): Map<string, string> {
   m.set('settings.assistantNamePlaceholder', '输入助手名字');
   m.set('settings.assistantAvatar', '头像');
   m.set('settings.assistantAvatarChange', '点击更换头像');
+  m.set('settings.gatewayBot', '网关 Bot（已连接）');
 
   // LogPage
   m.set('tab.logs', '日志');
@@ -462,6 +463,7 @@ function buildEn(): Map<string, string> {
   m.set('settings.assistantNamePlaceholder', 'Enter assistant name');
   m.set('settings.assistantAvatar', 'Avatar');
   m.set('settings.assistantAvatarChange', 'Tap to change avatar');
+  m.set('settings.gatewayBot', 'Gateway Bot (Connected)');
 
   // LogPage
   m.set('tab.logs', 'Logs');

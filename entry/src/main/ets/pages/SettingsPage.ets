@@ -4,7 +4,7 @@ import { promptAction } from '@kit.ArkUI';
 import { fileIo, picker } from '@kit.CoreFileKit';
 import { Constants } from '../common/Constants';
 import { NodeRuntime } from '../service/gateway/NodeRuntime';
-import { ConnectionState, GatewayEndpoint } from '../service/gateway/GatewayModels';
+import { ConnectionState, GatewayEndpoint, AgentIdentity } from '../service/gateway/GatewayModels';
 import { I18n, LangCode } from '../common/I18n';
 import { SettingsProfile } from '../model/Models';
 import { ImapService } from '../service/ImapService';
@@ -96,8 +96,15 @@ export struct SettingsPage {
   @State profileNameInput: string = '';
   @State showProfileSave: boolean = false;
 
+  // Gateway agent identity (fetched from gateway when connected in node mode)
+  @State gwAgentName: string = '';
+  @State gwAgentAvatar: string = '';
+  @State gwAgentEmoji: string = '';
+  @State gwAgentSoul: string = '';
+
   private gwListener: ((state: ConnectionState, text: string) => void) | undefined = undefined;
   private langListener: (() => void) | undefined = undefined;
+  private identityListener: ((identity: AgentIdentity | undefined) => void) | undefined = undefined;
 
   aboutToAppear(): void {
     this.load();
@@ -113,15 +120,43 @@ export struct SettingsPage {
       this.gwStatusText = text;
     };
     NodeRuntime.getInstance().addStateListener(this.gwListener);
+    // Identity listener for gateway agent info
+    this.identityListener = (identity: AgentIdentity | undefined) => {
+      if (identity) {
+        this.gwAgentName = identity.name;
+        this.gwAgentEmoji = identity.emoji;
+        // Resolve avatar URL
+        let avatarUrl = NodeRuntime.getInstance().resolveAgentAvatarUrl();
+        this.gwAgentAvatar = avatarUrl ?? '';
+      } else {
+        this.gwAgentName = '';
+        this.gwAgentAvatar = '';
+        this.gwAgentEmoji = '';
+        this.gwAgentSoul = '';
+      }
+    };
+    NodeRuntime.getInstance().addIdentityListener(this.identityListener);
     // Sync current state
     this.gwState = NodeRuntime.getInstance().connectionState;
     this.gwStatusText = NodeRuntime.getInstance().statusText;
+    // Sync current identity if already connected
+    let currentIdentity = NodeRuntime.getInstance().agentIdentity;
+    if (currentIdentity) {
+      this.gwAgentName = currentIdentity.name;
+      this.gwAgentEmoji = currentIdentity.emoji;
+      let avatarUrl = NodeRuntime.getInstance().resolveAgentAvatarUrl();
+      this.gwAgentAvatar = avatarUrl ?? '';
+    }
   }
 
   aboutToDisappear(): void {
     if (this.gwListener) {
       NodeRuntime.getInstance().removeStateListener(this.gwListener);
       this.gwListener = undefined;
+    }
+    if (this.identityListener) {
+      NodeRuntime.getInstance().removeIdentityListener(this.identityListener);
+      this.identityListener = undefined;
     }
     if (this.langListener) {
       I18n.removeListener(this.langListener);
@@ -301,53 +336,126 @@ export struct SettingsPage {
         .borderRadius(12)
 
         // ---- AI Assistant ----
-        this.SectionTitle(I18n.t('settings.assistant'))
-        Column() {
-          Column({ space: 8 }) {
-            if (this.assistantAvatar.length > 0) {
-              Image('file://' + this.assistantAvatar)
-                .width(72)
-                .height(72)
-                .borderRadius(36)
-                .objectFit(ImageFit.Cover)
-            } else {
-              Text(this.getAssistantInitial())
-                .fontSize(28)
-                .fontWeight(FontWeight.Bold)
-                .fontColor(Color.White)
-                .textAlign(TextAlign.Center)
-                .width(72)
-                .height(72)
-                .borderRadius(36)
-                .backgroundColor('#D2691E')
+        // In node mode when connected, show gateway bot info (read-only)
+        // In standalone mode or when not connected, show editable local settings
+        if (this.isNodeModeConnected()) {
+          // Gateway bot info (read-only)
+          this.SectionTitle(I18n.t('settings.assistant'))
+          Column() {
+            Column({ space: 8 }) {
+              if (this.gwAgentAvatar.length > 0) {
+                Image(this.gwAgentAvatar)
+                  .width(72)
+                  .height(72)
+                  .borderRadius(36)
+                  .objectFit(ImageFit.Cover)
+              } else {
+                Text(this.gwAgentEmoji.length > 0 ? this.gwAgentEmoji : this.getGwAgentInitial())
+                  .fontSize(this.gwAgentEmoji.length > 0 ? 36 : 28)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(Color.White)
+                  .textAlign(TextAlign.Center)
+                  .width(72)
+                  .height(72)
+                  .borderRadius(36)
+                  .backgroundColor('#4CAF50')
+              }
+              Row({ space: 4 }) {
+                Circle({ width: 8, height: 8 })
+                  .fill('#4CAF50')
+                Text(I18n.t('settings.gatewayBot'))
+                  .fontSize(12)
+                  .fontColor('#4CAF50')
+              }
             }
-            Text(I18n.t('settings.assistantAvatarChange'))
-              .fontSize(12)
-              .fontColor('#D2691E')
+            .width('100%')
+            .alignItems(HorizontalAlign.Center)
+            .padding({ top: 8, bottom: 8 })
+
+            Divider().margin({ top: 8, bottom: 14 }).color('#F0F0F0')
+
+            Row() {
+              Text(I18n.t('settings.assistantName'))
+                .fontSize(14)
+                .fontColor('#1A1A1A')
+                .layoutWeight(1)
+              Text(this.gwAgentName.length > 0 ? this.gwAgentName : 'OpenClaw Bot')
+                .fontSize(14)
+                .fontColor('#666666')
+                .fontWeight(FontWeight.Medium)
+            }
+            .width('100%')
+            .height(40)
+
+            if (this.gwAgentEmoji.length > 0) {
+              Divider().margin({ top: 4, bottom: 4 }).color('#F0F0F0')
+              Row() {
+                Text('Emoji')
+                  .fontSize(14)
+                  .fontColor('#1A1A1A')
+                  .layoutWeight(1)
+                Text(this.gwAgentEmoji)
+                  .fontSize(20)
+              }
+              .width('100%')
+              .height(40)
+            }
           }
           .width('100%')
-          .alignItems(HorizontalAlign.Center)
-          .padding({ top: 8, bottom: 8 })
-          .onClick(() => { this.pickAvatar(); })
-
-          Divider().margin({ top: 8, bottom: 14 }).color('#F0F0F0')
-
-          Text(I18n.t('settings.assistantName'))
-            .fontSize(14)
-            .fontColor('#1A1A1A')
+          .padding(16)
+          .margin({ left: 16, right: 16 })
+          .backgroundColor(Color.White)
+          .borderRadius(12)
+        } else if (this.settingsTab === 'standalone' || !this.modesInclude('node')) {
+          // Local assistant settings (editable) - only in standalone mode
+          this.SectionTitle(I18n.t('settings.assistant'))
+          Column() {
+            Column({ space: 8 }) {
+              if (this.assistantAvatar.length > 0) {
+                Image('file://' + this.assistantAvatar)
+                  .width(72)
+                  .height(72)
+                  .borderRadius(36)
+                  .objectFit(ImageFit.Cover)
+              } else {
+                Text(this.getAssistantInitial())
+                  .fontSize(28)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(Color.White)
+                  .textAlign(TextAlign.Center)
+                  .width(72)
+                  .height(72)
+                  .borderRadius(36)
+                  .backgroundColor('#D2691E')
+              }
+              Text(I18n.t('settings.assistantAvatarChange'))
+                .fontSize(12)
+                .fontColor('#D2691E')
+            }
             .width('100%')
-          TextInput({ text: this.assistantName, placeholder: I18n.t('settings.assistantNamePlaceholder') })
-            .height(40)
-            .backgroundColor('#F5F5F5')
-            .borderRadius(8)
-            .margin({ top: 6 })
-            .onChange((v: string) => { this.assistantName = v; })
+            .alignItems(HorizontalAlign.Center)
+            .padding({ top: 8, bottom: 8 })
+            .onClick(() => { this.pickAvatar(); })
+
+            Divider().margin({ top: 8, bottom: 14 }).color('#F0F0F0')
+
+            Text(I18n.t('settings.assistantName'))
+              .fontSize(14)
+              .fontColor('#1A1A1A')
+              .width('100%')
+            TextInput({ text: this.assistantName, placeholder: I18n.t('settings.assistantNamePlaceholder') })
+              .height(40)
+              .backgroundColor('#F5F5F5')
+              .borderRadius(8)
+              .margin({ top: 6 })
+              .onChange((v: string) => { this.assistantName = v; })
+          }
+          .width('100%')
+          .padding(16)
+          .margin({ left: 16, right: 16 })
+          .backgroundColor(Color.White)
+          .borderRadius(12)
         }
-        .width('100%')
-        .padding(16)
-        .margin({ left: 16, right: 16 })
-        .backgroundColor(Color.White)
-        .borderRadius(12)
 
         // ---- Capabilities ----
         this.SectionTitle(I18n.t('settings.caps'))
@@ -1321,6 +1429,19 @@ export struct SettingsPage {
       return this.assistantName.charAt(0).toUpperCase();
     }
     return 'C';
+  }
+
+  private getGwAgentInitial(): string {
+    if (this.gwAgentName.length > 0) {
+      return this.gwAgentName.charAt(0).toUpperCase();
+    }
+    return 'B';
+  }
+
+  private isNodeModeConnected(): boolean {
+    // Check if we're in node mode (either single mode or selected tab) and connected to gateway
+    let isNodeMode = this.settingsTab === 'node' || (!this.showTabs() && this.modesInclude('node'));
+    return isNodeMode && this.gwIsConnected();
   }
 
   private async pickAvatar(): Promise<void> {
