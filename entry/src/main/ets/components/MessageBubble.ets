@@ -137,6 +137,7 @@ export struct MessageBubble {
           topLeft: 16, topRight: 4, bottomLeft: 16, bottomRight: 16
         })
         .constraintSize({ maxWidth: '82%' })
+        .clip(true)
         .gesture(
           GestureGroup(GestureMode.Exclusive,
             LongPressGesture().onAction(() => {

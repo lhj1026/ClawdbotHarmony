@@ -25,11 +25,13 @@ export class ChatMessage {
   toolOutput: string;
   imagePath: string;   // local file path for photos displayed in chat
   audioPath: string;   // local file path for audio playback in chat
-  userImagePath: string;  // user-attached image path
-  feedback: string;       // 'up' | 'down' | ''
+  userImagePath: string;      // user-attached image path (first/primary, for API compat)
+  userImagePaths: string[];   // all user-attached image paths (for multi-image display)
+  feedback: string;           // 'up' | 'down' | ''
   videoPath: string;      // local file path for video playback
   buttons: InlineButton[];  // inline action buttons
   attachmentName: string;   // file attachment display name
+  a2uiContent: string;      // accumulated A2UI JSONL content for inline rendering
 
   constructor(role: string, content: string) {
     this.id = `m_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
@@ -43,10 +45,12 @@ export class ChatMessage {
     this.imagePath = '';
     this.audioPath = '';
     this.userImagePath = '';
+    this.userImagePaths = [];
     this.feedback = '';
     this.videoPath = '';
     this.buttons = [];
     this.attachmentName = '';
+    this.a2uiContent = '';
   }
 }
 

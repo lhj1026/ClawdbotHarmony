@@ -491,6 +491,13 @@ body{font-family:-apple-system,HarmonyOS Sans,sans-serif;background:#0F0F1A;colo
   }
 
   // ===== Render Surface =====
+  function reportHeight() {
+    setTimeout(function() {
+      var root = document.getElementById('a2ui-root');
+      if (root) console.log('A2UI_HEIGHT:' + root.scrollHeight);
+    }, 50);
+  }
+
   function renderSurface(surfaceId) {
     var s = surfaces[surfaceId];
     if (!s) return;
@@ -501,6 +508,7 @@ body{font-family:-apple-system,HarmonyOS Sans,sans-serif;background:#0F0F1A;colo
       root.appendChild(renderComp(s.rootId, s, null));
     }
     document.title = 'A2UI';
+    reportHeight();
   }
 
   // ===== Process Messages =====
