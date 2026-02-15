@@ -8,6 +8,7 @@ export default class EntryAbility extends UIAbility {
     AppStorage.setOrCreate<number>('share_timestamp', 0);
     AppStorage.setOrCreate<string>('share_text', '');
     AppStorage.setOrCreate<string>('share_uri', '');
+    AppStorage.setOrCreate<string>('share_uris', '');  // JSON array of URIs for multi-image
     AppStorage.setOrCreate<string>('share_type', '');
     this.handleShareWant(want);
   }
@@ -66,20 +67,58 @@ export default class EntryAbility extends UIAbility {
       console.info('[ClawdBot] Detected image from want.uri pattern');
     }
 
-    // 4. Check ability.params.stream for image URI (Gallery shares put the URI here, not in want.uri)
+    // 4. Check ability.params.stream for image URIs (Gallery shares put URIs here, not in want.uri)
     //    NOTE: Want.parameters values are Object type in ArkTS, typeof won't return 'string'
-    //    Must use String() conversion instead
+    //    Must use String() conversion. For multiple images, value may be an Array.
+    let imageUris: string[] = [];
     if (want.parameters) {
-      let streamVal = String(want.parameters['ability.params.stream'] ?? '');
-      if (streamVal.length > 0 && streamVal !== 'undefined' && streamVal !== 'null' && !streamVal.startsWith('[object')) {
-        console.info(`[ClawdBot] ability.params.stream = "${streamVal.substring(0, 100)}"`);
-        if (shareUri.length === 0) {
-          shareUri = streamVal;
+      let streamRaw = want.parameters['ability.params.stream'];
+      if (streamRaw !== undefined && streamRaw !== null) {
+        // Try as array first (multiple images)
+        if (Array.isArray(streamRaw)) {
+          for (let item of (streamRaw as Object[])) {
+            let s = String(item);
+            if (s.length > 0 && s !== 'undefined' && !s.startsWith('[object')) {
+              imageUris.push(s);
+            }
+          }
+          console.info(`[ClawdBot] ability.params.stream is array, ${imageUris.length} URIs`);
+        } else {
+          let s = String(streamRaw);
+          if (s.length > 0 && s !== 'undefined' && s !== 'null' && !s.startsWith('[object')) {
+            // Could be comma-separated for multiple
+            if (s.indexOf(',file://') >= 0) {
+              let parts = s.split(',');
+              for (let p of parts) {
+                let trimmed = p.trim();
+                if (trimmed.length > 0) {
+                  imageUris.push(trimmed);
+                }
+              }
+            } else {
+              imageUris.push(s);
+            }
+          }
         }
-        if (shareType !== 'image' && this.looksLikeImageUri(streamVal)) {
-          shareUri = streamVal;
-          shareType = 'image';
-          console.info('[ClawdBot] Detected image from ability.params.stream');
+        console.info(`[ClawdBot] ability.params.stream URIs: ${imageUris.length}`);
+        for (let i = 0; i < Math.min(imageUris.length, 5); i++) {
+          console.info(`[ClawdBot] URI[${i}]: ${imageUris[i].substring(0, 100)}`);
+        }
+      }
+
+      // Set shareUri from first URI if not already set
+      if (shareUri.length === 0 && imageUris.length > 0) {
+        shareUri = imageUris[0];
+      }
+
+      // Detect image type from URIs
+      if (shareType !== 'image' && imageUris.length > 0) {
+        for (let u of imageUris) {
+          if (this.looksLikeImageUri(u)) {
+            shareType = 'image';
+            console.info('[ClawdBot] Detected image from ability.params.stream URI pattern');
+            break;
+          }
         }
       }
 
@@ -91,9 +130,7 @@ export default class EntryAbility extends UIAbility {
           shareUri = dsUri;
         }
         if (shareType !== 'image' && this.looksLikeImageUri(dsUri)) {
-          shareUri = dsUri;
           shareType = 'image';
-          console.info('[ClawdBot] Detected image from systemShare.datasource.uri');
         }
       }
     }
@@ -119,11 +156,12 @@ export default class EntryAbility extends UIAbility {
       shareType = 'file';
     }
 
-    console.info(`[ClawdBot] Share data: type=${shareType} textLen=${shareText.length} uri=${shareUri.substring(0, 100)}`);
+    console.info(`[ClawdBot] Share data: type=${shareType} textLen=${shareText.length} uris=${imageUris.length} uri=${shareUri.substring(0, 100)}`);
 
     // Store in AppStorage for ChatPage to consume
     AppStorage.setOrCreate<string>('share_text', shareText);
     AppStorage.setOrCreate<string>('share_uri', shareUri);
+    AppStorage.setOrCreate<string>('share_uris', imageUris.length > 0 ? JSON.stringify(imageUris) : '');
     AppStorage.setOrCreate<string>('share_type', shareType);
     AppStorage.setOrCreate<number>('share_timestamp', Date.now());
   }

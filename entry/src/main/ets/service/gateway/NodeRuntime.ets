@@ -38,7 +38,7 @@ import { LogService } from '../../common/LogService';
 import { Constants } from '../../common/Constants';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.10.3';
+const APP_VERSION = '2.10.4';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -110,6 +110,9 @@ export class NodeRuntime {
 
   // Approval listeners — notify ChatPage when an exec approval is requested
   private _approvalListeners: Array<(req: ExecApprovalRequest) => void> = [];
+
+  // A2UI listeners — notify ChatPage when A2UI content arrives (inline rendering)
+  private _a2uiListeners: Array<(type: string, content: string) => void> = [];
 
   // Gateway agent identity (fetched from config.get after connect)
   private _agentIdentity: AgentIdentity | undefined = undefined;
@@ -332,6 +335,36 @@ export class NodeRuntime {
     }
   }
 
+  // ---- A2UI listeners (inline rendering in chat) ----
+
+  addA2UIListener(listener: (type: string, content: string) => void): void {
+    this._a2uiListeners.push(listener);
+  }
+
+  removeA2UIListener(listener: (type: string, content: string) => void): void {
+    let idx = this._a2uiListeners.indexOf(listener);
+    if (idx >= 0) {
+      this._a2uiListeners.splice(idx, 1);
+    }
+  }
+
+  private dispatchA2UI(type: string, content: string): void {
+    this.log.info(TAG, `dispatchA2UI: type=${type} contentLen=${content.length}`);
+    for (let listener of this._a2uiListeners) {
+      try {
+        listener(type, content);
+      } catch { /* ignore */ }
+    }
+  }
+
+  /** Send A2UI action (user interaction) back to gateway. */
+  sendA2UIAction(actionJson: string): void {
+    this.log.info(TAG, `sendA2UIAction: ${actionJson.substring(0, 200)}`);
+    if (this.nodeSession) {
+      this.nodeSession.sendNodeEvent('canvas.a2ui.action', actionJson);
+    }
+  }
+
   addIdentityListener(listener: (identity: AgentIdentity | undefined) => void): void {
     this._identityListeners.push(listener);
   }
@@ -416,60 +449,141 @@ export class NodeRuntime {
 
   /** Fetch agent identity from gateway config via operator session RPC. */
   async fetchAgentIdentity(): Promise<void> {
-    if (!this.operatorSession) {
-      this.log.warn(TAG, 'fetchAgentIdentity: no operator session');
-      return;
-    }
-    if (this._operatorState !== ConnectionState.Connected) {
-      this.log.warn(TAG, 'fetchAgentIdentity: operator not connected');
-      return;
-    }
+    if (!this.operatorSession) return;
+    if (this._operatorState !== ConnectionState.Connected) return;
     this.log.info(TAG, 'Fetching agent identity from gateway config...');
     try {
       let resJson = await this.operatorSession.request('config.get', '{}', 10000);
       this.log.info(TAG, `config.get response (500): ${resJson.substring(0, 500)}`);
-      if (resJson.length === 0) {
-        this.log.warn(TAG, 'config.get returned empty response');
+      if (resJson.length === 0) return;
+      let wrapper = JSON.parse(resJson) as Record<string, Object>;
+      // config.get returns { path, exists, raw: "<json string>" } — parse raw field
+      let config: Record<string, Object>;
+      let rawStr = wrapper['raw'] as string | undefined;
+      if (rawStr && rawStr.length > 0) {
+        config = JSON.parse(rawStr) as Record<string, Object>;
+      } else {
+        config = wrapper;
+      }
+      this.log.info(TAG, `config keys: [${Object.keys(config).join(',')}]`);
+
+      // Strategy 1: Look for agent identity in agents block
+      let identity = this.extractAgentIdentityFromConfig(config);
+      if (identity) {
+        this._agentIdentity = identity;
+        this.dispatchIdentity(identity);
         return;
       }
-      let config = JSON.parse(resJson) as Record<string, Object>;
-      let agents = config['agents'] as Record<string, Object> | undefined;
-      if (!agents) {
-        this.log.info(TAG, 'No agents block in config');
-        return;
-      }
-      let agentList = agents['list'] as Object[] | undefined;
-      if (!agentList || agentList.length === 0) {
-        this.log.info(TAG, 'No agent list in config');
-        return;
-      }
-      let targetAgent: Record<string, Object> | undefined = undefined;
-      for (let i = 0; i < agentList.length; i++) {
-        let agent = agentList[i] as Record<string, Object>;
-        if (agent['default'] === true || String(agent['default']) === 'true') {
-          targetAgent = agent;
-          break;
+
+      // Strategy 2: Check gateway.name or gateway.identity
+      let gw = config['gateway'] as Record<string, Object> | undefined;
+      if (gw) {
+        let gwKeys = Object.keys(gw);
+        this.log.info(TAG, `gateway keys: [${gwKeys.join(',')}]`);
+        let gwIdentity = gw['identity'] as Record<string, string> | undefined;
+        if (gwIdentity && (gwIdentity['name'] ?? '').length > 0) {
+          identity = {
+            name: gwIdentity['name'] ?? '',
+            theme: gwIdentity['theme'] ?? '',
+            emoji: gwIdentity['emoji'] ?? '',
+            avatar: gwIdentity['avatar'] ?? '',
+          };
+          this.log.info(TAG, `Using gateway.identity: name="${identity.name}"`);
+          this._agentIdentity = identity;
+          this.dispatchIdentity(identity);
+          return;
+        }
+        let gwName = (gw['name'] as string) ?? '';
+        if (gwName.length > 0) {
+          this.log.info(TAG, `Using gateway.name: "${gwName}"`);
+          this._agentIdentity = { name: gwName, theme: '', emoji: '', avatar: '' };
+          this.dispatchIdentity(this._agentIdentity);
+          return;
         }
       }
-      if (!targetAgent) {
-        targetAgent = agentList[0] as Record<string, Object>;
+
+      // Strategy 3: Try status RPC
+      this.log.info(TAG, 'No identity in config, trying status RPC...');
+      await this.fetchIdentityFromStatus();
+    } catch (err) {
+      this.log.error(TAG, `fetchAgentIdentity failed: ${(err as Error).message ?? ''}`);
+    }
+  }
+
+  /** Extract agent identity from config.agents block. Returns null if not found. */
+  private extractAgentIdentityFromConfig(config: Record<string, Object>): AgentIdentity | null {
+    let agents = config['agents'] as Object | undefined;
+    if (!agents || typeof agents !== 'object') return null;
+
+    // Try agents.list (array format)
+    let agentsObj = agents as Record<string, Object>;
+    let agentList: Record<string, Object>[] = [];
+    if (Array.isArray(agents)) {
+      agentList = agents as Record<string, Object>[];
+    } else if (agentsObj['list'] && Array.isArray(agentsObj['list'])) {
+      agentList = agentsObj['list'] as Record<string, Object>[];
+    } else {
+      // Map format: named agents as keys (skip 'defaults' which is shared settings)
+      let keys = Object.keys(agentsObj).filter((k: string) => k !== 'defaults');
+      for (let k of keys) {
+        let val = agentsObj[k];
+        if (typeof val === 'object' && val !== null) {
+          let entry = val as Record<string, Object>;
+          if (!entry['id']) entry['id'] = k as Object;
+          agentList.push(entry);
+        }
       }
-      let identityObj = targetAgent['identity'] as Record<string, string> | undefined;
-      if (!identityObj) {
-        this.log.info(TAG, `Agent "${(targetAgent['id'] as string) ?? '?'}" has no identity block`);
-        return;
+    }
+    if (agentList.length === 0) return null;
+    this.log.info(TAG, `Found ${agentList.length} agent(s) in config`);
+
+    // Find default agent, or first
+    let target = agentList[0];
+    for (let agent of agentList) {
+      if (agent['default'] === true || String(agent['default']) === 'true') {
+        target = agent;
+        break;
       }
+    }
+    let identityObj = target['identity'] as Record<string, string> | undefined;
+    if (identityObj) {
       let identity: AgentIdentity = {
         name: identityObj['name'] ?? '',
         theme: identityObj['theme'] ?? '',
         emoji: identityObj['emoji'] ?? '',
         avatar: identityObj['avatar'] ?? '',
       };
-      this.log.info(TAG, `Agent identity: name="${identity.name}" emoji="${identity.emoji}" theme="${identity.theme}" avatar="${identity.avatar.substring(0, 80)}"`);
-      this._agentIdentity = identity;
-      this.dispatchIdentity(identity);
+      this.log.info(TAG, `Agent identity: name="${identity.name}" emoji="${identity.emoji}" theme="${identity.theme}"`);
+      if (identity.name.length > 0) return identity;
+    }
+    // Use agent id as fallback name
+    let agentId = (target['id'] as string) ?? '';
+    if (agentId.length > 0) {
+      this.log.info(TAG, `Using agent id as name: "${agentId}"`);
+      return { name: agentId, theme: '', emoji: '', avatar: '' };
+    }
+    return null;
+  }
+
+  /** Fallback: try status RPC to get gateway/agent name. */
+  private async fetchIdentityFromStatus(): Promise<void> {
+    if (!this.operatorSession) return;
+    try {
+      let resJson = await this.operatorSession.request('status', '{}', 8000);
+      this.log.info(TAG, `status response (500): ${resJson.substring(0, 500)}`);
+      if (resJson.length > 0) {
+        let status = JSON.parse(resJson) as Record<string, Object>;
+        this.log.info(TAG, `status keys: [${Object.keys(status).join(',')}]`);
+        let name = (status['name'] as string) ?? (status['agentName'] as string) ??
+          (status['hostname'] as string) ?? '';
+        if (name.length > 0) {
+          this.log.info(TAG, `Using status name: "${name}"`);
+          this._agentIdentity = { name: name, theme: '', emoji: '', avatar: '' };
+          this.dispatchIdentity(this._agentIdentity);
+        }
+      }
     } catch (err) {
-      this.log.error(TAG, `fetchAgentIdentity failed: ${(err as Error).message ?? ''}`);
+      this.log.info(TAG, `status RPC failed: ${(err as Error).message ?? ''}`);
     }
   }
 
@@ -794,12 +908,24 @@ export class NodeRuntime {
         case Command.CANVAS_HIDE:
         case Command.CANVAS_NAVIGATE:
         case Command.CANVAS_EVAL:
-        case Command.CANVAS_SNAPSHOT:
-        case Command.CANVAS_A2UI_PUSH:
-        case Command.CANVAS_A2UI_PUSH_JSONL:
-        case Command.CANVAS_A2UI_RESET: {
+        case Command.CANVAS_SNAPSHOT: {
           this.log.info(TAG, `Executing ${command} capability...`);
           result = await this.canvasCapability.execute(command, paramsJson);
+          break;
+        }
+        case Command.CANVAS_A2UI_PUSH:
+        case Command.CANVAS_A2UI_PUSH_JSONL: {
+          // Dispatch A2UI content inline to chat (not full-screen CanvasPage)
+          let a2uiContent = this.extractA2UIContent(paramsJson);
+          this.log.info(TAG, `A2UI push inline: ${a2uiContent.length} chars`);
+          this.dispatchA2UI('push', a2uiContent);
+          result = '{"ok":true}';
+          break;
+        }
+        case Command.CANVAS_A2UI_RESET: {
+          this.log.info(TAG, 'A2UI reset inline');
+          this.dispatchA2UI('reset', '');
+          result = '{"ok":true}';
           break;
         }
         case Command.SMS_SEND: {
@@ -877,6 +1003,20 @@ export class NodeRuntime {
       this.log.error(TAG, `invoke error for ${command}: ${message}`);
       this.dispatchInvoke(command, paramsStr, message, true);
       return InvokeResult.error('UNAVAILABLE', message);
+    }
+  }
+
+  /** Extract JSONL content from A2UI push params. */
+  private extractA2UIContent(paramsJson: string | undefined): string {
+    if (!paramsJson || paramsJson.length === 0) return '';
+    try {
+      let p = JSON.parse(paramsJson) as Record<string, Object>;
+      if (p['lines'] !== undefined) return p['lines'] as string;
+      if (p['content'] !== undefined) return p['content'] as string;
+      if (p['jsonl'] !== undefined) return p['jsonl'] as string;
+      return paramsJson;
+    } catch {
+      return paramsJson;
     }
   }
 

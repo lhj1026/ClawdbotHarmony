@@ -51,7 +51,8 @@ export struct ChatPage {
   @State showWaveform: boolean = false;
   @State waveBars: number[] = [0, 0, 0, 0, 0, 0, 0];
   @State gwRecordingTimer: number = -1;
-  @State pendingImagePath: string = '';   // user-selected image ready to send
+  @State pendingImagePath: string = '';   // user-selected image ready to send (single)
+  @State pendingImagePaths: string[] = [];  // multiple images ready to send
   @State pendingFileName: string = '';    // user-selected file name
   private pendingFileContent: string = '';  // file text content to attach
   @StorageLink('share_timestamp') @Watch('onShareReceived') shareTimestamp: number = 0;
@@ -80,6 +81,8 @@ export struct ChatPage {
   private recordingListener: ((recording: boolean, durationSec: number) => void) | undefined = undefined;
   private approvalListener: ((req: ExecApprovalRequest) => void) | undefined = undefined;
   private identityListener: ((identity: AgentIdentity | undefined) => void) | undefined = undefined;
+  private a2uiListener: ((type: string, content: string) => void) | undefined = undefined;
+  private a2uiInjectFn: ((content: string) => void) | undefined = undefined;
   private approvalTimers: Map<string, number> = new Map();
   private feishuConnected: boolean = false;
   private feishuSettings: SettingsData | undefined = undefined;
@@ -159,6 +162,11 @@ export struct ChatPage {
       this.handleApprovalRequest(req);
     };
     NodeRuntime.getInstance().addApprovalListener(this.approvalListener);
+    // Register A2UI listener for inline rendering in chat
+    this.a2uiListener = (type: string, content: string) => {
+      this.handleA2UIEvent(type, content);
+    };
+    NodeRuntime.getInstance().addA2UIListener(this.a2uiListener);
     // Register recording listener for AIService local record_audio tool
     this.recordingListener = (recording: boolean, durationSec: number) => {
       this.handleRecordingState(recording, durationSec);
@@ -210,6 +218,11 @@ export struct ChatPage {
       NodeRuntime.getInstance().removeApprovalListener(this.approvalListener);
       this.approvalListener = undefined;
     }
+    if (this.a2uiListener) {
+      NodeRuntime.getInstance().removeA2UIListener(this.a2uiListener);
+      this.a2uiListener = undefined;
+    }
+    this.a2uiInjectFn = undefined;
     if (this.identityListener) {
       NodeRuntime.getInstance().removeIdentityListener(this.identityListener);
       this.identityListener = undefined;
@@ -318,7 +331,7 @@ export struct ChatPage {
                 .fontSize(18)
                 .fontWeight(FontWeight.Bold)
                 .fontColor('#1A1A1A')
-              Text('v2.10.3')
+              Text('v2.10.4')
                 .fontSize(11)
                 .fontColor('#999999')
                 .margin({ top: 4 })
@@ -466,7 +479,9 @@ export struct ChatPage {
                 assistantName: this.getAssistantDisplayName(),
                 onImageClick: (path: string): void => { this.previewImagePath = path; },
                 onFeedback: (_msgId: string, _type: string): void => { this.saveHistory(); },
-                onButtonClick: (action: string): void => { this.handleButtonAction(action); }
+                onButtonClick: (action: string): void => { this.handleButtonAction(action); },
+                onA2UIReady: (inject: (content: string) => void): void => { this.a2uiInjectFn = inject; },
+                onA2UIAction: (json: string): void => { NodeRuntime.getInstance().sendA2UIAction(json); }
               })
             }
           }, (msg: ChatMessage): string => msg.id)
@@ -522,9 +537,35 @@ export struct ChatPage {
       // -- input bar (hidden in history mode) --
       if (!this.showHistory) {
       // Attachment preview (image or file)
-      if (this.pendingImagePath.length > 0 || this.pendingFileName.length > 0) {
+      if (this.pendingImagePath.length > 0 || this.pendingImagePaths.length > 0 || this.pendingFileName.length > 0) {
         Row() {
-          if (this.pendingImagePath.length > 0) {
+          if (this.pendingImagePaths.length > 0) {
+            // Multiple images preview
+            Row({ space: 6 }) {
+              ForEach(this.pendingImagePaths.slice(0, 4), (imgPath: string, idx?: number) => {
+                Image(imgPath.startsWith('file://') ? imgPath : 'file://' + imgPath)
+                  .width(60)
+                  .height(60)
+                  .objectFit(ImageFit.Cover)
+                  .borderRadius(6)
+                  .onClick(() => { this.previewImagePath = imgPath; })
+              }, (imgPath: string, idx?: number) => imgPath)
+              if (this.pendingImagePaths.length > 4) {
+                Text(`+${this.pendingImagePaths.length - 4}`)
+                  .fontSize(14)
+                  .fontColor('#666666')
+              }
+              Text('\u2715')
+                .fontSize(14)
+                .fontColor(Color.White)
+                .width(20)
+                .height(20)
+                .textAlign(TextAlign.Center)
+                .borderRadius(10)
+                .backgroundColor('rgba(0,0,0,0.5)')
+                .onClick(() => { this.pendingImagePaths = []; })
+            }
+          } else if (this.pendingImagePath.length > 0) {
             Stack({ alignContent: Alignment.TopEnd }) {
               Image(this.pendingImagePath.startsWith('file://') ? this.pendingImagePath : 'file://' + this.pendingImagePath)
                 .constraintSize({ maxWidth: 200, maxHeight: 160 })
@@ -672,8 +713,8 @@ export struct ChatPage {
         .width(42)
         .height(42)
         .borderRadius(21)
-        .backgroundColor((this.inputText.trim().length > 0 || this.pendingImagePath.length > 0 || this.pendingFileName.length > 0) && !this.isLoading ? '#D2691E' : '#CCCCCC')
-        .enabled((this.inputText.trim().length > 0 || this.pendingImagePath.length > 0 || this.pendingFileName.length > 0) && !this.isLoading)
+        .backgroundColor((this.inputText.trim().length > 0 || this.pendingImagePath.length > 0 || this.pendingImagePaths.length > 0 || this.pendingFileName.length > 0) && !this.isLoading ? '#D2691E' : '#CCCCCC')
+        .enabled((this.inputText.trim().length > 0 || this.pendingImagePath.length > 0 || this.pendingImagePaths.length > 0 || this.pendingFileName.length > 0) && !this.isLoading)
         .onClick(() => { this.send(); })
       }
       .width('100%')
@@ -1073,26 +1114,41 @@ Keep it short but preserve all important information. Use the same language as t
 
   private async send(): Promise<void> {
     let text = this.inputText.trim();
-    let hasAttachment = this.pendingImagePath.length > 0 || this.pendingFileName.length > 0;
+    let hasImage = this.pendingImagePath.length > 0 || this.pendingImagePaths.length > 0;
+    let hasAttachment = hasImage || this.pendingFileName.length > 0;
     if ((text.length === 0 && !hasAttachment) || this.isLoading) return;
     this.inputText = '';
 
     // Capture pending attachments before clearing
     let imagePath = this.pendingImagePath;
+    let imagePaths = this.pendingImagePaths.slice(); // copy array
     let fileName = this.pendingFileName;
     let fileContent = this.pendingFileContent;
     this.pendingImagePath = '';
+    this.pendingImagePaths = [];
     this.pendingFileName = '';
     this.pendingFileContent = '';
 
+    // Merge single and multi image paths
+    let allImagePaths: string[] = [];
+    if (imagePaths.length > 0) {
+      allImagePaths = imagePaths;
+    } else if (imagePath.length > 0) {
+      allImagePaths = [imagePath];
+    }
+
     // user message
-    let userMsg = new ChatMessage('user', text.length > 0 ? text : (imagePath.length > 0 ? I18n.t('chat.sentImage') : fileName));
-    if (imagePath.length > 0) {
-      userMsg.userImagePath = imagePath;
+    let hasImages = allImagePaths.length > 0;
+    let defaultText = hasImages
+      ? (allImagePaths.length > 1 ? `[${allImagePaths.length} ${I18n.t('chat.sentImage')}]` : I18n.t('chat.sentImage'))
+      : fileName;
+    let userMsg = new ChatMessage('user', text.length > 0 ? text : defaultText);
+    if (allImagePaths.length > 0) {
+      userMsg.userImagePath = allImagePaths[0]; // primary image for API
+      userMsg.userImagePaths = allImagePaths;   // all images for display
     }
     if (fileName.length > 0) {
       userMsg.attachmentName = fileName;
-      // Prepend file content to the message text for AI
       if (fileContent.length > 0) {
         let prefix = `[File: ${fileName}]\n${fileContent}\n\n`;
         text = prefix + text;
@@ -1105,13 +1161,11 @@ Keep it short but preserve all important information. Use the same language as t
     this.startDotAnimation();
 
     // Auto-enrich with location for weather queries
-    let enrichedText = await this.enrichWithLocation(text.length > 0 ? text : (imagePath.length > 0 ? I18n.t('chat.describeImage') : ''));
+    let enrichedText = await this.enrichWithLocation(text.length > 0 ? text : (hasImages ? I18n.t('chat.describeImage') : ''));
 
     if (this.gwConnected) {
-      // ---- Gateway path: send via operator session ----
       await this.sendViaGateway(enrichedText);
     } else {
-      // ---- Local AI path: direct HTTP API ----
       await this.sendViaLocalAI(enrichedText);
     }
 
@@ -1229,6 +1283,36 @@ Keep it short but preserve all important information. Use the same language as t
       }
     }
     return -1;
+  }
+
+  /** Handle A2UI events for inline rendering in chat. */
+  private handleA2UIEvent(type: string, content: string): void {
+    this.log.info('ChatPage', `A2UI event: type=${type} contentLen=${content.length}`);
+    if (type === 'push') {
+      // Find or create assistant message
+      let idx = this.findGwAssistantIndex();
+      if (idx < 0) {
+        // No active assistant message — create one
+        let msg = new ChatMessage('assistant', '');
+        this.messages.push(msg);
+        idx = this.messages.length - 1;
+        this.gwAssistantMsgId = msg.id;
+      }
+      // Append JSONL content
+      let msg = this.messages[idx];
+      msg.a2uiContent = msg.a2uiContent.length > 0 ? msg.a2uiContent + '\n' + content : content;
+      // If WebView is already loaded, inject directly
+      if (this.a2uiInjectFn) {
+        this.a2uiInjectFn(content);
+      }
+      this.scrollToEnd();
+    } else if (type === 'reset') {
+      let idx = this.findGwAssistantIndex();
+      if (idx >= 0) {
+        this.messages[idx].a2uiContent = '';
+      }
+      this.a2uiInjectFn = undefined;
+    }
   }
 
   /** Handle incoming gateway chat events (delta / final / error / aborted). */
@@ -1892,30 +1976,111 @@ Keep it short but preserve all important information. Use the same language as t
   private consumeShareData(): void {
     let shareText = AppStorage.get<string>('share_text') ?? '';
     let shareUri = AppStorage.get<string>('share_uri') ?? '';
+    let shareUrisJson = AppStorage.get<string>('share_uris') ?? '';
     let shareType = AppStorage.get<string>('share_type') ?? '';
 
-    this.log.info('ChatPage', `consumeShareData: type=${shareType} textLen=${shareText.length} uri=${shareUri}`);
+    // Parse multiple URIs
+    let shareUris: string[] = [];
+    if (shareUrisJson.length > 0) {
+      try {
+        shareUris = JSON.parse(shareUrisJson) as string[];
+      } catch { /* ignore */ }
+    }
+    if (shareUris.length === 0 && shareUri.length > 0) {
+      shareUris = [shareUri];
+    }
+
+    this.log.info('ChatPage', `consumeShareData: type=${shareType} textLen=${shareText.length} uris=${shareUris.length}`);
 
     // Clear AppStorage
     AppStorage.setOrCreate<number>('share_timestamp', 0);
     AppStorage.setOrCreate<string>('share_text', '');
     AppStorage.setOrCreate<string>('share_uri', '');
+    AppStorage.setOrCreate<string>('share_uris', '');
     AppStorage.setOrCreate<string>('share_type', '');
 
     if (shareType === 'text' && shareText.length > 0) {
-      // Text share — fill input box
       this.inputText = shareText;
       this.scrollToEnd();
-    } else if (shareType === 'image' && shareUri.length > 0) {
-      // Image share — compress and set as pending image
-      this.handleSharedImage(shareUri);
+    } else if (shareType === 'image' && shareUris.length > 0) {
+      this.handleSharedImages(shareUris);
     } else if (shareType === 'file' && shareUri.length > 0) {
-      // File share — try to read content
       this.handleSharedFile(shareUri);
     } else if (shareText.length > 0) {
-      // Fallback: any text available
       this.inputText = shareText;
       this.scrollToEnd();
+    }
+  }
+
+  private async handleSharedImages(uris: string[]): Promise<void> {
+    this.log.info('ChatPage', `handleSharedImages: ${uris.length} URIs`);
+    let processedPaths: string[] = [];
+    for (let uri of uris) {
+      let path = await this.processSharedImageUri(uri);
+      if (path.length > 0) {
+        processedPaths.push(path);
+      }
+    }
+    this.log.info('ChatPage', `handleSharedImages: ${processedPaths.length} processed`);
+    if (processedPaths.length === 1) {
+      this.pendingImagePath = processedPaths[0];
+    } else if (processedPaths.length > 1) {
+      this.pendingImagePaths = processedPaths;
+    }
+  }
+
+  /** Process a single shared image URI: copy to sandbox + compress. Returns sandbox path or fallback URI. */
+  private async processSharedImageUri(uri: string): Promise<string> {
+    try {
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let imgDir = ctx.filesDir + '/user_images';
+      try { fileIo.mkdirSync(imgDir); } catch { /* exists */ }
+      let destPath = `${imgDir}/share_${Date.now()}_${Math.floor(Math.random() * 1000)}.jpg`;
+
+      let fsPath = uri;
+      if (fsPath.startsWith('file://')) {
+        fsPath = fsPath.substring(7);
+      }
+
+      let rawPath = `${imgDir}/share_raw_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+      let srcFile = fileIo.openSync(fsPath, fileIo.OpenMode.READ_ONLY);
+      let stat = fileIo.statSync(srcFile.fd);
+      let rawBuf = new ArrayBuffer(stat.size);
+      fileIo.readSync(srcFile.fd, rawBuf);
+      fileIo.closeSync(srcFile);
+
+      let rawFile = fileIo.openSync(rawPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      fileIo.writeSync(rawFile.fd, rawBuf);
+      fileIo.closeSync(rawFile);
+
+      let imgSource = image.createImageSource(rawPath);
+      let info = await imgSource.getImageInfo();
+      let scale = 1.0;
+      let maxDim = 1280;
+      if (info.size.width > maxDim || info.size.height > maxDim) {
+        scale = maxDim / Math.max(info.size.width, info.size.height);
+      }
+      let decodingOpts: image.DecodingOptions = {
+        desiredSize: { width: Math.round(info.size.width * scale), height: Math.round(info.size.height * scale) }
+      };
+      let pixelMap = await imgSource.createPixelMap(decodingOpts);
+      let packer = image.createImagePacker();
+      let packOpts: image.PackingOption = { format: 'image/jpeg', quality: 80 };
+      let packed: ArrayBuffer = await packer.packing(pixelMap, packOpts);
+      await pixelMap.release();
+      imgSource.release();
+      packer.release();
+
+      let destFile = fileIo.openSync(destPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      fileIo.writeSync(destFile.fd, packed);
+      fileIo.closeSync(destFile);
+      try { fileIo.unlinkSync(rawPath); } catch { /* ignore */ }
+
+      this.log.info('ChatPage', `Shared image compressed: ${packed.byteLength} bytes -> ${destPath}`);
+      return destPath;
+    } catch (e) {
+      this.log.error('ChatPage', `processSharedImageUri error: ${(e as Error).message ?? ''}`);
+      return uri; // fallback: use original URI
     }
   }
 
