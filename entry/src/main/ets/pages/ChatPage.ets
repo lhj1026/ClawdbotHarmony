@@ -279,7 +279,7 @@ export struct ChatPage {
                 .fontSize(18)
                 .fontWeight(FontWeight.Bold)
                 .fontColor('#1A1A1A')
-              Text('v2.9.7')
+              Text('v2.10.0')
                 .fontSize(11)
                 .fontColor('#999999')
                 .margin({ top: 4 })
@@ -474,10 +474,10 @@ export struct ChatPage {
           if (this.pendingImagePath.length > 0) {
             Stack({ alignContent: Alignment.TopEnd }) {
               Image('file://' + this.pendingImagePath)
-                .width(60)
-                .height(60)
-                .objectFit(ImageFit.Cover)
+                .constraintSize({ maxWidth: 200, maxHeight: 160 })
+                .objectFit(ImageFit.Contain)
                 .borderRadius(8)
+                .onClick(() => { this.previewImagePath = this.pendingImagePath; })
               Text('\u2715')
                 .fontSize(14)
                 .fontColor(Color.White)
@@ -1850,15 +1850,29 @@ Keep it short but preserve all important information. Use the same language as t
   }
 
   private async handleSharedImage(uri: string): Promise<void> {
+    this.log.info('ChatPage', `handleSharedImage: uri=${uri}`);
     try {
       let ctx = getContext(this) as common.UIAbilityContext;
       let imgDir = ctx.filesDir + '/user_images';
       try { fileIo.mkdirSync(imgDir); } catch { /* exists */ }
       let destPath = `${imgDir}/share_${Date.now()}.jpg`;
 
-      // Compress shared image (reuse pickPhoto logic)
+      // First, copy the shared file to sandbox (shared URIs have temporary read permission)
+      let rawPath = `${imgDir}/share_raw_${Date.now()}`;
       let srcFile = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
-      let imgSource = image.createImageSource(srcFile.fd);
+      let stat = fileIo.statSync(srcFile.fd);
+      this.log.info('ChatPage', `Shared image opened: fd=${srcFile.fd} size=${stat.size}`);
+      let rawBuf = new ArrayBuffer(stat.size);
+      fileIo.readSync(srcFile.fd, rawBuf);
+      fileIo.closeSync(srcFile);
+
+      // Save raw copy to sandbox first
+      let rawFile = fileIo.openSync(rawPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      fileIo.writeSync(rawFile.fd, rawBuf);
+      fileIo.closeSync(rawFile);
+
+      // Compress from the sandbox copy
+      let imgSource = image.createImageSource(rawPath);
       let info = await imgSource.getImageInfo();
       let origW = info.size.width;
       let origH = info.size.height;
@@ -1877,16 +1891,20 @@ Keep it short but preserve all important information. Use the same language as t
       await pixelMap.release();
       imgSource.release();
       packer.release();
-      fileIo.closeSync(srcFile);
 
       let destFile = fileIo.openSync(destPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
       fileIo.writeSync(destFile.fd, packed);
       fileIo.closeSync(destFile);
 
+      // Clean up raw copy
+      try { fileIo.unlinkSync(rawPath); } catch { /* ignore */ }
+
       this.log.info('ChatPage', `Shared image compressed: ${origW}x${origH} -> ${targetW}x${targetH}, ${packed.byteLength} bytes`);
       this.pendingImagePath = destPath;
     } catch (e) {
       this.log.error('ChatPage', `handleSharedImage error: ${(e as Error).message ?? ''}`);
+      // Fallback: try to use the URI directly as image source (works for some URI schemes)
+      this.pendingImagePath = uri;
     }
   }
 

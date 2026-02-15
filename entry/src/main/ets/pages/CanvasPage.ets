@@ -88,6 +88,16 @@ struct CanvasPage {
         .onErrorReceive((event: OnErrorReceiveEvent) => {
           this.log.error(TAG, `Web error: code=${event.error.getErrorCode()} msg=${event.error.getErrorInfo()}`);
         })
+        .onConsole((event) => {
+          if (event && event.message) {
+            let msg: string = event.message.getMessage();
+            if (msg.startsWith('A2UI_ACTION:')) {
+              let actionJson: string = msg.substring(12);
+              CanvasCapability.getInstance().handleA2UIAction(actionJson);
+            }
+          }
+          return false;
+        })
     }
     .width('100%')
     .height('100%')

@@ -37,7 +37,7 @@ import { LogService } from '../../common/LogService';
 import { Constants } from '../../common/Constants';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.9.7';
+const APP_VERSION = '2.10.0';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -463,6 +463,14 @@ export class NodeRuntime {
       this.loadNotificationIcon(context);
     }
 
+    // Wire up A2UI action callback
+    this.canvasCapability.onA2UIAction = (actionJson: string) => {
+      if (this.nodeSession) {
+        this.log.info(TAG, `A2UI action → node event: ${actionJson.substring(0, 200)}`);
+        this.nodeSession.sendNodeEvent('canvas.a2ui.action', actionJson);
+      }
+    };
+
     // Create operator session
     let operatorOpts = this.buildOperatorOptions();
     this.log.info(TAG, `Creating operator session: clientId=${operatorOpts.client.id} mode=${operatorOpts.client.mode} role=${operatorOpts.role}`);
@@ -676,7 +684,10 @@ export class NodeRuntime {
         case Command.CANVAS_HIDE:
         case Command.CANVAS_NAVIGATE:
         case Command.CANVAS_EVAL:
-        case Command.CANVAS_SNAPSHOT: {
+        case Command.CANVAS_SNAPSHOT:
+        case Command.CANVAS_A2UI_PUSH:
+        case Command.CANVAS_A2UI_PUSH_JSONL:
+        case Command.CANVAS_A2UI_RESET: {
           this.log.info(TAG, `Executing ${command} capability...`);
           result = await this.canvasCapability.execute(command, paramsJson);
           break;
@@ -1091,6 +1102,9 @@ export class NodeRuntime {
       commands.push(Command.CANVAS_NAVIGATE);
       commands.push(Command.CANVAS_EVAL);
       commands.push(Command.CANVAS_SNAPSHOT);
+      commands.push(Command.CANVAS_A2UI_PUSH);
+      commands.push(Command.CANVAS_A2UI_PUSH_JSONL);
+      commands.push(Command.CANVAS_A2UI_RESET);
     }
     if (this._capScreen) {
       caps.push(Capability.Screen);

@@ -26,6 +26,10 @@ export class CanvasCapability {
   private log: LogService = LogService.getInstance();
   private controller: webview.WebviewController | undefined = undefined;
   private _isPresented: boolean = false;
+  private _a2uiMode: boolean = false;
+
+  /** Callback for A2UI action events from WebView */
+  onA2UIAction: ((actionJson: string) => void) | undefined = undefined;
 
   /** Called by CanvasPage when it appears, to register its controller */
   registerController(ctrl: webview.WebviewController): void {
@@ -37,6 +41,7 @@ export class CanvasCapability {
   unregisterController(): void {
     this.controller = undefined;
     this._isPresented = false;
+    this._a2uiMode = false;
     this.log.info(TAG, 'WebviewController unregistered');
   }
 
@@ -58,6 +63,11 @@ export class CanvasCapability {
         return await this.evalJS(paramsJson);
       case Command.CANVAS_SNAPSHOT:
         return await this.snapshot(paramsJson);
+      case Command.CANVAS_A2UI_PUSH:
+      case Command.CANVAS_A2UI_PUSH_JSONL:
+        return await this.pushA2UI(paramsJson);
+      case Command.CANVAS_A2UI_RESET:
+        return await this.resetA2UI();
       default:
         throw new Error(`Unsupported canvas command: ${command}`);
     }
@@ -222,6 +232,93 @@ export class CanvasCapability {
     this.log.info(TAG, `snapshot: ${jpegData.byteLength} bytes, base64=${base64Str.length}`);
 
     return `{"format":"jpg","base64":${JSON.stringify(base64Str)},"width":${width},"height":${height}}`;
+  }
+
+  // ---- canvas.a2ui.push: Push A2UI JSONL content ----
+
+  private async pushA2UI(paramsJson: string | undefined): Promise<string> {
+    // Auto-present with local A2UI renderer if not already shown
+    if (!this._isPresented || !this.controller) {
+      let a2uiUrl: string = 'resource://rawfile/a2ui/index.html';
+      CanvasCapability._pendingUrl = a2uiUrl;
+      this._isPresented = true;
+      this._a2uiMode = true;
+
+      try {
+        await router.pushUrl({ url: 'pages/CanvasPage' });
+      } catch (err) {
+        this._isPresented = false;
+        this._a2uiMode = false;
+        throw new Error(`Failed to open CanvasPage: ${(err as Error).message ?? 'unknown'}`);
+      }
+
+      await this.waitForController(5000);
+      // Wait a bit more for HTML to load
+      await new Promise<void>((resolve) => { setTimeout(() => { resolve(); }, 500); });
+    } else if (!this._a2uiMode) {
+      // Canvas is showing a regular URL, switch to A2UI
+      this.controller.loadUrl('resource://rawfile/a2ui/index.html');
+      this._a2uiMode = true;
+      await new Promise<void>((resolve) => { setTimeout(() => { resolve(); }, 500); });
+    }
+
+    if (!this.controller) {
+      throw new Error('Canvas controller not available');
+    }
+
+    // Extract JSONL content from params
+    let jsonlContent: string = '';
+    if (paramsJson && paramsJson.length > 0) {
+      try {
+        let p = JSON.parse(paramsJson) as Record<string, Object>;
+        // Support multiple param key names
+        if (p['lines'] !== undefined) {
+          jsonlContent = p['lines'] as string;
+        } else if (p['content'] !== undefined) {
+          jsonlContent = p['content'] as string;
+        } else if (p['jsonl'] !== undefined) {
+          jsonlContent = p['jsonl'] as string;
+        } else {
+          // Whole params might be the JSONL content itself
+          jsonlContent = paramsJson;
+        }
+      } catch {
+        // params itself might be raw JSONL
+        jsonlContent = paramsJson;
+      }
+    }
+
+    if (jsonlContent.length === 0) {
+      return '{"ok":true,"action":"no_content"}';
+    }
+
+    this.log.info(TAG, `pushA2UI: ${jsonlContent.length} chars`);
+
+    // Escape for JS string injection
+    let escaped: string = jsonlContent.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
+    await this.controller.runJavaScript(`window.a2ui.push('${escaped}')`);
+
+    return '{"ok":true}';
+  }
+
+  // ---- canvas.a2ui.reset: Clear A2UI state ----
+
+  private async resetA2UI(): Promise<string> {
+    this.log.info(TAG, 'resetA2UI');
+
+    if (this._isPresented && this.controller && this._a2uiMode) {
+      await this.controller.runJavaScript('window.a2ui.reset()');
+    }
+
+    return '{"ok":true}';
+  }
+
+  /** Called by CanvasPage when A2UI action event is received from WebView */
+  handleA2UIAction(actionJson: string): void {
+    this.log.info(TAG, `A2UI action: ${actionJson.substring(0, 200)}`);
+    if (this.onA2UIAction) {
+      this.onA2UIAction(actionJson);
+    }
   }
 
   // ---- Helpers ----

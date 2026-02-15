@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>A2UI</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,HarmonyOS Sans,sans-serif;background:#0F0F1A;color:#E0E0E0;font-size:15px;line-height:1.5;overflow-x:hidden}
+#a2ui-root{width:100%;min-height:100vh;padding:12px}
+.a2ui-empty{display:flex;align-items:center;justify-content:center;height:80vh;color:#666;font-size:14px}
+
+/* Layout */
+.a2ui-column{display:flex;flex-direction:column;gap:8px;width:100%}
+.a2ui-row{display:flex;flex-direction:row;gap:8px;align-items:center;flex-wrap:wrap}
+.a2ui-card{background:#1A1A2E;border-radius:12px;padding:16px;border:1px solid #2A2A3E;width:100%}
+.a2ui-list{display:flex;flex-direction:column;gap:4px;width:100%}
+.a2ui-list.horizontal{flex-direction:row;overflow-x:auto}
+.a2ui-divider-h{width:100%;height:1px;background:#2A2A3E;margin:4px 0}
+.a2ui-divider-v{width:1px;align-self:stretch;background:#2A2A3E;margin:0 4px}
+.a2ui-tabs-header{display:flex;gap:0;border-bottom:1px solid #2A2A3E;margin-bottom:8px}
+.a2ui-tab-btn{padding:8px 16px;background:none;border:none;color:#888;font-size:14px;cursor:pointer;border-bottom:2px solid transparent}
+.a2ui-tab-btn.active{color:#4FC3F7;border-bottom-color:#4FC3F7}
+.a2ui-tab-content{display:none}
+.a2ui-tab-content.active{display:block}
+.a2ui-modal-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1000}
+.a2ui-modal-body{background:#1A1A2E;border-radius:16px;padding:20px;max-width:90%;max-height:80vh;overflow-y:auto;border:1px solid #2A2A3E}
+
+/* Text */
+.a2ui-text{color:#E0E0E0}
+.a2ui-text.h1{font-size:28px;font-weight:700;margin-bottom:8px}
+.a2ui-text.h2{font-size:22px;font-weight:600;margin-bottom:6px}
+.a2ui-text.h3{font-size:18px;font-weight:600;margin-bottom:4px}
+.a2ui-text.h4{font-size:16px;font-weight:500}
+.a2ui-text.h5{font-size:14px;font-weight:500}
+.a2ui-text.caption{font-size:12px;color:#888}
+.a2ui-text.body{font-size:15px}
+.a2ui-text a{color:#4FC3F7}
+.a2ui-text code{background:#2A2A3E;padding:2px 6px;border-radius:4px;font-size:13px}
+.a2ui-text pre{background:#2A2A3E;padding:12px;border-radius:8px;overflow-x:auto;margin:8px 0}
+.a2ui-text strong{font-weight:600}
+.a2ui-text em{font-style:italic}
+
+/* Media */
+.a2ui-image{max-width:100%;border-radius:8px}
+.a2ui-icon{width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;color:#4FC3F7}
+.a2ui-video,.a2ui-audio{width:100%;border-radius:8px}
+
+/* Interactive */
+.a2ui-btn{padding:10px 20px;border-radius:8px;border:none;font-size:15px;font-weight:500;cursor:pointer;transition:opacity 0.2s}
+.a2ui-btn.primary{background:#4FC3F7;color:#000}
+.a2ui-btn.borderless{background:none;color:#4FC3F7;padding:8px 12px}
+.a2ui-btn:not(.borderless):not(.primary){background:#2A2A3E;color:#E0E0E0}
+.a2ui-btn:active{opacity:0.7}
+.a2ui-btn:disabled{opacity:0.4;cursor:default}
+
+/* Inputs */
+.a2ui-field{display:flex;flex-direction:column;gap:4px;width:100%}
+.a2ui-field label{font-size:13px;color:#888}
+.a2ui-field input,.a2ui-field textarea{background:#0F0F1A;border:1px solid #2A2A3E;border-radius:8px;padding:10px 12px;color:#E0E0E0;font-size:15px;outline:none;width:100%}
+.a2ui-field input:focus,.a2ui-field textarea:focus{border-color:#4FC3F7}
+.a2ui-field textarea{min-height:80px;resize:vertical}
+.a2ui-checkbox{display:flex;align-items:center;gap:8px;cursor:pointer}
+.a2ui-checkbox input[type=checkbox]{width:18px;height:18px;accent-color:#4FC3F7}
+.a2ui-choice{display:flex;flex-wrap:wrap;gap:6px}
+.a2ui-chip{padding:6px 14px;border-radius:20px;border:1px solid #2A2A3E;background:#1A1A2E;color:#E0E0E0;cursor:pointer;font-size:14px;transition:all 0.2s}
+.a2ui-chip.selected{background:#4FC3F7;color:#000;border-color:#4FC3F7}
+.a2ui-slider-wrap{display:flex;align-items:center;gap:8px;width:100%}
+.a2ui-slider-wrap input[type=range]{flex:1;accent-color:#4FC3F7}
+.a2ui-slider-val{font-size:13px;color:#888;min-width:32px;text-align:right}
+.a2ui-datetime{background:#0F0F1A;border:1px solid #2A2A3E;border-radius:8px;padding:10px 12px;color:#E0E0E0;font-size:15px;outline:none;width:100%}
+.a2ui-datetime:focus{border-color:#4FC3F7}
+.a2ui-error{color:#F44336;font-size:12px;margin-top:2px}
+
+/* Justify/Align helpers */
+.justify-start{justify-content:flex-start}.justify-center{justify-content:center}.justify-end{justify-content:flex-end}
+.justify-spaceBetween{justify-content:space-between}.justify-spaceEvenly{justify-content:space-evenly}
+.align-start{align-items:flex-start}.align-center{align-items:center}.align-end{align-items:flex-end}.align-stretch{align-items:stretch}
+</style>
+</head>
+<body>
+<div id="a2ui-root"><div class="a2ui-empty">Waiting for A2UI content...</div></div>
+<script>
+(function(){
+  // ===== State =====
+  var surfaces = {};   // surfaceId -> {rootId, components:{}, styles:{}}
+  var dataModel = {};  // global data model (nested object)
+  var activeSurface = null;
+
+  // ===== Data Model =====
+  function getByPath(path, ctx) {
+    if (!path) return undefined;
+    if (path.charAt(0) !== '/' && ctx) path = ctx + '/' + path;
+    var keys = path.split('/').filter(function(k){return k;});
+    var cur = dataModel;
+    for (var i = 0; i < keys.length; i++) {
+      if (cur == null) return undefined;
+      cur = (typeof cur === 'object') ? (Array.isArray(cur) ? cur[parseInt(keys[i])] : cur[keys[i]]) : undefined;
+    }
+    return cur;
+  }
+
+  function setByPath(path, value) {
+    if (!path) return;
+    var keys = path.split('/').filter(function(k){return k;});
+    if (keys.length === 0) return;
+    var cur = dataModel;
+    for (var i = 0; i < keys.length - 1; i++) {
+      if (cur[keys[i]] == null) cur[keys[i]] = {};
+      cur = cur[keys[i]];
+    }
+    cur[keys[keys.length - 1]] = value;
+  }
+
+  function resolveStr(v, ctx) {
+    if (v == null) return '';
+    if (typeof v === 'string') return v;
+    if (v.literalString != null) return v.literalString;
+    if (v.path != null) { var r = getByPath(v.path, ctx); return r != null ? String(r) : ''; }
+    if (v.call) return callFn(v.call, v.args, ctx);
+    return JSON.stringify(v);
+  }
+
+  function resolveNum(v, ctx) {
+    if (v == null) return 0;
+    if (typeof v === 'number') return v;
+    if (v.literalNumber != null) return v.literalNumber;
+    if (v.path != null) { var r = getByPath(v.path, ctx); return Number(r) || 0; }
+    return 0;
+  }
+
+  function resolveBool(v, ctx) {
+    if (v == null) return false;
+    if (typeof v === 'boolean') return v;
+    if (v.literalBoolean != null) return v.literalBoolean;
+    if (v.path != null) return !!getByPath(v.path, ctx);
+    return false;
+  }
+
+  function callFn(name, args, ctx) {
+    if (name === 'formatString' && args && args.template) {
+      var tmpl = resolveStr(args.template, ctx);
+      if (args.values) {
+        var vals = args.values;
+        for (var k in vals) tmpl = tmpl.replace('{' + k + '}', resolveStr(vals[k], ctx));
+      }
+      return tmpl;
+    }
+    if (name === 'openUrl' && args && args.url) {
+      window.open(resolveStr(args.url, ctx));
+      return '';
+    }
+    return '';
+  }
+
+  // ===== Markdown (minimal) =====
+  function md(text) {
+    return text
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.+?)\*/g, '<em>$1</em>')
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
+      .replace(/\n/g, '<br>');
+  }
+
+  // ===== Send Action =====
+  function sendAction(action) {
+    var payload = JSON.stringify({
+      action: {
+        name: action.name || 'unknown',
+        surfaceId: activeSurface || '',
+        sourceComponentId: action.sourceId || '',
+        timestamp: new Date().toISOString(),
+        context: action.context || {}
+      }
+    });
+    console.log('A2UI_ACTION:' + payload);
+  }
+
+  // ===== Render Component =====
+  function renderComp(id, surface, ctx) {
+    var c = surface.components[id];
+    if (!c) return document.createTextNode('');
+    var type = c.component;
+    var el;
+
+    switch (type) {
+      case 'Text': {
+        el = document.createElement('div');
+        el.className = 'a2ui-text' + (c.usageHint ? ' ' + c.usageHint : ' body');
+        var txt = resolveStr(c.text, ctx);
+        if (c.markdown !== false) el.innerHTML = md(txt);
+        else el.textContent = txt;
+        break;
+      }
+      case 'Image': {
+        el = document.createElement('img');
+        el.className = 'a2ui-image';
+        el.src = resolveStr(c.url, ctx);
+        if (c.altText) el.alt = resolveStr(c.altText, ctx);
+        if (c.objectFit) el.style.objectFit = c.objectFit;
+        break;
+      }
+      case 'Icon': {
+        el = document.createElement('span');
+        el.className = 'a2ui-icon';
+        el.textContent = resolveStr(c.icon || c.name, ctx);
+        break;
+      }
+      case 'Video': {
+        el = document.createElement('video');
+        el.className = 'a2ui-video';
+        el.src = resolveStr(c.url, ctx);
+        el.controls = true;
+        break;
+      }
+      case 'AudioPlayer': {
+        el = document.createElement('audio');
+        el.className = 'a2ui-audio';
+        el.src = resolveStr(c.url, ctx);
+        el.controls = true;
+        break;
+      }
+      case 'Column': {
+        el = document.createElement('div');
+        el.className = 'a2ui-column';
+        if (c.justify) el.classList.add('justify-' + c.justify);
+        if (c.align) el.classList.add('align-' + c.align);
+        resolveChildren(c.children, surface, ctx).forEach(function(ch){el.appendChild(ch);});
+        break;
+      }
+      case 'Row': {
+        el = document.createElement('div');
+        el.className = 'a2ui-row';
+        if (c.justify) el.classList.add('justify-' + c.justify);
+        if (c.align) el.classList.add('align-' + c.align);
+        resolveChildren(c.children, surface, ctx).forEach(function(ch){el.appendChild(ch);});
+        break;
+      }
+      case 'Card': {
+        el = document.createElement('div');
+        el.className = 'a2ui-card';
+        resolveChildren(c.children || c.child, surface, ctx).forEach(function(ch){el.appendChild(ch);});
+        break;
+      }
+      case 'List': {
+        el = document.createElement('div');
+        el.className = 'a2ui-list';
+        if (c.direction === 'horizontal') el.classList.add('horizontal');
+        if (c.crossAxisAlignment) el.classList.add('align-' + c.crossAxisAlignment);
+        resolveChildren(c.children, surface, ctx).forEach(function(ch){el.appendChild(ch);});
+        break;
+      }
+      case 'Tabs': {
+        el = document.createElement('div');
+        var tabs = c.tabs || [];
+        var header = document.createElement('div');
+        header.className = 'a2ui-tabs-header';
+        var bodies = [];
+        tabs.forEach(function(tab, idx) {
+          var btn = document.createElement('button');
+          btn.className = 'a2ui-tab-btn' + (idx === 0 ? ' active' : '');
+          btn.textContent = resolveStr(tab.label, ctx);
+          btn.onclick = function() {
+            header.querySelectorAll('.a2ui-tab-btn').forEach(function(b){b.classList.remove('active');});
+            btn.classList.add('active');
+            bodies.forEach(function(b,i){b.className = 'a2ui-tab-content' + (i === idx ? ' active' : '');});
+          };
+          header.appendChild(btn);
+          var body = document.createElement('div');
+          body.className = 'a2ui-tab-content' + (idx === 0 ? ' active' : '');
+          var compId = tab.component || tab.componentId;
+          if (compId) body.appendChild(renderComp(compId, surface, ctx));
+          bodies.push(body);
+        });
+        el.appendChild(header);
+        bodies.forEach(function(b){el.appendChild(b);});
+        break;
+      }
+      case 'Divider': {
+        el = document.createElement('div');
+        el.className = (c.orientation === 'vertical' || c.axis === 'vertical') ? 'a2ui-divider-v' : 'a2ui-divider-h';
+        break;
+      }
+      case 'Modal': {
+        el = document.createElement('div');
+        // render trigger
+        if (c.trigger) {
+          var trigEl = renderComp(c.trigger, surface, ctx);
+          trigEl.style.cursor = 'pointer';
+          trigEl.onclick = function() { overlay.style.display = 'flex'; };
+          el.appendChild(trigEl);
+        }
+        var overlay = document.createElement('div');
+        overlay.className = 'a2ui-modal-overlay';
+        overlay.style.display = 'none';
+        overlay.onclick = function(e) { if (e.target === overlay) overlay.style.display = 'none'; };
+        var body = document.createElement('div');
+        body.className = 'a2ui-modal-body';
+        resolveChildren(c.children, surface, ctx).forEach(function(ch){body.appendChild(ch);});
+        overlay.appendChild(body);
+        el.appendChild(overlay);
+        break;
+      }
+      case 'Button': {
+        el = document.createElement('button');
+        var variant = c.variant || 'default';
+        el.className = 'a2ui-btn ' + variant;
+        el.textContent = resolveStr(c.text, ctx);
+        if (c.disabled) el.disabled = resolveBool(c.disabled, ctx);
+        el.onclick = function() {
+          if (c.action) {
+            if (c.action.event) {
+              sendAction({name: c.action.event.name, sourceId: id, context: c.action.event.context});
+            } else if (c.action.functionCall) {
+              callFn(c.action.functionCall.call, c.action.functionCall.args, ctx);
+            }
+          }
+        };
+        break;
+      }
+      case 'TextField': {
+        el = document.createElement('div');
+        el.className = 'a2ui-field';
+        if (c.label) {
+          var lbl = document.createElement('label');
+          lbl.textContent = resolveStr(c.label, ctx);
+          el.appendChild(lbl);
+        }
+        var isLong = c.type === 'longText';
+        var inp = document.createElement(isLong ? 'textarea' : 'input');
+        if (!isLong) {
+          inp.type = c.type === 'number' ? 'number' : (c.type === 'obscured' ? 'password' : 'text');
+        }
+        if (c.placeholder) inp.placeholder = resolveStr(c.placeholder, ctx);
+        // resolve initial value
+        var textVal = c.text || c.value;
+        if (textVal && textVal.path) {
+          inp.value = getByPath(textVal.path, ctx) || '';
+          inp.oninput = function() {
+            setByPath(textVal.path, inp.value);
+            sendAction({name: 'input_changed', sourceId: id, context: {path: textVal.path, value: inp.value}});
+          };
+        } else {
+          inp.value = resolveStr(textVal, ctx);
+        }
+        el.appendChild(inp);
+        break;
+      }
+      case 'CheckBox': {
+        el = document.createElement('label');
+        el.className = 'a2ui-checkbox';
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        var cbVal = c.value;
+        if (cbVal && cbVal.path) {
+          cb.checked = !!getByPath(cbVal.path, ctx);
+          cb.onchange = function() {
+            setByPath(cbVal.path, cb.checked);
+            sendAction({name: 'checkbox_changed', sourceId: id, context: {path: cbVal.path, value: cb.checked}});
+          };
+        } else {
+          cb.checked = resolveBool(cbVal, ctx);
+        }
+        el.appendChild(cb);
+        var cbLabel = document.createElement('span');
+        cbLabel.textContent = resolveStr(c.label, ctx);
+        el.appendChild(cbLabel);
+        break;
+      }
+      case 'ChoicePicker': case 'MultipleChoice': {
+        el = document.createElement('div');
+        el.className = 'a2ui-field';
+        if (c.label) {
+          var cpLbl = document.createElement('label');
+          cpLbl.textContent = resolveStr(c.label, ctx);
+          el.appendChild(cpLbl);
+        }
+        var choiceWrap = document.createElement('div');
+        choiceWrap.className = 'a2ui-choice';
+        var choices = c.choices || c.options || [];
+        var selVal = c.selected || c.value;
+        var curSel = selVal && selVal.path ? (getByPath(selVal.path, ctx) || '') : resolveStr(selVal, ctx);
+        choices.forEach(function(opt) {
+          var chip = document.createElement('span');
+          chip.className = 'a2ui-chip';
+          var optVal = resolveStr(opt.value, ctx);
+          chip.textContent = resolveStr(opt.label, ctx);
+          if (curSel === optVal || (Array.isArray(curSel) && curSel.indexOf(optVal) >= 0)) chip.classList.add('selected');
+          chip.onclick = function() {
+            if (selVal && selVal.path) {
+              setByPath(selVal.path, optVal);
+            }
+            choiceWrap.querySelectorAll('.a2ui-chip').forEach(function(ch){ch.classList.remove('selected');});
+            chip.classList.add('selected');
+            sendAction({name: 'choice_changed', sourceId: id, context: {path: selVal ? selVal.path : '', value: optVal}});
+          };
+          choiceWrap.appendChild(chip);
+        });
+        el.appendChild(choiceWrap);
+        break;
+      }
+      case 'Slider': {
+        el = document.createElement('div');
+        el.className = 'a2ui-field';
+        if (c.label) {
+          var slLbl = document.createElement('label');
+          slLbl.textContent = resolveStr(c.label, ctx);
+          el.appendChild(slLbl);
+        }
+        var slWrap = document.createElement('div');
+        slWrap.className = 'a2ui-slider-wrap';
+        var slider = document.createElement('input');
+        slider.type = 'range';
+        slider.min = String(resolveNum(c.min, ctx));
+        slider.max = String(resolveNum(c.max, ctx));
+        if (c.step) slider.step = String(resolveNum(c.step, ctx));
+        var slValEl = document.createElement('span');
+        slValEl.className = 'a2ui-slider-val';
+        var slPath = c.value;
+        if (slPath && slPath.path) {
+          slider.value = String(getByPath(slPath.path, ctx) || 0);
+          slValEl.textContent = slider.value;
+          slider.oninput = function() {
+            slValEl.textContent = slider.value;
+            setByPath(slPath.path, Number(slider.value));
+            sendAction({name: 'slider_changed', sourceId: id, context: {path: slPath.path, value: Number(slider.value)}});
+          };
+        } else {
+          slider.value = String(resolveNum(slPath, ctx));
+          slValEl.textContent = slider.value;
+        }
+        slWrap.appendChild(slider);
+        slWrap.appendChild(slValEl);
+        el.appendChild(slWrap);
+        break;
+      }
+      case 'DateTimeInput': {
+        el = document.createElement('div');
+        el.className = 'a2ui-field';
+        if (c.label) {
+          var dtLbl = document.createElement('label');
+          dtLbl.textContent = resolveStr(c.label, ctx);
+          el.appendChild(dtLbl);
+        }
+        var dtInp = document.createElement('input');
+        dtInp.className = 'a2ui-datetime';
+        dtInp.type = c.type === 'time' ? 'time' : (c.type === 'datetime' ? 'datetime-local' : 'date');
+        var dtVal = c.value;
+        if (dtVal && dtVal.path) {
+          dtInp.value = getByPath(dtVal.path, ctx) || '';
+          dtInp.onchange = function() {
+            setByPath(dtVal.path, dtInp.value);
+            sendAction({name: 'datetime_changed', sourceId: id, context: {path: dtVal.path, value: dtInp.value}});
+          };
+        }
+        el.appendChild(dtInp);
+        break;
+      }
+      default: {
+        el = document.createElement('div');
+        el.style.color = '#F44336';
+        el.style.fontSize = '12px';
+        el.textContent = '[Unknown: ' + type + ']';
+      }
+    }
+    el.setAttribute('data-a2ui-id', id);
+    return el;
+  }
+
+  function resolveChildren(children, surface, ctx) {
+    if (!children) return [];
+    // Single string child ID
+    if (typeof children === 'string') return [renderComp(children, surface, ctx)];
+    // Array of IDs
+    if (Array.isArray(children)) return children.map(function(cid){return renderComp(cid, surface, ctx);});
+    // {array: [...]}
+    if (children.array) return children.array.map(function(cid){return renderComp(cid, surface, ctx);});
+    // Template iteration {componentId, path}
+    if (children.componentId && children.path) {
+      var items = getByPath(children.path, ctx);
+      if (Array.isArray(items)) {
+        return items.map(function(item, idx) {
+          return renderComp(children.componentId, surface, children.path + '/' + idx);
+        });
+      }
+    }
+    return [];
+  }
+
+  // ===== Render Surface =====
+  function renderSurface(surfaceId) {
+    var s = surfaces[surfaceId];
+    if (!s) return;
+    var root = document.getElementById('a2ui-root');
+    root.innerHTML = '';
+    if (s.rootId && s.components[s.rootId]) {
+      activeSurface = surfaceId;
+      root.appendChild(renderComp(s.rootId, s, null));
+    }
+    document.title = 'A2UI';
+  }
+
+  // ===== Process Messages =====
+  function processMessage(msg) {
+    if (msg.beginRendering || msg.createSurface) {
+      var br = msg.beginRendering || msg.createSurface;
+      var sid = br.surfaceId || 'default';
+      surfaces[sid] = {rootId: br.root || 'root', components: {}, styles: br.styles || {}};
+      if (br.sendDataModel && br.dataModel) {
+        for (var k in br.dataModel) dataModel[k] = br.dataModel[k];
+      }
+      activeSurface = sid;
+    }
+    else if (msg.surfaceUpdate || msg.updateComponents) {
+      var su = msg.surfaceUpdate || msg.updateComponents;
+      var sid2 = su.surfaceId || activeSurface || 'default';
+      if (!surfaces[sid2]) surfaces[sid2] = {rootId: 'root', components: {}, styles: {}};
+      var comps = su.components || [];
+      comps.forEach(function(c) {
+        surfaces[sid2].components[c.id] = c;
+      });
+      renderSurface(sid2);
+    }
+    else if (msg.dataModelUpdate || msg.updateDataModel) {
+      var dm = msg.dataModelUpdate || msg.updateDataModel;
+      var path = dm.path || '/';
+      if (dm.contents) {
+        dm.contents.forEach(function(entry) {
+          var fullPath = path.replace(/\/+$/,'') + '/' + entry.key;
+          var val = entry.value;
+          if (val != null) {
+            if (val.literalString != null) setByPath(fullPath, val.literalString);
+            else if (val.literalNumber != null) setByPath(fullPath, val.literalNumber);
+            else if (val.literalBoolean != null) setByPath(fullPath, val.literalBoolean);
+            else setByPath(fullPath, val);
+          }
+        });
+      } else if (dm.value !== undefined) {
+        setByPath(path, dm.value);
+      }
+      var sid3 = dm.surfaceId || activeSurface;
+      if (sid3) renderSurface(sid3);
+    }
+    else if (msg.deleteSurface) {
+      var sid4 = msg.deleteSurface.surfaceId;
+      delete surfaces[sid4];
+      if (activeSurface === sid4) {
+        activeSurface = null;
+        document.getElementById('a2ui-root').innerHTML = '<div class="a2ui-empty">Surface deleted</div>';
+      }
+    }
+  }
+
+  // ===== Public API =====
+  window.a2ui = {
+    push: function(jsonlStr) {
+      var lines = jsonlStr.split('\n');
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim();
+        if (line.length === 0) continue;
+        try {
+          processMessage(JSON.parse(line));
+        } catch (e) {
+          console.error('A2UI parse error: ' + e.message + ' line: ' + line.substring(0, 200));
+        }
+      }
+    },
+    pushObject: function(obj) {
+      processMessage(obj);
+    },
+    reset: function() {
+      surfaces = {};
+      dataModel = {};
+      activeSurface = null;
+      document.getElementById('a2ui-root').innerHTML = '<div class="a2ui-empty">Waiting for A2UI content...</div>';
+      document.title = 'A2UI';
+    },
+    getDataModel: function() {
+      return JSON.stringify(dataModel);
+    }
+  };
+})();
+</script>
+</body>
+</html>
