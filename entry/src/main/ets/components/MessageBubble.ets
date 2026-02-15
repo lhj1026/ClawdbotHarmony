@@ -58,32 +58,32 @@ export struct MessageBubble {
       Row() {
         Blank()
         Column() {
-          // Reply preview if replying to another message
+          // Reply preview if replying to another message (compact)
           if (this.sLen(this.message.replyToId) > 0) {
             Row() {
               Column()
-                .width(3)
-                .height('100%')
+                .width(2)
+                .height(24)
                 .backgroundColor('rgba(255,255,255,0.5)')
-                .borderRadius(1.5)
+                .borderRadius(1)
               Column() {
                 Text(this.message.replyToRole === 'user' ? I18n.t('chat.you') : this.assistantName || 'Assistant')
-                  .fontSize(11)
+                  .fontSize(10)
                   .fontColor('rgba(255,255,255,0.8)')
-                  .fontWeight(FontWeight.Medium)
                 Text(this.message.replyToContent)
-                  .fontSize(12)
-                  .fontColor('rgba(255,255,255,0.6)')
-                  .maxLines(2)
+                  .fontSize(10)
+                  .fontColor('rgba(255,255,255,0.5)')
+                  .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
               }
               .alignItems(HorizontalAlign.Start)
               .layoutWeight(1)
-              .margin({ left: 8 })
+              .margin({ left: 6 })
             }
             .width('100%')
-            .padding({ left: 10, right: 10, top: 8, bottom: 6 })
-            .alignItems(VerticalAlign.Top)
+            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            .margin({ bottom: 4 })
+            .alignItems(VerticalAlign.Center)
           }
 
           // User attached images
@@ -249,32 +249,31 @@ export struct MessageBubble {
         .margin({ right: 8, top: 2 })
 
         Column() {
-          // Reply preview if replying to another message
+          // Reply preview if replying to another message (compact)
           if (this.sLen(this.message.replyToId) > 0) {
             Row() {
               Column()
-                .width(3)
-                .height('100%')
+                .width(2)
+                .height(24)
                 .backgroundColor('#D2691E')
-                .borderRadius(1.5)
+                .borderRadius(1)
               Column() {
                 Text(this.message.replyToRole === 'user' ? I18n.t('chat.you') : this.assistantName || 'Assistant')
-                  .fontSize(11)
+                  .fontSize(10)
                   .fontColor('#D2691E')
-                  .fontWeight(FontWeight.Medium)
                 Text(this.message.replyToContent)
-                  .fontSize(12)
-                  .fontColor('#888888')
-                  .maxLines(2)
+                  .fontSize(10)
+                  .fontColor('#999999')
+                  .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
               }
               .alignItems(HorizontalAlign.Start)
               .layoutWeight(1)
-              .margin({ left: 8 })
+              .margin({ left: 6 })
             }
             .width('100%')
-            .padding({ left: 2, right: 2, bottom: 8 })
-            .alignItems(VerticalAlign.Top)
+            .padding({ left: 2, right: 2, bottom: 4 })
+            .alignItems(VerticalAlign.Center)
           }
 
           MarkdownText({
