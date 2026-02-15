@@ -38,7 +38,7 @@ import { LogService } from '../../common/LogService';
 import { Constants } from '../../common/Constants';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.10.2';
+const APP_VERSION = '2.10.3';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -1183,7 +1183,7 @@ export class NodeRuntime {
   private buildOperatorOptions(): ConnectOptions {
     return {
       role: 'operator',
-      scopes: ['operator.read', 'operator.write', 'operator.pairing', 'operator.approvals'],
+      scopes: ['operator.read', 'operator.write', 'operator.pairing', 'operator.approvals', 'operator.admin'],
       caps: [],
       commands: [],
       permissions: {} as Record<string, boolean>,

@@ -51,11 +51,10 @@ export struct MessageBubble {
           // User attached image
           if (this.message.userImagePath.length > 0) {
             Image(this.message.userImagePath.startsWith('file://') ? this.message.userImagePath : 'file://' + this.message.userImagePath)
-              .width('100%')
-              .constraintSize({ maxHeight: 200 })
+              .constraintSize({ maxWidth: '100%', maxHeight: 240 })
               .objectFit(ImageFit.Contain)
               .borderRadius(8)
-              .margin({ left: 12, right: 12, top: 10, bottom: 4 })
+              .margin({ top: 8, bottom: 4 })
               .onClick(() => { this.onImageClick(this.message.userImagePath); })
           }
 

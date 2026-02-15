@@ -318,7 +318,7 @@ export struct ChatPage {
                 .fontSize(18)
                 .fontWeight(FontWeight.Bold)
                 .fontColor('#1A1A1A')
-              Text('v2.10.2')
+              Text('v2.10.3')
                 .fontSize(11)
                 .fontColor('#999999')
                 .margin({ top: 4 })
