@@ -704,7 +704,7 @@ export struct ChatPage {
           .justifyContent(FlexAlign.Center)
         } else {
           TextInput({ text: this.inputText,
-            placeholder: this.isTalkMode ? this.talkStatus : (this.isRecording ? I18n.t('chat.recording') : I18n.t('chat.placeholder')) })
+            placeholder: this.isTalkMode ? this.talkStatus : (this.isRecording ? I18n.t('chat.recording') : this.getInputPlaceholder()) })
             .layoutWeight(1)
             .height(42)
             .borderRadius(21)
@@ -854,6 +854,14 @@ export struct ChatPage {
       return this.assistantName;
     }
     return 'ClawdBot';
+  }
+
+  private getInputPlaceholder(): string {
+    let name = this.getAssistantDisplayName();
+    if (I18n.lang === 'zh') {
+      return `向 ${name} 提问...`;
+    }
+    return `Ask ${name} anything...`;
   }
 
   private getEffectiveAvatar(): string {
@@ -1484,7 +1492,7 @@ Keep it short but preserve all important information. Use the same language as t
           this.log.info('ChatPage', 'Timeout waiting for agent events after empty final');
           let idx = this.findGwAssistantIndex();
           if (idx >= 0 && (this.messages[idx].content.length === 0 || this.messages[idx].content.length === 0)) {
-            this.messages[idx].content = 'No response received';
+            this.messages[idx].content = '网关正在加紧处理中...';
           }
           this.doCleanupGatewayChat();
         }
