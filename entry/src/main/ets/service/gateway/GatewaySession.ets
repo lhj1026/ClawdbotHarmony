@@ -326,9 +326,25 @@ export class GatewaySession {
       this.log.info(this.logTag, 'Connect handshake SUCCESS');
     }).catch((err: Error) => {
       if (gen !== this.wsGeneration) return;
-      this.log.error(this.logTag, `Connect handshake FAILED: ${err.message ?? ''}`);
+      let errMsg = err.message ?? '';
+      this.log.error(this.logTag, `Connect handshake FAILED: ${errMsg}`);
+      // Clear stale device token on auth failure so next reconnect uses fresh credentials
+      if (!errMsg.includes('NOT_PAIRED')) {
+        this.clearStoredToken();
+      }
       this.closeSocket();
-      this.onWsClosedOnce(`Auth failed: ${err.message ?? ''}`);
+      this.onWsClosedOnce(`Auth failed: ${errMsg}`);
+    });
+  }
+
+  private clearStoredToken(): void {
+    let ctx = this.context;
+    if (!ctx) return;
+    this.identityStore.loadOrCreate(ctx).then((identity) => {
+      this.log.info(this.logTag, `Clearing stale token for role=${this.options.role}`);
+      return this.authStore.clearToken(ctx, identity.deviceId, this.options.role);
+    }).catch(() => {
+      // ignore
     });
   }
 

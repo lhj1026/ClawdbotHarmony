@@ -547,7 +547,9 @@ export class NodeRuntime {
     if (opConnected && nodeConnected) {
       this._statusText = 'Connected';
     } else if (opConnected && !nodeConnected) {
-      this._statusText = 'Connected (node offline)';
+      this._statusText = this._pairingScopeMissing
+        ? 'Connected (node not paired)'
+        : 'Connected (node offline)';
     } else if (!opConnected && nodeConnected) {
       this._statusText = 'Connected (operator offline)';
     } else if (this._operatorState === ConnectionState.Connecting ||
