@@ -36,7 +36,7 @@ import { LogService } from '../../common/LogService';
 import { Constants } from '../../common/Constants';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.9.2';
+const APP_VERSION = '2.9.3';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -448,6 +448,12 @@ export class NodeRuntime {
     this.nodeSession = new GatewaySession(nodeOpts, this.identityStore, this.authStore);
     this.nodeSession.onStateChanged = (state, message) => {
       this._nodeState = state;
+      // Reset pairing flags when node disconnects so re-pairing can happen on reconnect
+      if (state === ConnectionState.Reconnecting || state === ConnectionState.Disconnected) {
+        this._pairingApproved = false;
+        this._pairingInProgress = false;
+        this._pairingScopeMissing = false;
+      }
       this.updateStatus();
       this.log.info(TAG, `node state: ${state} - ${message}`);
     };
@@ -492,6 +498,7 @@ export class NodeRuntime {
 
   private async autoApproveNodePairing(requestId: string): Promise<void> {
     if (this._pairingApproved) {
+      if (this.nodeSession) this.nodeSession.notifyPairingDone();
       return;
     }
     if (this._pairingInProgress) {
@@ -499,6 +506,7 @@ export class NodeRuntime {
     }
     // If we already know the operator lacks the pairing scope, don't retry
     if (this._pairingScopeMissing) {
+      if (this.nodeSession) this.nodeSession.notifyPairingDone();
       return;
     }
     this._pairingInProgress = true;
@@ -514,6 +522,7 @@ export class NodeRuntime {
     if (!this.operatorSession || this._operatorState !== ConnectionState.Connected) {
       this.log.warn(TAG, 'Auto-pair: operator not connected after 15s, cannot approve');
       this._pairingInProgress = false;
+      if (this.nodeSession) this.nodeSession.notifyPairingDone();
       return;
     }
 
@@ -521,11 +530,30 @@ export class NodeRuntime {
     let params = `{"requestId":${JSON.stringify(requestId)}}`;
     try {
       let res = await this.operatorSession.request('node.pair.approve', params, 10000);
-      this.log.info(TAG, `Auto-pair: succeeded: ${res.substring(0, 300)}`);
+      this.log.info(TAG, `Auto-pair: succeeded (full response): ${res}`);
       this._pairingApproved = true;
-      if (this.nodeSession) {
-        this.log.info(TAG, 'Auto-pair: forcing node reconnect...');
-        this.nodeSession.forceReconnect();
+
+      // Extract and store device token from approve response if present
+      if (res.length > 0 && this._context) {
+        try {
+          let resObj = JSON.parse(res) as Record<string, Object>;
+          // Check common token field names
+          let token = (resObj['deviceToken'] ?? resObj['token'] ?? resObj['nodeToken'] ?? '') as string;
+          // Also check nested auth object
+          if (token.length === 0 && resObj['auth']) {
+            let authObj = resObj['auth'] as Record<string, string>;
+            token = authObj['deviceToken'] ?? authObj['token'] ?? '';
+          }
+          if (token.length > 0) {
+            this.log.info(TAG, `Auto-pair: found token in approve response (${token.length} chars), storing...`);
+            let identity = await this.identityStore.loadOrCreate(this._context);
+            await this.authStore.saveToken(this._context, identity.deviceId, 'node', token);
+          } else {
+            this.log.info(TAG, `Auto-pair: no token in approve response, keys: [${Object.keys(resObj).join(',')}]`);
+          }
+        } catch {
+          // ignore parse errors
+        }
       }
     } catch (err) {
       let errMsg = (err as Error).message ?? '';
@@ -536,6 +564,10 @@ export class NodeRuntime {
       }
     }
     this._pairingInProgress = false;
+    if (this.nodeSession) {
+      this.log.info(TAG, 'Auto-pair: notifying node session pairing done');
+      this.nodeSession.notifyPairingDone();
+    }
   }
 
   private updateStatus(): void {
@@ -732,7 +764,15 @@ export class NodeRuntime {
             fullText = String(dataObj);
           } else if (dataObj['delta'] !== undefined && String(dataObj['delta']).length > 0) {
             // Prefer incremental delta text — ChatPage accumulates these
-            fullText = String(dataObj['delta']);
+            let deltaText = String(dataObj['delta']);
+            let accText = dataObj['text'] !== undefined ? String(dataObj['text']) : '';
+            // If data.text (accumulated) is longer than data.delta (chunk), use the accumulated text.
+            // This ensures final events carry the complete response, not just the last chunk.
+            if (accText.length > deltaText.length) {
+              fullText = accText;
+            } else {
+              fullText = deltaText;
+            }
           } else if (dataObj['text'] !== undefined) {
             // Fallback to accumulated text (used for final events that have no delta)
             fullText = String(dataObj['text']);

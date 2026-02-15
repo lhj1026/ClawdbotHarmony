@@ -1,7 +1,7 @@
 import { preferences } from '@kit.ArkData';
 import { common, abilityAccessCtrl } from '@kit.AbilityKit';
 import { MessageBubble } from '../components/MessageBubble';
-import { ChatMessage, SettingsData, MemoryItem, ConversationFile, CronTask } from '../model/Models';
+import { ChatMessage, InlineButton, SettingsData, MemoryItem, ConversationFile, CronTask } from '../model/Models';
 import { AIService, AIResult } from '../service/AIService';
 import { MemoryService } from '../service/MemoryService';
 import { getEnabledToolSchemas, getSkillSystemPrompt, getDefaultSkills } from '../service/SkillData';
@@ -17,7 +17,9 @@ import { ConversationLogger } from '../service/ConversationLogger';
 import { promptAction } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { audio } from '@kit.AudioKit';
-import { fileIo } from '@kit.CoreFileKit';
+import { fileIo, picker } from '@kit.CoreFileKit';
+import { image } from '@kit.ImageKit';
+import { buffer } from '@kit.ArkTS';
 import { geoLocationManager } from '@kit.LocationKit';
 import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
@@ -45,6 +47,9 @@ export struct ChatPage {
   @State showWaveform: boolean = false;
   @State waveBars: number[] = [0, 0, 0, 0, 0, 0, 0];
   @State gwRecordingTimer: number = -1;
+  @State pendingImagePath: string = '';   // user-selected image ready to send
+  @State pendingFileName: string = '';    // user-selected file name
+  private pendingFileContent: string = '';  // file text content to attach
   private gwRecordingInterval: number = -1;
   private gwRecordingDuration: number = 0;
   private dotTimer: number = -1;
@@ -251,7 +256,7 @@ export struct ChatPage {
                 .fontSize(18)
                 .fontWeight(FontWeight.Bold)
                 .fontColor('#1A1A1A')
-              Text('v2.9.2')
+              Text('v2.9.3')
                 .fontSize(11)
                 .fontColor('#999999')
                 .margin({ top: 4 })
@@ -384,7 +389,9 @@ export struct ChatPage {
                 message: msg,
                 assistantAvatar: this.assistantAvatar,
                 assistantName: this.assistantName,
-                onImageClick: (path: string): void => { this.previewImagePath = path; }
+                onImageClick: (path: string): void => { this.previewImagePath = path; },
+                onFeedback: (_msgId: string, _type: string): void => { this.saveHistory(); },
+                onButtonClick: (action: string): void => { this.handleButtonAction(action); }
               })
             }
           }, (msg: ChatMessage): string => msg.id)
@@ -438,15 +445,72 @@ export struct ChatPage {
 
       // -- input bar (hidden in history mode) --
       if (!this.showHistory) {
+      // Attachment preview (image or file)
+      if (this.pendingImagePath.length > 0 || this.pendingFileName.length > 0) {
+        Row() {
+          if (this.pendingImagePath.length > 0) {
+            Stack({ alignContent: Alignment.TopEnd }) {
+              Image('file://' + this.pendingImagePath)
+                .width(60)
+                .height(60)
+                .objectFit(ImageFit.Cover)
+                .borderRadius(8)
+              Text('\u2715')
+                .fontSize(14)
+                .fontColor(Color.White)
+                .width(20)
+                .height(20)
+                .textAlign(TextAlign.Center)
+                .borderRadius(10)
+                .backgroundColor('rgba(0,0,0,0.5)')
+                .onClick(() => { this.pendingImagePath = ''; })
+            }
+          }
+          if (this.pendingFileName.length > 0) {
+            Row({ space: 6 }) {
+              Text('\uD83D\uDCC4').fontSize(16)
+              Text(this.pendingFileName)
+                .fontSize(13)
+                .fontColor('#333333')
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .constraintSize({ maxWidth: 200 })
+              Text('\u2715')
+                .fontSize(14)
+                .fontColor('#999999')
+                .onClick(() => { this.pendingFileName = ''; this.pendingFileContent = ''; })
+            }
+            .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+            .backgroundColor('#F0F0F0')
+            .borderRadius(8)
+          }
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 8, bottom: 4 })
+        .backgroundColor(Color.White)
+      }
       Row({ space: 8 }) {
+        // Attachment button (image / file picker)
+        Column() {
+          Text('\uD83D\uDCCE').fontSize(20)
+        }
+        .width(36)
+        .height(44)
+        .justifyContent(FlexAlign.Center)
+        .onClick(() => { this.showAttachmentMenu(); })
+
         // Mic button: tap = toggle Talk Mode (phone call style), long press = single voice input
         Column() {
-          Text(this.isTalkMode ? '\uD83D\uDCF5' : '\uD83D\uDCDE').fontSize(18)
+          Image($rawfile(this.isTalkMode ? 'ic_phone_hangup.svg' : 'ic_phone_call.svg'))
+            .width(22)
+            .height(22)
+            .fillColor(Color.White)
+            .objectFit(ImageFit.Contain)
         }
-        .width(42)
-        .height(42)
-        .borderRadius(21)
-        .backgroundColor(this.isTalkMode ? '#F44336' : (this.isRecording ? '#F44336' : '#F0F0F0'))
+        .width(44)
+        .height(44)
+        .borderRadius(22)
+        .backgroundColor(this.isTalkMode ? '#F5222D' : (this.isRecording ? '#F5222D' : '#52C41A'))
         .justifyContent(FlexAlign.Center)
         .gesture(
           GestureGroup(GestureMode.Exclusive,
@@ -465,25 +529,22 @@ export struct ChatPage {
               }),
             TapGesture({ count: 1 })
               .onAction(() => {
-                if (this.isRecording) return;
-                // If TTS is playing, stop it first
-                if (this.ttsPlaying) {
-                  this.log.info('ChatPage', 'User tapped during TTS, stopping playback');
-                  NodeRuntime.getInstance().stopSpeaker().catch(() => { /* ignore */ });
-                  this.ttsPlaying = false;
-                  if (this.ttsCompletionResolve) {
-                    this.ttsCompletionResolve();
-                    this.ttsCompletionResolve = undefined;
+                if (this.isTalkMode) {
+                  // Hang up: always exit talk mode immediately, regardless of state
+                  // Stop TTS if playing
+                  if (this.ttsPlaying) {
+                    NodeRuntime.getInstance().stopSpeaker().catch(() => { /* ignore */ });
+                    this.ttsPlaying = false;
+                    if (this.ttsCompletionResolve) {
+                      this.ttsCompletionResolve();
+                      this.ttsCompletionResolve = undefined;
+                    }
                   }
-                  // In talk mode: cycle continues to next recording
-                  // Not in talk mode: just stop TTS, don't start talk mode
+                  this.stopTalkMode();
                   return;
                 }
-                if (this.isTalkMode) {
-                  this.stopTalkMode();
-                } else {
-                  this.startTalkMode();
-                }
+                if (this.isRecording) return;
+                this.startTalkMode();
               })
           )
         )
@@ -535,8 +596,8 @@ export struct ChatPage {
         .width(42)
         .height(42)
         .borderRadius(21)
-        .backgroundColor(this.inputText.trim().length > 0 && !this.isLoading ? '#D2691E' : '#CCCCCC')
-        .enabled(this.inputText.trim().length > 0 && !this.isLoading)
+        .backgroundColor((this.inputText.trim().length > 0 || this.pendingImagePath.length > 0 || this.pendingFileName.length > 0) && !this.isLoading ? '#D2691E' : '#CCCCCC')
+        .enabled((this.inputText.trim().length > 0 || this.pendingImagePath.length > 0 || this.pendingFileName.length > 0) && !this.isLoading)
         .onClick(() => { this.send(); })
       }
       .width('100%')
@@ -919,11 +980,31 @@ Keep it short but preserve all important information. Use the same language as t
 
   private async send(): Promise<void> {
     let text = this.inputText.trim();
-    if (text.length === 0 || this.isLoading) return;
+    let hasAttachment = this.pendingImagePath.length > 0 || this.pendingFileName.length > 0;
+    if ((text.length === 0 && !hasAttachment) || this.isLoading) return;
     this.inputText = '';
 
+    // Capture pending attachments before clearing
+    let imagePath = this.pendingImagePath;
+    let fileName = this.pendingFileName;
+    let fileContent = this.pendingFileContent;
+    this.pendingImagePath = '';
+    this.pendingFileName = '';
+    this.pendingFileContent = '';
+
     // user message
-    let userMsg = new ChatMessage('user', text);
+    let userMsg = new ChatMessage('user', text.length > 0 ? text : (imagePath.length > 0 ? I18n.t('chat.sentImage') : fileName));
+    if (imagePath.length > 0) {
+      userMsg.userImagePath = imagePath;
+    }
+    if (fileName.length > 0) {
+      userMsg.attachmentName = fileName;
+      // Prepend file content to the message text for AI
+      if (fileContent.length > 0) {
+        let prefix = `[File: ${fileName}]\n${fileContent}\n\n`;
+        text = prefix + text;
+      }
+    }
     this.messages.push(userMsg);
     this.scrollToEnd();
 
@@ -931,7 +1012,7 @@ Keep it short but preserve all important information. Use the same language as t
     this.startDotAnimation();
 
     // Auto-enrich with location for weather queries
-    let enrichedText = await this.enrichWithLocation(text);
+    let enrichedText = await this.enrichWithLocation(text.length > 0 ? text : (imagePath.length > 0 ? I18n.t('chat.describeImage') : ''));
 
     if (this.gwConnected) {
       // ---- Gateway path: send via operator session ----
@@ -1142,19 +1223,15 @@ Keep it short but preserve all important information. Use the same language as t
         }, 15000);
       }
     } else if (event.state === 'final') {
-      // Final message: if final event has text, it might be:
-      // 1. The complete accumulated text (use it directly)
-      // 2. A last delta chunk (accumulate it)
-      // We check: if final text is longer than our accumulated text, use it directly.
-      // Otherwise, accumulate it and use the accumulated text.
+      // Final message: use the longest text available.
+      // The final event may carry the complete accumulated text (from data.text)
+      // or just a last delta chunk. Always keep the longer version.
       if (text.length > 0) {
-        if (text.length > this.gwAccumulatedText.length) {
-          // Final text is likely the complete response
+        if (text.length >= this.gwAccumulatedText.length) {
+          // Final text is the complete response (or at least as long as accumulated)
           this.gwAccumulatedText = text;
-        } else {
-          // Final text is a last chunk — accumulate
-          this.gwAccumulatedText += text;
         }
+        // If final text is shorter, ignore it — our accumulated deltas are more complete
       }
       let idx = this.findGwAssistantIndex();
       if (idx >= 0) {
@@ -1310,11 +1387,10 @@ Keep it short but preserve all important information. Use the same language as t
       if (existingMsgId) {
         // Final with text — update existing message
         let accText = this.unsolicitedTexts.get(runId) ?? '';
-        if (text.length > accText.length) {
+        if (text.length >= accText.length) {
           accText = text; // final has complete text
-        } else if (text.length > 0) {
-          accText += text; // final has last chunk
         }
+        // If final text is shorter, keep accumulated — our deltas are more complete
         for (let i = this.messages.length - 1; i >= 0; i--) {
           if (this.messages[i].id === existingMsgId) {
             this.messages[i].content = '\uD83C\uDF10 ' + accText;
@@ -1548,14 +1624,44 @@ Keep it short but preserve all important information. Use the same language as t
       let systemPrompt = this.buildSystemPrompt(memItems, skills, settings.model, customSkills);
       let tools = getEnabledToolSchemas(skills);
 
-      let result: AIResult = await this.ai.chat(this.messages, settings, systemPrompt, tools, ctx);
+      // Create placeholder assistant message for streaming
+      let streamMsg = new ChatMessage('assistant', '');
+      this.messages.push(streamMsg);
+      let streamIdx = this.messages.length - 1;
+
+      let onDelta = (deltaText: string): void => {
+        if (streamIdx >= 0 && streamIdx < this.messages.length) {
+          this.messages[streamIdx].content += deltaText;
+          this.scrollToEnd();
+        }
+      };
+
+      let result: AIResult = await this.ai.chat(this.messages.slice(0, streamIdx), settings, systemPrompt, tools, ctx, onDelta);
 
       if (result.error.length > 0) {
-        this.messages.push(new ChatMessage('assistant', result.error));
+        // Replace placeholder with error
+        this.messages[streamIdx].content = result.error;
       } else {
+        // The first assistant message was streamed into placeholder.
+        // Replace/update with final messages from result.
+        let firstAssistantSet = false;
         for (let msg of result.messages) {
-          this.messages.push(msg);
+          if (msg.role === 'assistant' && !msg.isToolCall && !firstAssistantSet) {
+            // Update the streaming placeholder with final content (may have buttons/images)
+            this.messages[streamIdx].content = msg.content;
+            this.messages[streamIdx].imagePath = msg.imagePath;
+            this.messages[streamIdx].buttons = msg.buttons;
+            firstAssistantSet = true;
+          } else {
+            this.messages.push(msg);
+          }
         }
+        // If no assistant message in result but we streamed text, keep it
+        if (!firstAssistantSet && this.messages[streamIdx].content.length === 0) {
+          // Remove empty placeholder
+          this.messages.splice(streamIdx, 1);
+        }
+
         // Auto-read the last assistant message if TTS auto-read is enabled
         if (result.messages.length > 0) {
           let lastMsg = result.messages[result.messages.length - 1];
@@ -1590,6 +1696,113 @@ Keep it short but preserve all important information. Use the same language as t
   }
 
   // ---- Voice input (press-and-hold, ASR via API) ----
+
+  // ---- Attachment picker (image / file) ----
+
+  /** Handle inline button action — send as user message */
+  private handleButtonAction(action: string): void {
+    this.inputText = action;
+    this.send();
+  }
+
+  private showAttachmentMenu(): void {
+    promptAction.showActionMenu({
+      title: I18n.t('chat.attachTitle'),
+      buttons: [
+        { text: I18n.t('chat.attachPhoto'), color: '#D2691E' },
+        { text: I18n.t('chat.attachFile'), color: '#D2691E' },
+      ]
+    }).then((result) => {
+      if (result.index === 0) {
+        this.pickPhoto();
+      } else if (result.index === 1) {
+        this.pickFile();
+      }
+    }).catch(() => { /* cancelled */ });
+  }
+
+  private async pickPhoto(): Promise<void> {
+    try {
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let photoPicker = new picker.PhotoViewPicker(ctx);
+      let options = new picker.PhotoSelectOptions();
+      options.MIMEType = picker.PhotoViewMIMETypes.IMAGE_TYPE;
+      options.maxSelectNumber = 1;
+      let result = await photoPicker.select(options);
+      if (result.photoUris.length === 0) return;
+      let srcUri = result.photoUris[0];
+
+      // Compress and save to app sandbox
+      let imgDir = ctx.filesDir + '/user_images';
+      try { fileIo.mkdirSync(imgDir); } catch { /* exists */ }
+      let destPath = `${imgDir}/img_${Date.now()}.jpg`;
+
+      // Read source and compress
+      let srcFile = fileIo.openSync(srcUri, fileIo.OpenMode.READ_ONLY);
+      let imgSource = image.createImageSource(srcFile.fd);
+      let info = await imgSource.getImageInfo();
+      let origW = info.size.width;
+      let origH = info.size.height;
+      let scale = 1.0;
+      let maxDim = 1280;
+      if (origW > maxDim || origH > maxDim) {
+        scale = maxDim / Math.max(origW, origH);
+      }
+      let targetW = Math.round(origW * scale);
+      let targetH = Math.round(origH * scale);
+      let decodingOpts: image.DecodingOptions = { desiredSize: { width: targetW, height: targetH } };
+      let pixelMap = await imgSource.createPixelMap(decodingOpts);
+      let packer = image.createImagePacker();
+      let packOpts: image.PackingOption = { format: 'image/jpeg', quality: 80 };
+      let packed: ArrayBuffer = await packer.packing(pixelMap, packOpts);
+      await pixelMap.release();
+      imgSource.release();
+      packer.release();
+      fileIo.closeSync(srcFile);
+
+      let destFile = fileIo.openSync(destPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      fileIo.writeSync(destFile.fd, packed);
+      fileIo.closeSync(destFile);
+
+      this.log.info('ChatPage', `Photo compressed: ${origW}x${origH} -> ${targetW}x${targetH}, ${packed.byteLength} bytes`);
+      this.pendingImagePath = destPath;
+    } catch (e) {
+      this.log.error('ChatPage', `pickPhoto error: ${(e as Error).message ?? ''}`);
+    }
+  }
+
+  private async pickFile(): Promise<void> {
+    try {
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let options = new picker.DocumentSelectOptions();
+      let docPicker = new picker.DocumentViewPicker(ctx);
+      let uris = await docPicker.select(options);
+      if (uris.length === 0) return;
+      let uri = uris[0];
+
+      let file = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
+      let stat = fileIo.statSync(file.fd);
+      if (stat.size > 512 * 1024) {
+        fileIo.closeSync(file);
+        promptAction.showToast({ message: I18n.t('chat.fileTooLarge'), duration: 2000 });
+        return;
+      }
+      let buf = new ArrayBuffer(stat.size);
+      fileIo.readSync(file.fd, buf);
+      fileIo.closeSync(file);
+      let decoder = util.TextDecoder.create('utf-8');
+      let text = decoder.decodeWithStream(new Uint8Array(buf));
+
+      // Extract filename from URI
+      let parts = uri.split('/');
+      let fileName = parts[parts.length - 1] || 'file';
+
+      this.pendingFileName = fileName;
+      this.pendingFileContent = text;
+    } catch (e) {
+      this.log.error('ChatPage', `pickFile error: ${(e as Error).message ?? ''}`);
+    }
+  }
 
   private asrDebug(text: string): void {
     this.log.info('ASR', text);
