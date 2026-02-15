@@ -693,18 +693,10 @@ export struct ChatPage {
         .onClick(() => { this.showAttachmentMenu(); })
 
         // Mic button: tap = toggle Talk Mode (phone call style), long press = single voice input
-        Column() {
-          Image(this.isTalkMode ? $r('app.media.ic_hangup') : $r('app.media.ic_talk_mode'))
-            .width(44)
-            .height(44)
-            .objectFit(ImageFit.Cover)
-            .borderRadius(22)
-        }
-        .width(44)
-        .height(44)
-        .borderRadius(22)
-        .backgroundColor(Color.Transparent)
-        .justifyContent(FlexAlign.Center)
+        Image(this.isTalkMode ? $r('app.media.ic_hangup') : $r('app.media.ic_talk_mode'))
+          .width(44)
+          .height(44)
+          .objectFit(ImageFit.Contain)
         .gesture(
           GestureGroup(GestureMode.Exclusive,
             LongPressGesture({ repeat: false, duration: 500 })

@@ -1,80 +1,101 @@
 #!/usr/bin/env python3
-"""Re-split and crop talk mode icons from original image"""
+"""Re-process talk mode icons - extract exact circle"""
 from PIL import Image
 import os
+import math
 
 media_dir = r'C:\Users\Liuho\ClawdBotHarmony\entry\src\main\resources\base\media'
 source = os.path.join(media_dir, 'talkmode.jpg')
 
-img = Image.open(source)
+img = Image.open(source).convert('RGB')
 width, height = img.size
 print(f"Source size: {width}x{height}")
 
 # Split in half
 mid = width // 2
 
-# Left icon (talk mode - green)
-left_img = img.crop((0, 0, mid, height))
-
-# Right icon (hangup - red)  
-right_img = img.crop((mid, 0, width, height))
-
-def extract_circle(img, output_path, target_size=128):
-    """Extract the circular button and save as square PNG"""
-    img = img.convert('RGBA')
-    
-    # Find the bounding box of non-white pixels
+def find_circle_and_extract(img, output_path, target_size=144):
+    """Find the colored circle (green or red) and extract it precisely"""
     pixels = img.load()
-    min_x, min_y = img.width, img.height
-    max_x, max_y = 0, 0
+    w, h = img.size
     
-    for y in range(img.height):
-        for x in range(img.width):
-            r, g, b, a = pixels[x, y]
-            # Check if not white/transparent background
-            if not (r > 240 and g > 240 and b > 240):
-                min_x = min(min_x, x)
-                min_y = min(min_y, y)
-                max_x = max(max_x, x)
-                max_y = max(max_y, y)
+    # Find the center and radius of the colored circle
+    # Look for non-gray pixels (the green or red circle)
+    colored_pixels = []
+    for y in range(h):
+        for x in range(w):
+            r, g, b = pixels[x, y]
+            # Check if it's a colored pixel (not white/gray background)
+            # Green: high G, low R
+            # Red: high R, low G
+            is_green = g > 150 and g > r + 30
+            is_red = r > 150 and r > g + 30
+            if is_green or is_red:
+                colored_pixels.append((x, y))
     
-    # Add padding and make square
-    padding = 5
-    min_x = max(0, min_x - padding)
-    min_y = max(0, min_y - padding)
-    max_x = min(img.width, max_x + padding)
-    max_y = min(img.height, max_y + padding)
+    if not colored_pixels:
+        print(f"No colored circle found!")
+        return
     
-    # Make it square
-    w = max_x - min_x
-    h = max_y - min_y
-    size = max(w, h)
+    # Find bounding box
+    min_x = min(p[0] for p in colored_pixels)
+    max_x = max(p[0] for p in colored_pixels)
+    min_y = min(p[1] for p in colored_pixels)
+    max_y = max(p[1] for p in colored_pixels)
     
+    # Calculate center and radius
     center_x = (min_x + max_x) // 2
     center_y = (min_y + max_y) // 2
+    radius = max(max_x - min_x, max_y - min_y) // 2 + 2  # Add small margin
     
-    crop_left = center_x - size // 2
-    crop_top = center_y - size // 2
-    crop_right = crop_left + size
-    crop_bottom = crop_top + size
+    # Crop square around the circle
+    left = center_x - radius
+    top = center_y - radius
+    right = center_x + radius
+    bottom = center_y + radius
     
     # Ensure bounds
-    if crop_left < 0:
-        crop_right -= crop_left
-        crop_left = 0
-    if crop_top < 0:
-        crop_bottom -= crop_top
-        crop_top = 0
+    left = max(0, left)
+    top = max(0, top)
+    right = min(w, right)
+    bottom = min(h, bottom)
     
-    cropped = img.crop((crop_left, crop_top, crop_right, crop_bottom))
+    # Make it square
+    crop_w = right - left
+    crop_h = bottom - top
+    size = max(crop_w, crop_h)
     
-    # Resize to target size
+    # Recenter
+    left = center_x - size // 2
+    top = center_y - size // 2
+    right = left + size
+    bottom = top + size
+    
+    # Final bounds check
+    if left < 0:
+        right -= left
+        left = 0
+    if top < 0:
+        bottom -= top
+        top = 0
+    if right > w:
+        left -= (right - w)
+        right = w
+    if bottom > h:
+        top -= (bottom - h)
+        bottom = h
+    
+    cropped = img.crop((left, top, right, bottom))
     resized = cropped.resize((target_size, target_size), Image.LANCZOS)
     resized.save(output_path, 'PNG')
-    print(f"Saved {output_path} ({target_size}x{target_size})")
+    print(f"Saved {output_path} ({target_size}x{target_size}), circle at ({center_x},{center_y}) r={radius}")
 
-# Extract and save both icons
-extract_circle(left_img, os.path.join(media_dir, 'ic_talk_mode.png'), 128)
-extract_circle(right_img, os.path.join(media_dir, 'ic_hangup.png'), 128)
+# Process left half (green - talk mode)
+left_img = img.crop((0, 0, mid, height))
+find_circle_and_extract(left_img, os.path.join(media_dir, 'ic_talk_mode.png'), 144)
+
+# Process right half (red - hangup)
+right_img = img.crop((mid, 0, width, height))
+find_circle_and_extract(right_img, os.path.join(media_dir, 'ic_hangup.png'), 144)
 
 print("Done!")
