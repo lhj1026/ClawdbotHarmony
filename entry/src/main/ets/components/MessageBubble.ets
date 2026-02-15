@@ -18,10 +18,14 @@ export struct MessageBubble {
   onButtonClick: (action: string) => void = () => {};
   onA2UIReady: (inject: (content: string) => void) => void = () => {};
   onA2UIAction: (json: string) => void = () => {};
+  onCanvasReady: (ctrl: webview.WebviewController) => void = () => {};
+  onCanvasAction: (json: string) => void = () => {};
   @State audioPlaying: boolean = false;
   @State a2uiHeight: number = 280;
+  @State canvasHeight: number = 400;
   private avPlayer: media.AVPlayer | undefined = undefined;
   private a2uiController: webview.WebviewController | undefined = undefined;
+  private canvasController: webview.WebviewController | undefined = undefined;
   private log: LogService = LogService.getInstance();
 
   build() {
@@ -35,7 +39,7 @@ export struct MessageBubble {
         this.ToolResultBubble()
       }
       // else: hide plain JSON tool results
-    } else if (this.sLen(this.message.content) > 0 || this.sLen(this.message.a2uiContent) > 0) {
+    } else if (this.sLen(this.message.content) > 0 || this.sLen(this.message.a2uiContent) > 0 || this.sLen(this.message.canvasUrl) > 0) {
       this.AssistantBubble()
     }
   }
@@ -232,6 +236,11 @@ export struct MessageBubble {
             this.A2UIView()
           }
 
+          // Inline canvas rendering (canvas.present + canvas.navigate)
+          if (this.sLen(this.message.canvasUrl) > 0) {
+            this.CanvasView()
+          }
+
           // Inline buttons
           if (this.aLen(this.message.buttons) > 0) {
             Flex({ wrap: FlexWrap.Wrap }) {
@@ -381,6 +390,32 @@ export struct MessageBubble {
           }
         }
         return false;
+      })
+  }
+
+  private getCanvasController(): webview.WebviewController {
+    if (!this.canvasController) {
+      this.canvasController = new webview.WebviewController();
+    }
+    return this.canvasController;
+  }
+
+  @Builder
+  CanvasView() {
+    Web({ src: this.message.canvasUrl, controller: this.getCanvasController() })
+      .id('inlineCanvasWebView')
+      .width('100%')
+      .height(this.canvasHeight)
+      .borderRadius(8)
+      .margin({ top: 6 })
+      .backgroundColor('#FFFFFF')
+      .javaScriptAccess(true)
+      .domStorageAccess(true)
+      .onPageEnd(() => {
+        let ctrl = this.canvasController;
+        if (ctrl) {
+          this.onCanvasReady(ctrl);
+        }
       })
   }
 

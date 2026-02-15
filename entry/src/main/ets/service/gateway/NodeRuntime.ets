@@ -33,12 +33,15 @@ import {
   AgentIdentity,
 } from './GatewayModels';
 import { image } from '@kit.ImageKit';
+import { buffer } from '@kit.ArkTS';
+import { webview } from '@kit.ArkWeb';
+import { componentSnapshot } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
 import { LogService } from '../../common/LogService';
 import { Constants } from '../../common/Constants';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.10.6';
+const APP_VERSION = '2.10.8';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -111,8 +114,12 @@ export class NodeRuntime {
   // Approval listeners — notify ChatPage when an exec approval is requested
   private _approvalListeners: Array<(req: ExecApprovalRequest) => void> = [];
 
-  // A2UI listeners — notify ChatPage when A2UI content arrives (inline rendering)
+  // A2UI / inline canvas listeners — notify ChatPage when A2UI or canvas content arrives
   private _a2uiListeners: Array<(type: string, content: string) => void> = [];
+
+  // Inline canvas controller — provided by ChatPage/MessageBubble for eval/snapshot
+  private _inlineCanvasController: webview.WebviewController | undefined = undefined;
+  private _inlineCanvasReady: (() => void) | undefined = undefined;
 
   // Gateway agent identity (fetched from config.get after connect)
   private _agentIdentity: AgentIdentity | undefined = undefined;
@@ -357,6 +364,32 @@ export class NodeRuntime {
     }
   }
 
+  /** Called by ChatPage/MessageBubble when the inline canvas WebView is ready. */
+  setInlineCanvasController(ctrl: webview.WebviewController | undefined): void {
+    this._inlineCanvasController = ctrl;
+    if (ctrl && this._inlineCanvasReady) {
+      let resolve = this._inlineCanvasReady;
+      this._inlineCanvasReady = undefined;
+      resolve();
+    }
+  }
+
+  /** Wait for the inline canvas controller to become available. */
+  private waitForInlineCanvas(timeoutMs: number): Promise<void> {
+    if (this._inlineCanvasController) return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+      this._inlineCanvasReady = resolve;
+      setTimeout(() => {
+        this._inlineCanvasReady = undefined;
+        if (this._inlineCanvasController) {
+          resolve();
+        } else {
+          reject(new Error('Inline canvas controller not ready'));
+        }
+      }, timeoutMs);
+    });
+  }
+
   /** Send A2UI action (user interaction) back to gateway. */
   sendA2UIAction(actionJson: string): void {
     this.log.info(TAG, `sendA2UIAction: ${actionJson.substring(0, 200)}`);
@@ -502,7 +535,16 @@ export class NodeRuntime {
         }
       }
 
-      // Strategy 3: Try status RPC
+      // Strategy 3: Try reading clawdbot.json (agent config, separate from gateway config)
+      this.log.info(TAG, 'No identity in openclaw.json, trying clawdbot.json...');
+      let agentIdentity = await this.fetchIdentityFromAgentConfig();
+      if (agentIdentity) {
+        this._agentIdentity = agentIdentity;
+        this.dispatchIdentity(agentIdentity);
+        return;
+      }
+
+      // Strategy 4: Try status RPC
       this.log.info(TAG, 'No identity in config, trying status RPC...');
       await this.fetchIdentityFromStatus();
     } catch (err) {
@@ -515,8 +557,25 @@ export class NodeRuntime {
     let agents = config['agents'] as Object | undefined;
     if (!agents || typeof agents !== 'object') return null;
 
-    // Try agents.list (array format)
     let agentsObj = agents as Record<string, Object>;
+
+    // Check agents.defaults.identity first (common in openclaw.json)
+    let defaults = agentsObj['defaults'] as Record<string, Object> | undefined;
+    if (defaults && typeof defaults === 'object') {
+      let defIdentity = defaults['identity'] as Record<string, string> | undefined;
+      if (defIdentity && (defIdentity['name'] ?? '').length > 0) {
+        let identity: AgentIdentity = {
+          name: defIdentity['name'] ?? '',
+          theme: defIdentity['theme'] ?? '',
+          emoji: defIdentity['emoji'] ?? '',
+          avatar: defIdentity['avatar'] ?? '',
+        };
+        this.log.info(TAG, `Agent identity from defaults: name="${identity.name}" emoji="${identity.emoji}" theme="${identity.theme}"`);
+        return identity;
+      }
+    }
+
+    // Try agents.list (array format)
     let agentList: Record<string, Object>[] = [];
     if (Array.isArray(agents)) {
       agentList = agents as Record<string, Object>[];
@@ -563,6 +622,29 @@ export class NodeRuntime {
       return { name: agentId, theme: '', emoji: '', avatar: '' };
     }
     return null;
+  }
+
+  /** Try reading agent config (clawdbot.json) for identity. */
+  private async fetchIdentityFromAgentConfig(): Promise<AgentIdentity | null> {
+    if (!this.operatorSession) return null;
+    try {
+      let resJson = await this.operatorSession.request('config.get', '{"name":"clawdbot"}', 8000);
+      this.log.info(TAG, `clawdbot config response (500): ${resJson.substring(0, 500)}`);
+      if (resJson.length === 0) return null;
+      let wrapper = JSON.parse(resJson) as Record<string, Object>;
+      let rawStr = wrapper['raw'] as string | undefined;
+      let config: Record<string, Object>;
+      if (rawStr && rawStr.length > 0) {
+        config = JSON.parse(rawStr) as Record<string, Object>;
+      } else {
+        config = wrapper;
+      }
+      this.log.info(TAG, `clawdbot config keys: [${Object.keys(config).join(',')}]`);
+      return this.extractAgentIdentityFromConfig(config);
+    } catch (err) {
+      this.log.info(TAG, `clawdbot config.get failed: ${(err as Error).message ?? ''}`);
+      return null;
+    }
   }
 
   /** Fallback: try status RPC to get gateway/agent name. */
@@ -904,13 +986,95 @@ export class NodeRuntime {
           result = await this.cameraCapability.execute(command, paramsJson);
           break;
         }
-        case Command.CANVAS_PRESENT:
-        case Command.CANVAS_HIDE:
-        case Command.CANVAS_NAVIGATE:
-        case Command.CANVAS_EVAL:
+        case Command.CANVAS_PRESENT: {
+          // Inline canvas: dispatch to ChatPage, don't open full-screen CanvasPage
+          this.log.info(TAG, `canvas.present inline: params=${paramsStr.substring(0, 200)}`);
+          this._inlineCanvasController = undefined;
+          this.dispatchA2UI('canvas.present', '');
+          // Wait for inline WebView controller to be ready
+          try {
+            await this.waitForInlineCanvas(5000);
+            result = '{"ok":true,"action":"presented_inline"}';
+          } catch {
+            result = '{"ok":true,"action":"presented_inline","warning":"controller_timeout"}';
+          }
+          break;
+        }
+        case Command.CANVAS_NAVIGATE: {
+          // Inline canvas: load URL in inline WebView
+          let url = '';
+          if (paramsJson) {
+            try {
+              let p = JSON.parse(paramsJson) as Record<string, string>;
+              if (p['url'] !== undefined) url = p['url'];
+            } catch { /* ignore */ }
+          }
+          this.log.info(TAG, `canvas.navigate inline: url=${url.substring(0, 200)}`);
+          this.dispatchA2UI('canvas.navigate', url);
+          if (this._inlineCanvasController) {
+            this._inlineCanvasController.loadUrl(url);
+          }
+          result = `{"ok":true,"url":${JSON.stringify(url)}}`;
+          break;
+        }
+        case Command.CANVAS_EVAL: {
+          // Inline canvas: eval JS in inline WebView
+          let js = '';
+          if (paramsJson) {
+            try {
+              let p = JSON.parse(paramsJson) as Record<string, string>;
+              if (p['javaScript'] !== undefined) js = p['javaScript'];
+              if (p['javascript'] !== undefined) js = p['javascript'];
+              if (p['js'] !== undefined) js = p['js'];
+            } catch { /* ignore */ }
+          }
+          this.log.info(TAG, `canvas.eval inline: js=${js.substring(0, 200)}`);
+          if (this._inlineCanvasController && js.length > 0) {
+            let evalResult: string = await this._inlineCanvasController.runJavaScript(js);
+            result = `{"ok":true,"result":${JSON.stringify(evalResult)}}`;
+          } else {
+            result = '{"ok":false,"error":"No inline canvas controller"}';
+          }
+          break;
+        }
         case Command.CANVAS_SNAPSHOT: {
-          this.log.info(TAG, `Executing ${command} capability...`);
-          result = await this.canvasCapability.execute(command, paramsJson);
+          // Inline canvas: snapshot from inline WebView
+          this.log.info(TAG, 'canvas.snapshot inline');
+          let quality: number = 80;
+          if (paramsJson) {
+            try {
+              let p = JSON.parse(paramsJson) as Record<string, Object>;
+              if (p['quality'] !== undefined) {
+                let q: number = p['quality'] as number;
+                quality = q <= 1 ? Math.round(q * 100) : Math.round(q);
+              }
+            } catch { /* ignore */ }
+          }
+          try {
+            let pixelMap: image.PixelMap = await componentSnapshot.get('inlineCanvasWebView');
+            let imageInfo: image.ImageInfo = await pixelMap.getImageInfo();
+            let width: number = imageInfo.size.width;
+            let height: number = imageInfo.size.height;
+            let packer: image.ImagePacker = image.createImagePacker();
+            let packOpts: image.PackingOption = { format: 'image/jpeg', quality: quality };
+            let jpegData: ArrayBuffer = await packer.packing(pixelMap, packOpts);
+            packer.release();
+            pixelMap.release();
+            let base64Str: string = buffer.from(jpegData).toString('base64');
+            this.log.info(TAG, `snapshot inline: ${jpegData.byteLength} bytes, base64=${base64Str.length}`);
+            result = `{"format":"jpg","base64":${JSON.stringify(base64Str)},"width":${width},"height":${height}}`;
+          } catch (e) {
+            this.log.warn(TAG, `snapshot inline failed: ${(e as Error).message}`);
+            result = '{"ok":false,"error":"Snapshot failed"}';
+          }
+          break;
+        }
+        case Command.CANVAS_HIDE: {
+          // Inline canvas: dispatch hide event
+          this.log.info(TAG, 'canvas.hide inline');
+          this.dispatchA2UI('canvas.hide', '');
+          this._inlineCanvasController = undefined;
+          result = '{"ok":true,"action":"hidden_inline"}';
           break;
         }
         case Command.CANVAS_A2UI_PUSH:

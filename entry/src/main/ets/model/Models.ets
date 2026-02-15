@@ -32,6 +32,7 @@ export class ChatMessage {
   buttons: InlineButton[];  // inline action buttons
   attachmentName: string;   // file attachment display name
   a2uiContent: string;      // accumulated A2UI JSONL content for inline rendering
+  canvasUrl: string;        // URL for inline canvas rendering (data: or http:)
 
   constructor(role: string, content: string) {
     this.id = `m_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
@@ -51,6 +52,7 @@ export class ChatMessage {
     this.buttons = [];
     this.attachmentName = '';
     this.a2uiContent = '';
+    this.canvasUrl = '';
   }
 }
 

@@ -23,6 +23,7 @@ import { buffer } from '@kit.ArkTS';
 import { geoLocationManager } from '@kit.LocationKit';
 import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
+import { webview } from '@kit.ArkWeb';
 import { FeishuBotService } from '../service/FeishuBotService';
 
 @Component
@@ -83,6 +84,7 @@ export struct ChatPage {
   private identityListener: ((identity: AgentIdentity | undefined) => void) | undefined = undefined;
   private a2uiListener: ((type: string, content: string) => void) | undefined = undefined;
   private a2uiInjectFn: ((content: string) => void) | undefined = undefined;
+  private canvasControllerFn: ((url: string) => void) | undefined = undefined;
   private approvalTimers: Map<string, number> = new Map();
   private feishuConnected: boolean = false;
   private feishuSettings: SettingsData | undefined = undefined;
@@ -331,7 +333,7 @@ export struct ChatPage {
                 .fontSize(18)
                 .fontWeight(FontWeight.Bold)
                 .fontColor('#1A1A1A')
-              Text('v2.10.6')
+              Text('v2.10.8')
                 .fontSize(11)
                 .fontColor('#999999')
                 .margin({ top: 4 })
@@ -481,7 +483,9 @@ export struct ChatPage {
                 onFeedback: (_msgId: string, _type: string): void => { this.saveHistory(); },
                 onButtonClick: (action: string): void => { this.handleButtonAction(action); },
                 onA2UIReady: (inject: (content: string) => void): void => { this.a2uiInjectFn = inject; },
-                onA2UIAction: (json: string): void => { NodeRuntime.getInstance().sendA2UIAction(json); }
+                onA2UIAction: (json: string): void => { NodeRuntime.getInstance().sendA2UIAction(json); },
+                onCanvasReady: (ctrl: webview.WebviewController): void => { NodeRuntime.getInstance().setInlineCanvasController(ctrl); },
+                onCanvasAction: (_json: string): void => { /* future use */ }
               })
             }
           }, (msg: ChatMessage): string => msg.id)
@@ -1285,23 +1289,20 @@ Keep it short but preserve all important information. Use the same language as t
     return -1;
   }
 
-  /** Handle A2UI events for inline rendering in chat. */
+  /** Handle A2UI / inline canvas events for inline rendering in chat. */
   private handleA2UIEvent(type: string, content: string): void {
     this.log.info('ChatPage', `A2UI event: type=${type} contentLen=${content.length}`);
     if (type === 'push') {
-      // Find or create assistant message
+      // A2UI JSONL push
       let idx = this.findGwAssistantIndex();
       if (idx < 0) {
-        // No active assistant message — create one
         let msg = new ChatMessage('assistant', '');
         this.messages.push(msg);
         idx = this.messages.length - 1;
         this.gwAssistantMsgId = msg.id;
       }
-      // Append JSONL content
       let msg = this.messages[idx];
       msg.a2uiContent = msg.a2uiContent.length > 0 ? msg.a2uiContent + '\n' + content : content;
-      // If WebView is already loaded, inject directly
       if (this.a2uiInjectFn) {
         this.a2uiInjectFn(content);
       }
@@ -1312,6 +1313,28 @@ Keep it short but preserve all important information. Use the same language as t
         this.messages[idx].a2uiContent = '';
       }
       this.a2uiInjectFn = undefined;
+    } else if (type === 'canvas.present') {
+      // Inline canvas: prepare a slot in the current assistant message
+      let idx = this.findGwAssistantIndex();
+      if (idx < 0) {
+        let msg = new ChatMessage('assistant', '');
+        this.messages.push(msg);
+        idx = this.messages.length - 1;
+        this.gwAssistantMsgId = msg.id;
+      }
+      // Set canvasUrl to 'about:blank' to trigger WebView creation
+      this.messages[idx].canvasUrl = 'about:blank';
+      this.canvasControllerFn = undefined;
+      this.scrollToEnd();
+    } else if (type === 'canvas.navigate') {
+      // Inline canvas: update URL
+      let idx = this.findGwAssistantIndex();
+      if (idx >= 0) {
+        this.messages[idx].canvasUrl = content;
+      }
+    } else if (type === 'canvas.hide') {
+      // Inline canvas: keep the rendered content visible (don't remove)
+      this.canvasControllerFn = undefined;
     }
   }
 
