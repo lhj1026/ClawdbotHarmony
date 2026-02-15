@@ -16,6 +16,7 @@ import { common } from '@kit.AbilityKit';
 struct Index {
   @State currentTab: number = 0;
   @State @Watch('onLangChange') lang: string = 'zh';
+  @StorageLink('share_timestamp') @Watch('onShareArrived') shareTs: number = 0;
   private controller: TabsController = new TabsController();
   private langListener: (() => void) | undefined = undefined;
 
@@ -38,6 +39,14 @@ struct Index {
 
   onLangChange(): void {
     // triggers UI re-render
+  }
+
+  /** Switch to chat tab when share data arrives */
+  onShareArrived(): void {
+    if (this.shareTs > 0 && this.currentTab !== 0) {
+      this.controller.changeIndex(0);
+      this.currentTab = 0;
+    }
   }
 
   /** Auto-connect to Gateway if Node Mode is enabled in settings */

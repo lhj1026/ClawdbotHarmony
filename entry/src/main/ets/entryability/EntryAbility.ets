@@ -17,17 +17,33 @@ export default class EntryAbility extends UIAbility {
     this.handleShareWant(want);
   }
 
+  private looksLikeImageUri(s: string): boolean {
+    let lower = s.toLowerCase();
+    return lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png') ||
+      lower.endsWith('.gif') || lower.endsWith('.webp') || lower.endsWith('.bmp') ||
+      lower.indexOf('/photo/') >= 0 || lower.indexOf('/image/') >= 0 || lower.indexOf('/screenshot') >= 0;
+  }
+
   private handleShareWant(want: Want): void {
     if (want.action !== 'ohos.want.action.sendData') {
       return;
     }
     console.info(`[ClawdBot] Share intent received: uri=${want.uri ?? ''} type=${want.type ?? ''}`);
+    if (want.parameters) {
+      console.info(`[ClawdBot] Share params keys: [${Object.keys(want.parameters).join(',')}]`);
+      let paramKeys = Object.keys(want.parameters);
+      for (let i = 0; i < Math.min(paramKeys.length, 8); i++) {
+        let key = paramKeys[i];
+        let val = want.parameters[key];
+        console.info(`[ClawdBot] param "${key}" typeof=${typeof val} val=${String(val).substring(0, 200)}`);
+      }
+    }
 
     let shareText = '';
     let shareUri = want.uri ?? '';
     let shareType = 'text'; // default
 
-    // Determine share type from MIME type
+    // 1. Determine share type from want.type MIME type
     let mimeType = (want.type ?? '').toLowerCase();
     if (mimeType.startsWith('image/') || mimeType.startsWith('image')) {
       shareType = 'image';
@@ -35,45 +51,75 @@ export default class EntryAbility extends UIAbility {
       shareType = 'file';
     }
 
-    // Extract text from want.parameters
+    // 2. Also check mime-type parameter (HarmonyOS share panel puts it here)
+    if (shareType === 'text' && want.parameters) {
+      let mimeParam = String(want.parameters['mime-type'] ?? '').toLowerCase();
+      console.info(`[ClawdBot] mime-type param: "${mimeParam}"`);
+      if (mimeParam.startsWith('image/') || mimeParam === 'image') {
+        shareType = 'image';
+      }
+    }
+
+    // 3. Detect image from want.uri pattern
+    if (shareType !== 'image' && shareUri.length > 0 && this.looksLikeImageUri(shareUri)) {
+      shareType = 'image';
+      console.info('[ClawdBot] Detected image from want.uri pattern');
+    }
+
+    // 4. Check ability.params.stream for image URI (Gallery shares put the URI here, not in want.uri)
+    //    NOTE: Want.parameters values are Object type in ArkTS, typeof won't return 'string'
+    //    Must use String() conversion instead
     if (want.parameters) {
+      let streamVal = String(want.parameters['ability.params.stream'] ?? '');
+      if (streamVal.length > 0 && streamVal !== 'undefined' && streamVal !== 'null' && !streamVal.startsWith('[object')) {
+        console.info(`[ClawdBot] ability.params.stream = "${streamVal.substring(0, 100)}"`);
+        if (shareUri.length === 0) {
+          shareUri = streamVal;
+        }
+        if (shareType !== 'image' && this.looksLikeImageUri(streamVal)) {
+          shareUri = streamVal;
+          shareType = 'image';
+          console.info('[ClawdBot] Detected image from ability.params.stream');
+        }
+      }
+
+      // Also check systemShare.datasource.uri
+      let dsUri = String(want.parameters['systemShare.datasource.uri'] ?? '');
+      if (dsUri.length > 0 && dsUri !== 'undefined' && dsUri !== 'null' && !dsUri.startsWith('[object')) {
+        console.info(`[ClawdBot] systemShare.datasource.uri = "${dsUri.substring(0, 100)}"`);
+        if (shareUri.length === 0) {
+          shareUri = dsUri;
+        }
+        if (shareType !== 'image' && this.looksLikeImageUri(dsUri)) {
+          shareUri = dsUri;
+          shareType = 'image';
+          console.info('[ClawdBot] Detected image from systemShare.datasource.uri');
+        }
+      }
+    }
+
+    // 5. Only extract text from parameters for text shares
+    if (shareType === 'text' && want.parameters) {
       let params = want.parameters;
-      // Try common parameter keys for shared text
-      let keys: string[] = ['shareText', 'ability.params.stream', 'text', 'content', 'shareContent'];
+      let keys: string[] = ['shareText', 'text', 'content', 'shareContent'];
       for (let key of keys) {
         if (params[key] !== undefined && params[key] !== null) {
-          let val = params[key];
-          if (typeof val === 'string') {
-            shareText = val as string;
-            break;
-          } else {
-            shareText = String(val);
-            break;
-          }
-        }
-      }
-      // Log all parameter keys for debugging
-      let paramKeys = Object.keys(params);
-      console.info(`[ClawdBot] Share params keys: [${paramKeys.join(',')}]`);
-      if (paramKeys.length > 0 && shareText.length === 0) {
-        // Try first string-valued param as fallback
-        for (let key of paramKeys) {
-          let val = params[key];
-          if (typeof val === 'string' && (val as string).length > 0) {
-            shareText = val as string;
-            console.info(`[ClawdBot] Share text from param key "${key}": ${shareText.substring(0, 100)}`);
+          let s = String(params[key]);
+          if (s.length > 0 && s !== 'undefined' && s !== 'null' && !s.startsWith('[object') &&
+              !s.startsWith('file://') && !s.startsWith('content://') && !s.startsWith('datashare://')) {
+            shareText = s;
             break;
           }
         }
       }
     }
 
-    // If we have a URI but no text, and it's a text type, we'll read the file in ChatPage
+    // 6. If we have a URI but no text, and it's still 'text' type, treat as file
     if (shareText.length === 0 && shareUri.length > 0 && shareType === 'text') {
-      shareType = 'file'; // treat as file to be read
+      shareType = 'file';
     }
 
-    console.info(`[ClawdBot] Share data: type=${shareType} textLen=${shareText.length} uri=${shareUri}`);
+    console.info(`[ClawdBot] Share data: type=${shareType} textLen=${shareText.length} uri=${shareUri.substring(0, 100)}`);
 
     // Store in AppStorage for ChatPage to consume
     AppStorage.setOrCreate<string>('share_text', shareText);

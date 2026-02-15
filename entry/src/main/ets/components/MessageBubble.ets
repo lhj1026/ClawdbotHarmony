@@ -50,7 +50,7 @@ export struct MessageBubble {
         Column() {
           // User attached image
           if (this.message.userImagePath.length > 0) {
-            Image('file://' + this.message.userImagePath)
+            Image(this.message.userImagePath.startsWith('file://') ? this.message.userImagePath : 'file://' + this.message.userImagePath)
               .width('100%')
               .constraintSize({ maxHeight: 200 })
               .objectFit(ImageFit.Contain)
@@ -133,7 +133,8 @@ export struct MessageBubble {
   @Builder
   AssistantAvatarIcon(size: number) {
     if (this.assistantAvatar.length > 0) {
-      Image('file://' + this.assistantAvatar)
+      Image(this.assistantAvatar.startsWith('http') || this.assistantAvatar.startsWith('data:')
+        ? this.assistantAvatar : 'file://' + this.assistantAvatar)
         .width(size)
         .height(size)
         .borderRadius(size / 2)
@@ -175,7 +176,7 @@ export struct MessageBubble {
           })
 
           if (this.message.imagePath.length > 0) {
-            Image('file://' + this.message.imagePath)
+            Image(this.message.imagePath.startsWith('file://') ? this.message.imagePath : 'file://' + this.message.imagePath)
               .width('100%')
               .constraintSize({ maxHeight: 280 })
               .objectFit(ImageFit.Contain)
@@ -323,7 +324,7 @@ export struct MessageBubble {
             .controls(true)
         } else if (this.message.imagePath.length > 0) {
           // Display captured photo
-          Image('file://' + this.message.imagePath)
+          Image(this.message.imagePath.startsWith('file://') ? this.message.imagePath : 'file://' + this.message.imagePath)
             .width('100%')
             .constraintSize({ maxHeight: 280 })
             .objectFit(ImageFit.Contain)

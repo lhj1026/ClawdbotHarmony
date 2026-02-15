@@ -30,6 +30,7 @@ import {
   GatewayChatEvent,
   GatewayChatContentBlock,
   ExecApprovalRequest,
+  AgentIdentity,
 } from './GatewayModels';
 import { image } from '@kit.ImageKit';
 import { preferences } from '@kit.ArkData';
@@ -37,7 +38,7 @@ import { LogService } from '../../common/LogService';
 import { Constants } from '../../common/Constants';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.10.1';
+const APP_VERSION = '2.10.2';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -110,6 +111,10 @@ export class NodeRuntime {
   // Approval listeners — notify ChatPage when an exec approval is requested
   private _approvalListeners: Array<(req: ExecApprovalRequest) => void> = [];
 
+  // Gateway agent identity (fetched from config.get after connect)
+  private _agentIdentity: AgentIdentity | undefined = undefined;
+  private _identityListeners: Array<(identity: AgentIdentity | undefined) => void> = [];
+
   static getInstance(): NodeRuntime {
     if (!NodeRuntime.instance) {
       NodeRuntime.instance = new NodeRuntime();
@@ -148,6 +153,10 @@ export class NodeRuntime {
   get isConnected(): boolean {
     return this._operatorState === ConnectionState.Connected ||
            this._nodeState === ConnectionState.Connected;
+  }
+
+  get agentIdentity(): AgentIdentity | undefined {
+    return this._agentIdentity;
   }
 
   /** Expose canvas capability for CanvasPage to register its controller */
@@ -323,6 +332,26 @@ export class NodeRuntime {
     }
   }
 
+  addIdentityListener(listener: (identity: AgentIdentity | undefined) => void): void {
+    this._identityListeners.push(listener);
+  }
+
+  removeIdentityListener(listener: (identity: AgentIdentity | undefined) => void): void {
+    let idx = this._identityListeners.indexOf(listener);
+    if (idx >= 0) {
+      this._identityListeners.splice(idx, 1);
+    }
+  }
+
+  private dispatchIdentity(identity: AgentIdentity | undefined): void {
+    this.log.info(TAG, `dispatchIdentity: name=${identity ? identity.name : '(none)'} emoji=${identity ? identity.emoji : ''}`);
+    for (let listener of this._identityListeners) {
+      try {
+        listener(identity);
+      } catch { /* ignore */ }
+    }
+  }
+
   async resolveApproval(approvalId: string, decision: string): Promise<void> {
     if (!this.operatorSession) {
       throw new Error('Gateway not connected');
@@ -368,6 +397,80 @@ export class NodeRuntime {
     }
     let scheme = ep.useTls ? 'https' : 'http';
     return `${scheme}://${ep.host}:${ep.port}/media/${path}`;
+  }
+
+  /** Resolve gateway agent avatar to a loadable URL. Returns undefined if not resolvable. */
+  resolveAgentAvatarUrl(): string | undefined {
+    let identity = this._agentIdentity;
+    if (!identity || identity.avatar.length === 0) return undefined;
+    let av = identity.avatar;
+    if (av.startsWith('http://') || av.startsWith('https://') || av.startsWith('data:')) {
+      return av;
+    }
+    let ep = this._endpoint;
+    if (!ep) return undefined;
+    let path = av.startsWith('/') ? av.substring(1) : av;
+    let scheme = ep.useTls ? 'https' : 'http';
+    return `${scheme}://${ep.host}:${ep.port}/media/${path}`;
+  }
+
+  /** Fetch agent identity from gateway config via operator session RPC. */
+  async fetchAgentIdentity(): Promise<void> {
+    if (!this.operatorSession) {
+      this.log.warn(TAG, 'fetchAgentIdentity: no operator session');
+      return;
+    }
+    if (this._operatorState !== ConnectionState.Connected) {
+      this.log.warn(TAG, 'fetchAgentIdentity: operator not connected');
+      return;
+    }
+    this.log.info(TAG, 'Fetching agent identity from gateway config...');
+    try {
+      let resJson = await this.operatorSession.request('config.get', '{}', 10000);
+      this.log.info(TAG, `config.get response (500): ${resJson.substring(0, 500)}`);
+      if (resJson.length === 0) {
+        this.log.warn(TAG, 'config.get returned empty response');
+        return;
+      }
+      let config = JSON.parse(resJson) as Record<string, Object>;
+      let agents = config['agents'] as Record<string, Object> | undefined;
+      if (!agents) {
+        this.log.info(TAG, 'No agents block in config');
+        return;
+      }
+      let agentList = agents['list'] as Object[] | undefined;
+      if (!agentList || agentList.length === 0) {
+        this.log.info(TAG, 'No agent list in config');
+        return;
+      }
+      let targetAgent: Record<string, Object> | undefined = undefined;
+      for (let i = 0; i < agentList.length; i++) {
+        let agent = agentList[i] as Record<string, Object>;
+        if (agent['default'] === true || String(agent['default']) === 'true') {
+          targetAgent = agent;
+          break;
+        }
+      }
+      if (!targetAgent) {
+        targetAgent = agentList[0] as Record<string, Object>;
+      }
+      let identityObj = targetAgent['identity'] as Record<string, string> | undefined;
+      if (!identityObj) {
+        this.log.info(TAG, `Agent "${(targetAgent['id'] as string) ?? '?'}" has no identity block`);
+        return;
+      }
+      let identity: AgentIdentity = {
+        name: identityObj['name'] ?? '',
+        theme: identityObj['theme'] ?? '',
+        emoji: identityObj['emoji'] ?? '',
+        avatar: identityObj['avatar'] ?? '',
+      };
+      this.log.info(TAG, `Agent identity: name="${identity.name}" emoji="${identity.emoji}" theme="${identity.theme}" avatar="${identity.avatar.substring(0, 80)}"`);
+      this._agentIdentity = identity;
+      this.dispatchIdentity(identity);
+    } catch (err) {
+      this.log.error(TAG, `fetchAgentIdentity failed: ${(err as Error).message ?? ''}`);
+    }
   }
 
   /**
@@ -479,6 +582,9 @@ export class NodeRuntime {
       this._operatorState = state;
       this.updateStatus();
       this.log.info(TAG, `operator state: ${state} - ${message}`);
+      if (state === ConnectionState.Connected) {
+        this.fetchAgentIdentity().catch(() => { /* ignore */ });
+      }
     };
     this.operatorSession.onEvent = (event, payloadJson) => {
       this.handleOperatorEvent(event, payloadJson);
@@ -531,6 +637,10 @@ export class NodeRuntime {
     this._endpoint = undefined;
     this._operatorState = ConnectionState.Disconnected;
     this._nodeState = ConnectionState.Disconnected;
+    if (this._agentIdentity) {
+      this._agentIdentity = undefined;
+      this.dispatchIdentity(undefined);
+    }
     this.updateStatus();
   }
 

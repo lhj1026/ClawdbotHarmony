@@ -22,12 +22,14 @@ export class Constants {
   static readonly FEISHU_MSG_API: string = 'https://open.feishu.cn/open-apis/im/v1/messages';
 
   static readonly ANTHROPIC_URL: string = 'https://api.anthropic.com/v1/messages';
-  static readonly OPENAI_URL: string = 'https://api.siliconflow.cn/v1/chat/completions';
+  static readonly OPENAI_URL: string = 'https://api.openai.com/v1/chat/completions';
   static readonly OPENROUTER_URL: string = 'https://openrouter.ai/api/v1/chat/completions';
+  static readonly SILICONFLOW_URL: string = 'https://api.siliconflow.cn/v1/chat/completions';
 
   static readonly DEFAULT_MODEL_ANTHROPIC: string = 'claude-sonnet-4-20250514';
-  static readonly DEFAULT_MODEL_OPENAI: string = 'deepseek-ai/DeepSeek-V3.1';
+  static readonly DEFAULT_MODEL_OPENAI: string = 'gpt-4o-mini';
   static readonly DEFAULT_MODEL_OPENROUTER: string = 'openrouter/free';
+  static readonly DEFAULT_MODEL_SILICONFLOW: string = 'deepseek-ai/DeepSeek-V3.1';
 
   // Built-in OpenRouter API key for free models (set via settings)
   static readonly OPENROUTER_DEFAULT_KEY: string = '';

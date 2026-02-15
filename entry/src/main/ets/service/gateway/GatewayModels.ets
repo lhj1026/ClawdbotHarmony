@@ -132,6 +132,15 @@ export interface ExecApprovalRequest {
   expiresAt: number;    // expiration timestamp (ms)
 }
 
+// --------------- Agent identity (from gateway config.get) ---------------
+
+export interface AgentIdentity {
+  name: string;
+  theme: string;
+  emoji: string;
+  avatar: string;  // URL, data: URI, or workspace-relative path
+}
+
 // --------------- Gateway settings (persisted) ---------------
 
 export interface GatewaySettings {

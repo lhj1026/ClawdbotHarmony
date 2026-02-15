@@ -9,7 +9,7 @@ import { CustomSkillService } from '../service/CustomSkillService';
 import { CustomSkillDef } from '../model/Models';
 import { Constants } from '../common/Constants';
 import { NodeRuntime } from '../service/gateway/NodeRuntime';
-import { ConnectionState, GatewayChatEvent, ExecApprovalRequest } from '../service/gateway/GatewayModels';
+import { ConnectionState, GatewayChatEvent, ExecApprovalRequest, AgentIdentity } from '../service/gateway/GatewayModels';
 import { NotificationInfo } from '../service/gateway/NotificationCapability';
 import { LogService } from '../common/LogService';
 import { I18n } from '../common/I18n';
@@ -37,6 +37,10 @@ export struct ChatPage {
   @State isRecording: boolean = false;
   @State assistantName: string = '';
   @State assistantAvatar: string = '';
+  @State gwAgentName: string = '';
+  @State gwAgentEmoji: string = '';
+  @State gwAgentAvatar: string = '';
+  @State gwAgentTheme: string = '';
   @State showHistory: boolean = false;
   @State historyFiles: ConversationFile[] = [];
   @State historyContent: string = '';
@@ -75,6 +79,7 @@ export struct ChatPage {
   private invokeListener: ((command: string, params: string, result: string, isError: boolean) => void) | undefined = undefined;
   private recordingListener: ((recording: boolean, durationSec: number) => void) | undefined = undefined;
   private approvalListener: ((req: ExecApprovalRequest) => void) | undefined = undefined;
+  private identityListener: ((identity: AgentIdentity | undefined) => void) | undefined = undefined;
   private approvalTimers: Map<string, number> = new Map();
   private feishuConnected: boolean = false;
   private feishuSettings: SettingsData | undefined = undefined;
@@ -106,6 +111,29 @@ export struct ChatPage {
       }
     };
     NodeRuntime.getInstance().addStateListener(this.gwListener);
+    // Register identity listener for gateway agent identity
+    this.identityListener = (identity: AgentIdentity | undefined) => {
+      if (identity) {
+        this.gwAgentName = identity.name;
+        this.gwAgentEmoji = identity.emoji;
+        this.gwAgentTheme = identity.theme;
+        this.gwAgentAvatar = NodeRuntime.getInstance().resolveAgentAvatarUrl() ?? '';
+      } else {
+        this.gwAgentName = '';
+        this.gwAgentEmoji = '';
+        this.gwAgentTheme = '';
+        this.gwAgentAvatar = '';
+      }
+    };
+    NodeRuntime.getInstance().addIdentityListener(this.identityListener);
+    // Hydrate from existing identity if already connected
+    let existingIdentity = NodeRuntime.getInstance().agentIdentity;
+    if (existingIdentity && this.gwConnected) {
+      this.gwAgentName = existingIdentity.name;
+      this.gwAgentEmoji = existingIdentity.emoji;
+      this.gwAgentTheme = existingIdentity.theme;
+      this.gwAgentAvatar = NodeRuntime.getInstance().resolveAgentAvatarUrl() ?? '';
+    }
     // Register chat event listener for gateway mode
     this.chatListener = (event: GatewayChatEvent) => {
       this.handleGatewayChatEvent(event);
@@ -182,6 +210,10 @@ export struct ChatPage {
       NodeRuntime.getInstance().removeApprovalListener(this.approvalListener);
       this.approvalListener = undefined;
     }
+    if (this.identityListener) {
+      NodeRuntime.getInstance().removeIdentityListener(this.identityListener);
+      this.identityListener = undefined;
+    }
     // Clear all approval expiration timers
     this.approvalTimers.forEach((timerId: number) => {
       clearTimeout(timerId);
@@ -253,8 +285,15 @@ export struct ChatPage {
               .onClick(() => { this.deleteHistory(); })
           }
         } else {
-          // Normal chat header
-          if (this.assistantAvatar.length > 0) {
+          // Normal chat header — avatar
+          if (this.gwConnected && this.gwAgentAvatar.length > 0) {
+            Image(this.gwAgentAvatar)
+              .width(34)
+              .height(34)
+              .borderRadius(17)
+              .objectFit(ImageFit.Cover)
+              .margin({ right: 10 })
+          } else if (this.assistantAvatar.length > 0) {
             Image('file://' + this.assistantAvatar)
               .width(34)
               .height(34)
@@ -263,7 +302,7 @@ export struct ChatPage {
               .margin({ right: 10 })
           } else {
             Text(this.getAssistantInitial())
-              .fontSize(16)
+              .fontSize(this.gwConnected && this.gwAgentEmoji.length > 0 ? 20 : 16)
               .fontWeight(FontWeight.Bold)
               .fontColor(Color.White)
               .textAlign(TextAlign.Center)
@@ -279,15 +318,28 @@ export struct ChatPage {
                 .fontSize(18)
                 .fontWeight(FontWeight.Bold)
                 .fontColor('#1A1A1A')
-              Text('v2.10.1')
+              Text('v2.10.2')
                 .fontSize(11)
                 .fontColor('#999999')
                 .margin({ top: 4 })
             }
             Row({ space: 6 }) {
-              Text(this.isLoading ? I18n.t('chat.thinking') : I18n.t('chat.online'))
-                .fontSize(12)
-                .fontColor(this.isLoading ? '#FF9800' : '#4CAF50')
+              if (this.isLoading) {
+                Text(I18n.t('chat.thinking'))
+                  .fontSize(12)
+                  .fontColor('#FF9800')
+              } else if (this.gwConnected && this.gwAgentTheme.length > 0) {
+                Text(this.gwAgentTheme)
+                  .fontSize(12)
+                  .fontColor('#888888')
+                  .fontStyle(FontStyle.Italic)
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+              } else {
+                Text(I18n.t('chat.online'))
+                  .fontSize(12)
+                  .fontColor('#4CAF50')
+              }
               if (this.gwConnected) {
                 Row({ space: 3 }) {
                   Circle({ width: 6, height: 6 })
@@ -410,8 +462,8 @@ export struct ChatPage {
             ListItem() {
               MessageBubble({
                 message: msg,
-                assistantAvatar: this.assistantAvatar,
-                assistantName: this.assistantName,
+                assistantAvatar: this.getEffectiveAvatar(),
+                assistantName: this.getAssistantDisplayName(),
                 onImageClick: (path: string): void => { this.previewImagePath = path; },
                 onFeedback: (_msgId: string, _type: string): void => { this.saveHistory(); },
                 onButtonClick: (action: string): void => { this.handleButtonAction(action); }
@@ -423,8 +475,9 @@ export struct ChatPage {
           if (this.isLoading) {
             ListItem() {
               Row() {
-                if (this.assistantAvatar.length > 0) {
-                  Image('file://' + this.assistantAvatar)
+                if (this.getEffectiveAvatar().length > 0) {
+                  Image(this.getEffectiveAvatar().startsWith('http') || this.getEffectiveAvatar().startsWith('data:')
+                    ? this.getEffectiveAvatar() : 'file://' + this.getEffectiveAvatar())
                     .width(30)
                     .height(30)
                     .borderRadius(15)
@@ -473,7 +526,7 @@ export struct ChatPage {
         Row() {
           if (this.pendingImagePath.length > 0) {
             Stack({ alignContent: Alignment.TopEnd }) {
-              Image('file://' + this.pendingImagePath)
+              Image(this.pendingImagePath.startsWith('file://') ? this.pendingImagePath : 'file://' + this.pendingImagePath)
                 .constraintSize({ maxWidth: 200, maxHeight: 160 })
                 .objectFit(ImageFit.Contain)
                 .borderRadius(8)
@@ -637,7 +690,7 @@ export struct ChatPage {
     // Full-screen image preview overlay
     if (this.previewImagePath.length > 0) {
       Column() {
-        Image('file://' + this.previewImagePath)
+        Image(this.previewImagePath.startsWith('file://') ? this.previewImagePath : 'file://' + this.previewImagePath)
           .objectFit(ImageFit.Contain)
           .width('100%')
           .height('100%')
@@ -672,15 +725,16 @@ export struct ChatPage {
   @Builder
   EmptyState() {
     Column({ space: 16 }) {
-      if (this.assistantAvatar.length > 0) {
-        Image('file://' + this.assistantAvatar)
+      if (this.getEffectiveAvatar().length > 0) {
+        Image(this.getEffectiveAvatar().startsWith('http') || this.getEffectiveAvatar().startsWith('data:')
+          ? this.getEffectiveAvatar() : 'file://' + this.getEffectiveAvatar())
           .width(88)
           .height(88)
           .borderRadius(44)
           .objectFit(ImageFit.Cover)
       } else {
         Text(this.getAssistantInitial())
-          .fontSize(44)
+          .fontSize(this.gwConnected && this.gwAgentEmoji.length > 0 ? 52 : 44)
           .fontWeight(FontWeight.Bold)
           .fontColor(Color.White)
           .textAlign(TextAlign.Center)
@@ -731,6 +785,12 @@ export struct ChatPage {
   // ============ logic ============
 
   private getAssistantInitial(): string {
+    if (this.gwConnected && this.gwAgentEmoji.length > 0) {
+      return this.gwAgentEmoji;
+    }
+    if (this.gwConnected && this.gwAgentName.length > 0) {
+      return this.gwAgentName.charAt(0).toUpperCase();
+    }
     if (this.assistantName.length > 0) {
       return this.assistantName.charAt(0).toUpperCase();
     }
@@ -738,10 +798,20 @@ export struct ChatPage {
   }
 
   private getAssistantDisplayName(): string {
+    if (this.gwConnected && this.gwAgentName.length > 0) {
+      return this.gwAgentName;
+    }
     if (this.assistantName.length > 0) {
       return this.assistantName;
     }
     return 'ClawdBot';
+  }
+
+  private getEffectiveAvatar(): string {
+    if (this.gwConnected && this.gwAgentAvatar.length > 0) {
+      return this.gwAgentAvatar;
+    }
+    return this.assistantAvatar;
   }
 
   // ---- History UI ----
@@ -1857,9 +1927,16 @@ Keep it short but preserve all important information. Use the same language as t
       try { fileIo.mkdirSync(imgDir); } catch { /* exists */ }
       let destPath = `${imgDir}/share_${Date.now()}.jpg`;
 
+      // Strip file:// prefix for fileIo operations (fileIo needs filesystem path)
+      let fsPath = uri;
+      if (fsPath.startsWith('file://')) {
+        fsPath = fsPath.substring(7); // Remove 'file://'
+      }
+      this.log.info('ChatPage', `handleSharedImage: fsPath=${fsPath}`);
+
       // First, copy the shared file to sandbox (shared URIs have temporary read permission)
       let rawPath = `${imgDir}/share_raw_${Date.now()}`;
-      let srcFile = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
+      let srcFile = fileIo.openSync(fsPath, fileIo.OpenMode.READ_ONLY);
       let stat = fileIo.statSync(srcFile.fd);
       this.log.info('ChatPage', `Shared image opened: fd=${srcFile.fd} size=${stat.size}`);
       let rawBuf = new ArrayBuffer(stat.size);
@@ -1903,7 +1980,7 @@ Keep it short but preserve all important information. Use the same language as t
       this.pendingImagePath = destPath;
     } catch (e) {
       this.log.error('ChatPage', `handleSharedImage error: ${(e as Error).message ?? ''}`);
-      // Fallback: try to use the URI directly as image source (works for some URI schemes)
+      // Fallback: use URI directly — Image component can render file:// URIs
       this.pendingImagePath = uri;
     }
   }
