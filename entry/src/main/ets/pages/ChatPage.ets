@@ -356,10 +356,6 @@ export struct ChatPage {
                 .fontSize(18)
                 .fontWeight(FontWeight.Bold)
                 .fontColor('#1A1A1A')
-              Text('v2.10.8')
-                .fontSize(11)
-                .fontColor('#999999')
-                .margin({ top: 4 })
             }
             Row({ space: 6 }) {
               if (this.isLoading) {

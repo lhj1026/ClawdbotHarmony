@@ -105,6 +105,21 @@ struct Index {
 
   build() {
     Column() {
+      Row() {
+        Text('OpenClaw')
+          .fontSize(16)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#D2691E')
+        Text('v2.10.8')
+          .fontSize(11)
+          .fontColor('#999999')
+          .margin({ left: 6, top: 3 })
+      }
+      .justifyContent(FlexAlign.Center)
+      .width('100%')
+      .height(36)
+      .backgroundColor(Color.White)
+
       Tabs({ barPosition: BarPosition.End, controller: this.controller }) {
         TabContent() {
           ChatPage()
