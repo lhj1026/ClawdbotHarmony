@@ -58,6 +58,7 @@ export struct ChatPage {
   @State pendingImagePaths: string[] = [];  // multiple images ready to send
   @State pendingFileName: string = '';    // user-selected file name
   @State replyingToMessage: ChatMessage | null = null;  // message being replied to
+  @State showReplyPreview: boolean = false;  // controls reply preview visibility
   @State showSessionDrawer: boolean = false;  // session list drawer visibility
   @State sessions: ChatSession[] = [];  // all sessions
   @State currentSessionId: string = 'default';  // current active session ID
@@ -507,7 +508,10 @@ export struct ChatPage {
                 onA2UIAction: (json: string): void => { NodeRuntime.getInstance().sendA2UIAction(json); },
                 onCanvasReady: (ctrl: webview.WebviewController): void => { NodeRuntime.getInstance().setInlineCanvasController(ctrl); },
                 onCanvasAction: (_json: string): void => { /* future use */ },
-                onReply: (message: ChatMessage): void => { this.replyingToMessage = message; }
+                onReply: (message: ChatMessage): void => { 
+                  this.replyingToMessage = message; 
+                  this.showReplyPreview = true;
+                }
               })
             }
           }, (msg: ChatMessage): string => msg.id)
@@ -563,7 +567,7 @@ export struct ChatPage {
       // -- input bar (hidden in history mode) --
       if (!this.showHistory) {
       // Reply preview (微信风格 - 显示在输入框上方)
-      if (this.replyingToMessage !== null) {
+      if (this.showReplyPreview && this.replyingToMessage !== null) {
         Row() {
           // 左侧彩色竖条
           Column()
@@ -594,7 +598,10 @@ export struct ChatPage {
             .fontSize(18)
             .fontColor('#999999')
             .padding(8)
-            .onClick(() => { this.replyingToMessage = null; })
+            .onClick(() => { 
+              this.replyingToMessage = null; 
+              this.showReplyPreview = false;
+            })
         }
         .width('100%')
         .height(52)
@@ -1414,6 +1421,7 @@ Keep it short but preserve all important information. Use the same language as t
       let replyPrefix = `[Replying to: "${userMsg.replyToContent}"]\n`;
       text = replyPrefix + text;
       this.replyingToMessage = null;
+      this.showReplyPreview = false;
     }
     this.messages.push(userMsg);
     this.scrollToEnd();
