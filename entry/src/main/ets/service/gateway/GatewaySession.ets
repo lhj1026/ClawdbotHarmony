@@ -65,6 +65,7 @@ export class GatewaySession {
   private connectNonce: string | undefined = undefined;
   private connectNonceResolve: ((nonce: string | undefined) => void) | undefined = undefined;
   private pairingResolve: (() => void) | undefined = undefined;
+  private connectResult: Record<string, Object> | undefined = undefined;
 
   // --- callbacks ---
   onStateChanged: (state: ConnectionState, message: string) => void = () => {};
@@ -87,6 +88,10 @@ export class GatewaySession {
     return this._state;
   }
 
+  getConnectResult(): Record<string, Object> | undefined {
+    return this.connectResult;
+  }
+
   connect(
     context: common.UIAbilityContext,
     endpoint: GatewayEndpoint,
@@ -107,6 +112,7 @@ export class GatewaySession {
     this.log.info(this.logTag, 'disconnect() called');
     this.shouldReconnect = false;
     this.pairingResolve = undefined;
+    this.connectResult = undefined;
     if (this.reconnectTimer >= 0) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = -1;
@@ -539,6 +545,7 @@ export class GatewaySession {
     if (resJson.length > 0) {
       try {
         let resObj = JSON.parse(resJson) as Record<string, Object>;
+        this.connectResult = resObj;
         let authResult = resObj['auth'] as Record<string, string> | undefined;
         if (authResult) {
           let deviceToken = authResult['deviceToken'];

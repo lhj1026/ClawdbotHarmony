@@ -562,6 +562,71 @@ export class NodeRuntime {
     if (!this.operatorSession) return;
     if (this._operatorState !== ConnectionState.Connected) return;
     this.log.info(TAG, 'Fetching agent identity from gateway config...');
+
+    // Strategy 0: Extract identity from connect response (most reliable source)
+    let connectRes = this.operatorSession.getConnectResult();
+    if (connectRes) {
+      this.log.info(TAG, `Connect response keys: [${Object.keys(connectRes).join(',')}]`);
+      let identity: AgentIdentity | undefined = undefined;
+
+      // Check agent.identity (common OpenClaw format)
+      let agent = connectRes['agent'] as Record<string, Object> | undefined;
+      if (agent && typeof agent === 'object') {
+        this.log.info(TAG, `Connect response agent keys: [${Object.keys(agent).join(',')}]`);
+        let agentIdentity = agent['identity'] as Record<string, string> | undefined;
+        if (agentIdentity && (agentIdentity['name'] ?? '').length > 0) {
+          identity = {
+            name: agentIdentity['name'] ?? '',
+            theme: agentIdentity['theme'] ?? '',
+            emoji: agentIdentity['emoji'] ?? '',
+            avatar: agentIdentity['avatar'] ?? '',
+          };
+          this.log.info(TAG, `Identity from connect agent.identity: name="${identity.name}" emoji="${identity.emoji}"`);
+        }
+        // Check agent.name (simpler format)
+        if (!identity) {
+          let agentName = (agent['name'] as string) ?? '';
+          if (agentName.length > 0) {
+            identity = { name: agentName, theme: '', emoji: '', avatar: '' };
+            this.log.info(TAG, `Identity from connect agent.name: "${agentName}"`);
+          }
+        }
+      }
+
+      // Check top-level identity
+      if (!identity) {
+        let topIdentity = connectRes['identity'] as Record<string, string> | undefined;
+        if (topIdentity && (topIdentity['name'] ?? '').length > 0) {
+          identity = {
+            name: topIdentity['name'] ?? '',
+            theme: topIdentity['theme'] ?? '',
+            emoji: topIdentity['emoji'] ?? '',
+            avatar: topIdentity['avatar'] ?? '',
+          };
+          this.log.info(TAG, `Identity from connect identity: name="${identity.name}"`);
+        }
+      }
+
+      // Check config.agents (embedded config in connect response)
+      if (!identity) {
+        let embeddedConfig = connectRes['config'] as Record<string, Object> | undefined;
+        if (embeddedConfig && typeof embeddedConfig === 'object') {
+          identity = this.extractAgentIdentityFromConfig(embeddedConfig) ?? undefined;
+          if (identity) {
+            this.log.info(TAG, `Identity from connect config.agents: name="${identity.name}"`);
+          }
+        }
+      }
+
+      if (identity) {
+        this._agentIdentity = identity;
+        this.dispatchIdentity(identity);
+        return;
+      }
+      this.log.info(TAG, 'No identity in connect response, falling through to config.get...');
+    }
+
+    // Strategy 1: config.get RPC
     try {
       let resJson = await this.operatorSession.request('config.get', '{}', 10000);
       this.log.info(TAG, `config.get response (500): ${resJson.substring(0, 500)}`);
@@ -577,7 +642,7 @@ export class NodeRuntime {
       }
       this.log.info(TAG, `config keys: [${Object.keys(config).join(',')}]`);
 
-      // Strategy 1: Look for agent identity in agents block
+      // Strategy 1a: Look for agent identity in agents block
       let identity = this.extractAgentIdentityFromConfig(config);
       if (identity) {
         this._agentIdentity = identity;
@@ -585,7 +650,7 @@ export class NodeRuntime {
         return;
       }
 
-      // Strategy 2: Check gateway.name or gateway.identity
+      // Strategy 1b: Check gateway.name or gateway.identity
       let gw = config['gateway'] as Record<string, Object> | undefined;
       if (gw) {
         let gwKeys = Object.keys(gw);
