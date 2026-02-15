@@ -133,6 +133,7 @@ export struct ChatPage {
         this.gwAgentEmoji = identity.emoji;
         this.gwAgentTheme = identity.theme;
         this.gwAgentAvatar = NodeRuntime.getInstance().resolveAgentAvatarUrl() ?? '';
+        this.log.info('ChatPage', `Gateway identity received: name="${identity.name}" emoji="${identity.emoji}" avatar="${identity.avatar}" resolvedAvatar="${this.gwAgentAvatar}"`);
       } else {
         this.gwAgentName = '';
         this.gwAgentEmoji = '';
