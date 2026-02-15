@@ -159,7 +159,8 @@ export class AIService {
     settings: SettingsData,
     systemPrompt: string,
     tools: ToolSchema[],
-    context?: common.UIAbilityContext
+    context?: common.UIAbilityContext,
+    onDelta?: (text: string) => void
   ): Promise<AIResult> {
     let result = new AIResult();
     if (!settings.apiKey && settings.provider !== 'local') {
@@ -180,6 +181,9 @@ export class AIService {
         } else if (settings.provider === 'local' && (!settings.apiKey || settings.apiKey.length === 0)) {
           // Truly local model (Ollama) — no tool support
           response = await this.callLocal(allMessages, settings, systemPrompt);
+        } else if (onDelta && loopCount === 1) {
+          // First iteration with streaming — use SSE streaming for responsive output
+          response = await this.callOpenAIStream(allMessages, settings, systemPrompt, tools, onDelta);
         } else {
           // OpenAI-compatible providers (openai, openrouter, siliconflow, etc.) — full tool support
           response = await this.callOpenAI(allMessages, settings, systemPrompt, tools);
@@ -407,13 +411,20 @@ export class AIService {
     messages: ApiMessage[], settings: SettingsData,
     systemPrompt: string, tools: ToolSchema[]
   ): Promise<RawResponse> {
-    let msgArr: RoleContent[] = messages.map((m): RoleContent => {
-      let rc: RoleContent = { role: m.role, content: m.content };
-      return rc;
-    });
+    // Build messages with multimodal support for Anthropic
+    let msgJsonParts: string[] = [];
+    for (let m of messages) {
+      if (m.role === 'user' && m.imageBase64 && m.imageBase64.length > 0) {
+        let contentArr = `[{"type":"text","text":${JSON.stringify(m.content)}},{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":${JSON.stringify(m.imageBase64)}}}]`;
+        msgJsonParts.push(`{"role":"user","content":${contentArr}}`);
+      } else {
+        msgJsonParts.push(`{"role":${JSON.stringify(m.role)},"content":${JSON.stringify(m.content)}}`);
+      }
+    }
+    let messagesJson = `[${msgJsonParts.join(',')}]`;
 
     // Build body as JSON string directly to avoid untyped object literal issues
-    let bodyParts: string = `"model":${JSON.stringify(settings.model)},"max_tokens":${Constants.MAX_TOKENS},"temperature":${settings.temperature},"system":${JSON.stringify(systemPrompt)},"messages":${JSON.stringify(msgArr)}`;
+    let bodyParts: string = `"model":${JSON.stringify(settings.model)},"max_tokens":${Constants.MAX_TOKENS},"temperature":${settings.temperature},"system":${JSON.stringify(systemPrompt)},"messages":${messagesJson}`;
 
     if (tools.length > 0) {
       let toolDefs: AnthropicToolSchemaDef[] = tools.map((t): AnthropicToolSchemaDef => {
@@ -471,12 +482,14 @@ export class AIService {
     msgJsonParts.push(`{"role":"system","content":${JSON.stringify(systemPrompt)}}`);
     for (let m of messages) {
       if (m.toolCalls !== undefined && m.toolCalls.length > 0) {
-        // Assistant message with tool_calls — content must always be present (null if empty)
         let contentPart = m.content.length > 0 ? JSON.stringify(m.content) : 'null';
         msgJsonParts.push(`{"role":"assistant","content":${contentPart},"tool_calls":${m.toolCalls}}`);
       } else if (m.toolCallId !== undefined && m.toolCallId.length > 0) {
-        // Tool result message
         msgJsonParts.push(`{"role":"tool","tool_call_id":${JSON.stringify(m.toolCallId)},"content":${JSON.stringify(m.content)}}`);
+      } else if (m.role === 'user' && m.imageBase64 && m.imageBase64.length > 0) {
+        // Multimodal user message with image (OpenAI vision format)
+        let contentArr = `[{"type":"text","text":${JSON.stringify(m.content)}},{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,${m.imageBase64}"}}]`;
+        msgJsonParts.push(`{"role":"user","content":${contentArr}}`);
       } else {
         msgJsonParts.push(`{"role":${JSON.stringify(m.role)},"content":${JSON.stringify(m.content)}}`);
       }
@@ -500,7 +513,8 @@ export class AIService {
       'Authorization': `Bearer ${settings.apiKey}`
     };
 
-    let defaultUrl = settings.provider === 'openrouter' ? Constants.OPENROUTER_URL : Constants.OPENAI_URL;
+    let defaultUrl = settings.provider === 'openrouter' ? Constants.OPENROUTER_URL
+      : settings.provider === 'siliconflow' ? Constants.SILICONFLOW_URL : Constants.OPENAI_URL;
     // Use baseUrl only if it matches the provider; prevents stale cross-provider URLs
     let url = defaultUrl;
     if (settings.baseUrl.length > 0) {
@@ -575,6 +589,192 @@ export class AIService {
     }
     this.log.info(this.TAG, `callOpenAI: final toolCalls=${raw.toolCalls.length} textLen=${raw.text.length}`);
     return raw;
+  }
+
+  // --------- OpenAI Streaming (SSE) ---------
+  private async callOpenAIStream(
+    messages: ApiMessage[], settings: SettingsData,
+    systemPrompt: string, tools: ToolSchema[],
+    onDelta: (text: string) => void
+  ): Promise<RawResponse> {
+    // Build messages JSON (same as callOpenAI, with multimodal support)
+    let msgJsonParts: string[] = [];
+    msgJsonParts.push(`{"role":"system","content":${JSON.stringify(systemPrompt)}}`);
+    for (let m of messages) {
+      if (m.toolCalls !== undefined && m.toolCalls.length > 0) {
+        let contentPart = m.content.length > 0 ? JSON.stringify(m.content) : 'null';
+        msgJsonParts.push(`{"role":"assistant","content":${contentPart},"tool_calls":${m.toolCalls}}`);
+      } else if (m.toolCallId !== undefined && m.toolCallId.length > 0) {
+        msgJsonParts.push(`{"role":"tool","tool_call_id":${JSON.stringify(m.toolCallId)},"content":${JSON.stringify(m.content)}}`);
+      } else if (m.role === 'user' && m.imageBase64 && m.imageBase64.length > 0) {
+        let contentArr = `[{"type":"text","text":${JSON.stringify(m.content)}},{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,${m.imageBase64}"}}]`;
+        msgJsonParts.push(`{"role":"user","content":${contentArr}}`);
+      } else {
+        msgJsonParts.push(`{"role":${JSON.stringify(m.role)},"content":${JSON.stringify(m.content)}}`);
+      }
+    }
+    let messagesJson = `[${msgJsonParts.join(',')}]`;
+
+    let bodyParts: string = `"model":${JSON.stringify(settings.model)},"max_tokens":${Constants.MAX_TOKENS},"temperature":${settings.temperature},"stream":true,"messages":${messagesJson}`;
+
+    if (tools.length > 0) {
+      let toolDefs: OpenAIToolDef[] = tools.map((t): OpenAIToolDef => {
+        let funcDef: OpenAIFuncDef = { name: t.name, description: t.description, parameters: t.input_schema };
+        let def: OpenAIToolDef = { type: 'function', function: funcDef };
+        return def;
+      });
+      bodyParts += `,"tools":${JSON.stringify(toolDefs)}`;
+    }
+
+    let bodyStr = `{${bodyParts}}`;
+    let headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${settings.apiKey}`
+    };
+
+    let defaultUrl = settings.provider === 'openrouter' ? Constants.OPENROUTER_URL
+      : settings.provider === 'siliconflow' ? Constants.SILICONFLOW_URL : Constants.OPENAI_URL;
+    let url = defaultUrl;
+    if (settings.baseUrl.length > 0) {
+      if (settings.provider === 'openrouter' && !settings.baseUrl.includes('openrouter')) {
+        this.log.warn(this.TAG, `Ignoring non-OpenRouter baseUrl: ${settings.baseUrl}`);
+      } else {
+        url = settings.baseUrl;
+      }
+    }
+    this.log.info(this.TAG, `callOpenAIStream: url=${url} model=${settings.model} bodyLen=${bodyStr.length}`);
+
+    let raw = new RawResponse();
+    let accText = '';
+    let sseBuffer = '';
+    // Tool call accumulation for streaming tool_calls
+    let tcAccum = new Map<number, StreamToolCallAccum>();
+
+    return new Promise<RawResponse>((resolve, reject) => {
+      let req = http.createHttp();
+      let resolved = false;
+
+      req.on('dataReceive', (data: ArrayBuffer) => {
+        let chunk = '';
+        try {
+          let decoder = new util.TextDecoder();
+          chunk = decoder.decodeWithStream(new Uint8Array(data));
+        } catch {
+          return;
+        }
+        sseBuffer += chunk;
+
+        // Process complete SSE lines
+        let lines = sseBuffer.split('\n');
+        sseBuffer = lines[lines.length - 1]; // keep incomplete last line
+        for (let i = 0; i < lines.length - 1; i++) {
+          let line = lines[i].trim();
+          if (!line.startsWith('data: ')) continue;
+          let payload = line.substring(6).trim();
+          if (payload === '[DONE]') continue;
+
+          try {
+            let obj = JSON.parse(payload) as StreamChunk;
+            if (obj.choices && obj.choices.length > 0) {
+              let delta = obj.choices[0].delta;
+              if (delta) {
+                // Text content
+                if (delta.content) {
+                  accText += delta.content;
+                  onDelta(delta.content);
+                }
+                // Tool calls (streaming)
+                if (delta.tool_calls) {
+                  for (let dtc of delta.tool_calls) {
+                    let idx = dtc.index ?? 0;
+                    let existing = tcAccum.get(idx);
+                    if (!existing) {
+                      existing = { id: '', name: '', args: '' };
+                      tcAccum.set(idx, existing);
+                    }
+                    if (dtc.id) existing.id = dtc.id;
+                    if (dtc.function?.name) existing.name = dtc.function.name;
+                    if (dtc.function?.arguments) existing.args += dtc.function.arguments;
+                  }
+                }
+              }
+              // Check finish_reason
+              let finish = obj.choices[0].finish_reason;
+              if (finish === 'stop' || finish === 'tool_calls') {
+                // Done
+              }
+            }
+          } catch { /* skip malformed JSON */ }
+        }
+      });
+
+      req.on('dataEnd', () => {
+        if (resolved) return;
+        resolved = true;
+        // Strip <think>...</think> blocks
+        let text = accText;
+        let thinkStart = text.indexOf('<think>');
+        while (thinkStart >= 0) {
+          let thinkEnd = text.indexOf('</think>', thinkStart);
+          if (thinkEnd >= 0) {
+            text = text.substring(0, thinkStart) + text.substring(thinkEnd + 8);
+          } else {
+            text = text.substring(0, thinkStart);
+            break;
+          }
+          thinkStart = text.indexOf('<think>');
+        }
+        raw.text = text.trim();
+
+        // Collect accumulated tool calls
+        let sortedKeys: number[] = [];
+        tcAccum.forEach((_v: StreamToolCallAccum, k: number) => { sortedKeys.push(k); });
+        sortedKeys.sort();
+        for (let k of sortedKeys) {
+          let acc = tcAccum.get(k);
+          if (acc && acc.name.length > 0) {
+            let rtc = new RawToolCall();
+            rtc.id = acc.id;
+            rtc.name = acc.name;
+            rtc.input = acc.args;
+            raw.toolCalls.push(rtc);
+          }
+        }
+
+        // Fallback: extract tool calls from text if none found
+        if (raw.toolCalls.length === 0 && raw.text.length > 0) {
+          this.extractToolCallsFromText(raw);
+        }
+        this.log.info(this.TAG, `callOpenAIStream: done textLen=${raw.text.length} toolCalls=${raw.toolCalls.length}`);
+        req.destroy();
+        resolve(raw);
+      });
+
+      req.on('dataReceiveProgress', () => { /* ignore progress events */ });
+
+      req.requestInStream(url, {
+        method: http.RequestMethod.POST,
+        header: headers,
+        extraData: bodyStr,
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 30000,
+        readTimeout: 120000
+      }).then((code: number) => {
+        if (code !== 200) {
+          if (!resolved) {
+            resolved = true;
+            req.destroy();
+            reject(new Error(`HTTP ${code} from streaming request`));
+          }
+        }
+      }).catch((err: Error) => {
+        if (!resolved) {
+          resolved = true;
+          req.destroy();
+          reject(err);
+        }
+      });
+    });
   }
 
   // --------- Local / Ollama ---------
@@ -2071,7 +2271,22 @@ export class AIService {
     let out: ApiMessage[] = [];
     for (let msg of history) {
       if (msg.role === 'user') {
-        out.push({ role: 'user', content: msg.content });
+        let apiMsg: ApiMessage = { role: 'user', content: msg.content };
+        // Attach image base64 if user sent an image
+        if (msg.userImagePath.length > 0) {
+          try {
+            let imgFile = fileIo.openSync(msg.userImagePath, fileIo.OpenMode.READ_ONLY);
+            let imgStat = fileIo.statSync(imgFile.fd);
+            let imgBuf = new ArrayBuffer(imgStat.size);
+            fileIo.readSync(imgFile.fd, imgBuf);
+            fileIo.closeSync(imgFile);
+            let b64 = buffer.from(imgBuf).toString('base64');
+            apiMsg.imageBase64 = b64;
+          } catch (e) {
+            this.log.warn(this.TAG, `Failed to read user image: ${(e as Error).message ?? ''}`);
+          }
+        }
+        out.push(apiMsg);
       } else if (msg.role === 'assistant' && !msg.isToolCall && msg.content.length > 0) {
         out.push({ role: 'assistant', content: msg.content });
       }
@@ -2151,4 +2366,36 @@ interface OllamaResp {
 
 interface OllamaMessage {
   content: string;
+}
+
+// SSE streaming types
+interface StreamChunk {
+  choices: StreamChoice[];
+}
+
+interface StreamChoice {
+  delta?: StreamDelta;
+  finish_reason?: string;
+}
+
+interface StreamDelta {
+  content?: string;
+  tool_calls?: StreamDeltaToolCall[];
+}
+
+interface StreamDeltaToolCall {
+  index?: number;
+  id?: string;
+  function?: StreamDeltaFunc;
+}
+
+interface StreamDeltaFunc {
+  name?: string;
+  arguments?: string;
+}
+
+interface StreamToolCallAccum {
+  id: string;
+  name: string;
+  args: string;
 }

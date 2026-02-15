@@ -120,6 +120,18 @@ export interface GatewayChatEvent {
   stopReason?: string;
 }
 
+// --------------- Exec approval ---------------
+
+export interface ExecApprovalRequest {
+  id: string;           // approval UUID
+  command: string;      // command being executed
+  cwd: string;          // working directory
+  host: string;         // execution host (node-id or "gateway")
+  agentId: string;      // agent that requested the exec
+  sessionKey: string;   // agent session key
+  expiresAt: number;    // expiration timestamp (ms)
+}
+
 // --------------- Gateway settings (persisted) ---------------
 
 export interface GatewaySettings {

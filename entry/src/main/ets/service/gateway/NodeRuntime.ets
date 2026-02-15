@@ -29,6 +29,7 @@ import {
   InvokeResult,
   GatewayChatEvent,
   GatewayChatContentBlock,
+  ExecApprovalRequest,
 } from './GatewayModels';
 import { image } from '@kit.ImageKit';
 import { preferences } from '@kit.ArkData';
@@ -36,7 +37,7 @@ import { LogService } from '../../common/LogService';
 import { Constants } from '../../common/Constants';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.9.5';
+const APP_VERSION = '2.9.7';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -105,6 +106,9 @@ export class NodeRuntime {
 
   // Invoke listeners — notify ChatPage when a gateway invoke request is executed
   private _invokeListeners: Array<(command: string, params: string, result: string, isError: boolean) => void> = [];
+
+  // Approval listeners — notify ChatPage when an exec approval is requested
+  private _approvalListeners: Array<(req: ExecApprovalRequest) => void> = [];
 
   static getInstance(): NodeRuntime {
     if (!NodeRuntime.instance) {
@@ -297,6 +301,36 @@ export class NodeRuntime {
         listener(command, params, result, isError);
       } catch { /* ignore */ }
     }
+  }
+
+  addApprovalListener(listener: (req: ExecApprovalRequest) => void): void {
+    this._approvalListeners.push(listener);
+  }
+
+  removeApprovalListener(listener: (req: ExecApprovalRequest) => void): void {
+    let idx = this._approvalListeners.indexOf(listener);
+    if (idx >= 0) {
+      this._approvalListeners.splice(idx, 1);
+    }
+  }
+
+  private dispatchApproval(req: ExecApprovalRequest): void {
+    this.log.info(TAG, `dispatchApproval: id=${req.id} command=${req.command.substring(0, 100)} host=${req.host}`);
+    for (let listener of this._approvalListeners) {
+      try {
+        listener(req);
+      } catch { /* ignore */ }
+    }
+  }
+
+  async resolveApproval(approvalId: string, decision: string): Promise<void> {
+    if (!this.operatorSession) {
+      throw new Error('Gateway not connected');
+    }
+    let params = `{"approvalId":${JSON.stringify(approvalId)},"decision":${JSON.stringify(decision)}}`;
+    this.log.info(TAG, `resolveApproval: id=${approvalId} decision=${decision}`);
+    let resJson = await this.operatorSession.request('exec.approval.resolve', params, 15000);
+    this.log.info(TAG, `resolveApproval response: ${resJson.substring(0, 200)}`);
   }
 
   private dispatchNotification(info: NotificationInfo): void {
@@ -730,6 +764,26 @@ export class NodeRuntime {
 
     if (!payloadJson) return;
 
+    // Handle exec approval requests from gateway
+    if (event === 'exec.approval.requested') {
+      try {
+        let raw = JSON.parse(payloadJson) as Record<string, Object>;
+        let req: ExecApprovalRequest = {
+          id: (raw['id'] as string) ?? '',
+          command: (raw['command'] as string) ?? '',
+          cwd: (raw['cwd'] as string) ?? '',
+          host: (raw['host'] as string) ?? '',
+          agentId: (raw['agentId'] as string) ?? '',
+          sessionKey: (raw['sessionKey'] as string) ?? '',
+          expiresAt: (raw['expiresAt'] as number) ?? 0,
+        };
+        this.dispatchApproval(req);
+      } catch (err) {
+        this.log.error(TAG, `Failed to parse exec.approval.requested: ${(err as Error).message}`);
+      }
+      return;
+    }
+
     // Handle 'agent' event format (streaming from gateway)
     // Wire format: { runId, stream, data: { text }, delta, sessionKey, seq, ts }
     // Or: { runId, stream, text, delta, sessionKey, seq, ts }
@@ -1014,7 +1068,7 @@ export class NodeRuntime {
   private buildOperatorOptions(): ConnectOptions {
     return {
       role: 'operator',
-      scopes: ['operator.read', 'operator.write', 'operator.pairing'],
+      scopes: ['operator.read', 'operator.write', 'operator.pairing', 'operator.approvals'],
       caps: [],
       commands: [],
       permissions: {} as Record<string, boolean>,

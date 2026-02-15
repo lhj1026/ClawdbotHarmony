@@ -1,4 +1,4 @@
-import { ChatMessage } from '../model/Models';
+import { ChatMessage, InlineButton } from '../model/Models';
 import { I18n } from '../common/I18n';
 import { MarkdownText } from './MarkdownText';
 import { media } from '@kit.MediaKit';
@@ -13,6 +13,8 @@ export struct MessageBubble {
   @Prop assistantAvatar: string = '';
   @Prop assistantName: string = '';
   onImageClick: (path: string) => void = () => {};
+  onFeedback: (msgId: string, type: string) => void = () => {};
+  onButtonClick: (action: string) => void = () => {};
   @State audioPlaying: boolean = false;
   private avPlayer: media.AVPlayer | undefined = undefined;
   private log: LogService = LogService.getInstance();
@@ -23,8 +25,8 @@ export struct MessageBubble {
     } else if (this.message.isToolCall) {
       // Hide tool call JSON bubbles — they clutter the chat
     } else if (this.message.role === 'tool') {
-      // Only show tool results that have media content (photo/audio)
-      if (this.message.imagePath.length > 0 || this.message.audioPath.length > 0) {
+      // Only show tool results that have media content (photo/audio/video)
+      if (this.message.imagePath.length > 0 || this.message.audioPath.length > 0 || this.message.videoPath.length > 0) {
         this.ToolResultBubble()
       }
       // else: hide plain JSON tool results
@@ -46,6 +48,30 @@ export struct MessageBubble {
       Row() {
         Blank()
         Column() {
+          // User attached image
+          if (this.message.userImagePath.length > 0) {
+            Image('file://' + this.message.userImagePath)
+              .width('100%')
+              .constraintSize({ maxHeight: 200 })
+              .objectFit(ImageFit.Contain)
+              .borderRadius(8)
+              .margin({ left: 12, right: 12, top: 10, bottom: 4 })
+              .onClick(() => { this.onImageClick(this.message.userImagePath); })
+          }
+
+          // File attachment indicator
+          if (this.message.attachmentName.length > 0) {
+            Row({ space: 6 }) {
+              Text('\uD83D\uDCC4').fontSize(14)
+              Text(this.message.attachmentName)
+                .fontSize(12)
+                .fontColor('rgba(255,255,255,0.8)')
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+            }
+            .padding({ left: 12, right: 12, top: 8, bottom: 4 })
+          }
+
           // Voice message: audio indicator + label (tap entire bubble to play)
           if (this.message.audioPath.length > 0) {
             Row({ space: 8 }) {
@@ -159,9 +185,62 @@ export struct MessageBubble {
                 this.onImageClick(this.message.imagePath);
               })
           }
+
+          // Video display
+          if (this.message.videoPath.length > 0) {
+            Video({ src: this.message.videoPath })
+              .width('100%')
+              .constraintSize({ maxHeight: 280 })
+              .objectFit(ImageFit.Contain)
+              .borderRadius(8)
+              .margin({ top: 6 })
+              .autoPlay(false)
+              .controls(true)
+          }
+
+          // Inline buttons
+          if (this.message.buttons.length > 0) {
+            Flex({ wrap: FlexWrap.Wrap }) {
+              ForEach(this.message.buttons, (btn: InlineButton) => {
+                Text(btn.label)
+                  .fontSize(13)
+                  .fontColor('#D2691E')
+                  .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+                  .borderRadius(14)
+                  .borderWidth(1)
+                  .borderColor('#D2691E')
+                  .margin(3)
+                  .onClick(() => { this.onButtonClick(btn.action); })
+              }, (btn: InlineButton): string => btn.label)
+            }
+            .margin({ top: 8 })
+          }
+
+          // Feedback row (thumbs up/down)
+          Row({ space: 16 }) {
+            Text('\uD83D\uDC4D')
+              .fontSize(16)
+              .opacity(this.message.feedback === 'up' ? 1.0 : 0.3)
+              .onClick(() => {
+                let newFb = this.message.feedback === 'up' ? '' : 'up';
+                this.message.feedback = newFb;
+                this.onFeedback(this.message.id, newFb);
+              })
+            Text('\uD83D\uDC4E')
+              .fontSize(16)
+              .opacity(this.message.feedback === 'down' ? 1.0 : 0.3)
+              .onClick(() => {
+                let newFb = this.message.feedback === 'down' ? '' : 'down';
+                this.message.feedback = newFb;
+                this.onFeedback(this.message.id, newFb);
+              })
+          }
+          .margin({ top: 4 })
+          .justifyContent(FlexAlign.End)
+          .width('100%')
         }
         .alignItems(HorizontalAlign.Start)
-        .padding({ left: 14, right: 14, top: 12, bottom: 12 })
+        .padding({ left: 14, right: 14, top: 12, bottom: 8 })
         .backgroundColor('#F0F0F0')
         .borderRadius({
           topLeft: 4, topRight: 16, bottomLeft: 16, bottomRight: 16
@@ -232,7 +311,17 @@ export struct MessageBubble {
             .fontColor('#666666')
         }
 
-        if (this.message.imagePath.length > 0) {
+        if (this.message.videoPath.length > 0) {
+          // Display recorded video
+          Video({ src: this.message.videoPath })
+            .width('100%')
+            .constraintSize({ maxHeight: 280 })
+            .objectFit(ImageFit.Contain)
+            .borderRadius(8)
+            .margin({ top: 6 })
+            .autoPlay(false)
+            .controls(true)
+        } else if (this.message.imagePath.length > 0) {
           // Display captured photo
           Image('file://' + this.message.imagePath)
             .width('100%')

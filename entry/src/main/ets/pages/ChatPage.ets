@@ -9,7 +9,7 @@ import { CustomSkillService } from '../service/CustomSkillService';
 import { CustomSkillDef } from '../model/Models';
 import { Constants } from '../common/Constants';
 import { NodeRuntime } from '../service/gateway/NodeRuntime';
-import { ConnectionState, GatewayChatEvent } from '../service/gateway/GatewayModels';
+import { ConnectionState, GatewayChatEvent, ExecApprovalRequest } from '../service/gateway/GatewayModels';
 import { NotificationInfo } from '../service/gateway/NotificationCapability';
 import { LogService } from '../common/LogService';
 import { I18n } from '../common/I18n';
@@ -72,6 +72,8 @@ export struct ChatPage {
   private mediaListener: ((type: string, path: string) => void) | undefined = undefined;
   private invokeListener: ((command: string, params: string, result: string, isError: boolean) => void) | undefined = undefined;
   private recordingListener: ((recording: boolean, durationSec: number) => void) | undefined = undefined;
+  private approvalListener: ((req: ExecApprovalRequest) => void) | undefined = undefined;
+  private approvalTimers: Map<string, number> = new Map();
   private feishuConnected: boolean = false;
   private feishuSettings: SettingsData | undefined = undefined;
   private feishuHistory: ChatMessage[] = []; // Separate conversation history for Feishu
@@ -122,6 +124,11 @@ export struct ChatPage {
       this.handleInvokeInChat(command, params, result, isError);
     };
     NodeRuntime.getInstance().addInvokeListener(this.invokeListener);
+    // Register approval listener for exec approval requests
+    this.approvalListener = (req: ExecApprovalRequest) => {
+      this.handleApprovalRequest(req);
+    };
+    NodeRuntime.getInstance().addApprovalListener(this.approvalListener);
     // Register recording listener for AIService local record_audio tool
     this.recordingListener = (recording: boolean, durationSec: number) => {
       this.handleRecordingState(recording, durationSec);
@@ -164,6 +171,15 @@ export struct ChatPage {
       NodeRuntime.getInstance().removeInvokeListener(this.invokeListener);
       this.invokeListener = undefined;
     }
+    if (this.approvalListener) {
+      NodeRuntime.getInstance().removeApprovalListener(this.approvalListener);
+      this.approvalListener = undefined;
+    }
+    // Clear all approval expiration timers
+    this.approvalTimers.forEach((timerId: number) => {
+      clearTimeout(timerId);
+    });
+    this.approvalTimers.clear();
     if (this.recordingListener) {
       this.ai.removeRecordingListener(this.recordingListener);
       this.recordingListener = undefined;
@@ -256,7 +272,7 @@ export struct ChatPage {
                 .fontSize(18)
                 .fontWeight(FontWeight.Bold)
                 .fontColor('#1A1A1A')
-              Text('v2.9.5')
+              Text('v2.9.7')
                 .fontSize(11)
                 .fontColor('#999999')
                 .margin({ top: 4 })
@@ -1699,10 +1715,92 @@ Keep it short but preserve all important information. Use the same language as t
 
   // ---- Attachment picker (image / file) ----
 
-  /** Handle inline button action — send as user message */
+  /** Handle inline button action — send as user message or resolve approval */
   private handleButtonAction(action: string): void {
+    if (action.startsWith('__approval__:')) {
+      // Parse: __approval__:<decision>:<approvalId>
+      let parts = action.substring('__approval__:'.length);
+      let colonIdx = parts.indexOf(':');
+      if (colonIdx > 0) {
+        let decision = parts.substring(0, colonIdx);
+        let approvalId = parts.substring(colonIdx + 1);
+        this.resolveApprovalAction(approvalId, decision);
+      }
+      return;
+    }
     this.inputText = action;
     this.send();
+  }
+
+  /** Handle exec approval request from gateway */
+  private handleApprovalRequest(req: ExecApprovalRequest): void {
+    let now = Date.now();
+    if (req.expiresAt > 0 && req.expiresAt <= now) {
+      // Already expired, skip
+      return;
+    }
+
+    let cmdDisplay = req.command.length > 200 ? req.command.substring(0, 200) + '...' : req.command;
+    let content = `${I18n.t('chat.approval.title')}\n` +
+      `${I18n.t('chat.approval.command')}: ${cmdDisplay}\n` +
+      `${I18n.t('chat.approval.host')}: ${req.host}\n` +
+      `${I18n.t('chat.approval.agent')}: ${req.agentId}`;
+
+    let msg = new ChatMessage('assistant', content);
+    msg.buttons = [
+      new InlineButton(I18n.t('chat.approval.allowOnce'), `__approval__:allow-once:${req.id}`),
+      new InlineButton(I18n.t('chat.approval.allowAlways'), `__approval__:allow-always:${req.id}`),
+      new InlineButton(I18n.t('chat.approval.deny'), `__approval__:deny:${req.id}`),
+    ];
+    this.messages.push(msg);
+    this.scrollToEnd();
+
+    // Set expiration timer
+    if (req.expiresAt > 0) {
+      let remainMs = req.expiresAt - now;
+      let timerId = setTimeout(() => {
+        this.approvalTimers.delete(req.id);
+        // Find the message and mark as expired
+        for (let i = this.messages.length - 1; i >= 0; i--) {
+          let m = this.messages[i];
+          if (m.buttons.length > 0 && m.buttons[0].action.endsWith(req.id)) {
+            m.content = `${I18n.t('chat.approval.title')}\n${I18n.t('chat.approval.command')}: ${cmdDisplay}\n\n${I18n.t('chat.approval.expired')}`;
+            m.buttons = [];
+            break;
+          }
+        }
+      }, remainMs);
+      this.approvalTimers.set(req.id, timerId);
+    }
+  }
+
+  /** Resolve an exec approval via gateway RPC */
+  private resolveApprovalAction(approvalId: string, decision: string): void {
+    // Clear expiration timer
+    let timerId = this.approvalTimers.get(approvalId);
+    if (timerId !== undefined) {
+      clearTimeout(timerId);
+      this.approvalTimers.delete(approvalId);
+    }
+
+    // Update message UI — find the approval message and update it
+    let resultLabel = decision === 'deny' ? I18n.t('chat.approval.denied') : I18n.t('chat.approval.approved');
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      let m = this.messages[i];
+      if (m.buttons.length > 0 && m.buttons[0].action.endsWith(approvalId)) {
+        m.content = m.content.split('\n').slice(0, 3).join('\n') + `\n\n${resultLabel} (${decision})`;
+        m.buttons = [];
+        break;
+      }
+    }
+
+    // Send RPC to gateway
+    NodeRuntime.getInstance().resolveApproval(approvalId, decision).catch((err: Error) => {
+      // Show error in chat if RPC fails
+      let errMsg = new ChatMessage('assistant', `Approval error: ${err.message}`);
+      this.messages.push(errMsg);
+      this.scrollToEnd();
+    });
   }
 
   private showAttachmentMenu(): void {
@@ -2176,13 +2274,14 @@ You have persistent memory that survives across conversations. Use it proactivel
     let defaultModel = provider === 'openrouter' ? Constants.DEFAULT_MODEL_OPENROUTER
       : provider === 'anthropic' ? Constants.DEFAULT_MODEL_ANTHROPIC
         : provider === 'openai' ? Constants.DEFAULT_MODEL_OPENAI
-          : provider === 'custom' ? '' : 'llama3';
+          : provider === 'siliconflow' ? Constants.DEFAULT_MODEL_SILICONFLOW
+            : provider === 'custom' ? '' : 'llama3';
     let model = (await store.get(modelPref, defaultModel)) as string;
     // Use built-in keys as fallback
     if (apiKey.length === 0 && provider === 'openrouter' && Constants.OPENROUTER_DEFAULT_KEY.length > 0) {
       apiKey = Constants.OPENROUTER_DEFAULT_KEY;
     }
-    if (apiKey.length === 0 && provider === 'openai' && Constants.SILICONFLOW_DEFAULT_KEY.length > 0) {
+    if (apiKey.length === 0 && (provider === 'openai' || provider === 'siliconflow') && Constants.SILICONFLOW_DEFAULT_KEY.length > 0) {
       apiKey = Constants.SILICONFLOW_DEFAULT_KEY;
     }
     // Load soul

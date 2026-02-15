@@ -24,14 +24,15 @@ export struct SettingsPage {
     'openrouter': Constants.DEFAULT_MODEL_OPENROUTER,
     'anthropic': Constants.DEFAULT_MODEL_ANTHROPIC,
     'openai': Constants.DEFAULT_MODEL_OPENAI,
+    'siliconflow': Constants.DEFAULT_MODEL_SILICONFLOW,
     'local': 'llama3',
     'custom': ''
   };
   private savedKeys: Record<string, string> = {
-    'openrouter': '', 'anthropic': '', 'openai': '', 'local': '', 'custom': ''
+    'openrouter': '', 'anthropic': '', 'openai': '', 'siliconflow': '', 'local': '', 'custom': ''
   };
   private savedUrls: Record<string, string> = {
-    'openrouter': '', 'anthropic': '', 'openai': '', 'local': '', 'custom': ''
+    'openrouter': '', 'anthropic': '', 'openai': '', 'siliconflow': '', 'local': '', 'custom': ''
   };
   @State asrEnabled: boolean = false;
   @State showKey: boolean = false;
@@ -635,7 +636,7 @@ export struct SettingsPage {
               .width('100%')
             Scroll() {
               Row({ space: 8 }) {
-              ForEach(['openrouter', 'anthropic', 'openai', 'local', 'custom'] as string[], (p: string) => {
+              ForEach(['openrouter', 'anthropic', 'openai', 'siliconflow', 'local', 'custom'] as string[], (p: string) => {
                 Text(this.providerLabel(p))
                   .fontSize(13)
                   .fontColor(this.provider === p ? Color.White : '#666666')
@@ -719,9 +720,11 @@ export struct SettingsPage {
                   ? 'https://api.anthropic.com/v1/messages'
                   : this.provider === 'openai'
                     ? 'https://api.openai.com/v1/chat/completions'
-                    : this.provider === 'custom'
-                      ? 'https://your-api.com/v1/chat/completions'
-                      : 'http://localhost:11434/api/chat'
+                    : this.provider === 'siliconflow'
+                      ? 'https://api.siliconflow.cn/v1/chat/completions'
+                      : this.provider === 'custom'
+                        ? 'https://your-api.com/v1/chat/completions'
+                        : 'http://localhost:11434/api/chat'
             })
               .height(40)
               .backgroundColor('#F5F5F5')
@@ -1087,7 +1090,7 @@ export struct SettingsPage {
         Column() {
           this.InfoRow(I18n.t('settings.app'), I18n.t('settings.appValue'))
           Divider().color('#F0F0F0')
-          this.InfoRow(I18n.t('settings.version'), '2.9.5')
+          this.InfoRow(I18n.t('settings.version'), '2.9.7')
           Divider().color('#F0F0F0')
           this.InfoRow(I18n.t('settings.basedOn'), 'OpenClaw / ClawdBot')
           Divider().color('#F0F0F0')
@@ -1279,6 +1282,7 @@ export struct SettingsPage {
     if (p === 'openrouter') return Constants.DEFAULT_MODEL_OPENROUTER;
     if (p === 'anthropic') return Constants.DEFAULT_MODEL_ANTHROPIC;
     if (p === 'openai') return Constants.DEFAULT_MODEL_OPENAI;
+    if (p === 'siliconflow') return Constants.DEFAULT_MODEL_SILICONFLOW;
     if (p === 'custom') return '';
     return 'llama3';
   }
@@ -1287,6 +1291,7 @@ export struct SettingsPage {
     if (p === 'openrouter') return 'OpenRouter';
     if (p === 'anthropic') return 'Anthropic';
     if (p === 'openai') return 'OpenAI';
+    if (p === 'siliconflow') return 'SiliconFlow';
     if (p === 'custom') return I18n.t('settings.customProvider');
     return 'Ollama';
   }
@@ -1409,6 +1414,7 @@ export struct SettingsPage {
       this.savedModels['openrouter'] = (await store.get('model_openrouter', Constants.DEFAULT_MODEL_OPENROUTER)) as string;
       this.savedModels['anthropic'] = (await store.get('model_anthropic', Constants.DEFAULT_MODEL_ANTHROPIC)) as string;
       this.savedModels['openai'] = (await store.get('model_openai', Constants.DEFAULT_MODEL_OPENAI)) as string;
+      this.savedModels['siliconflow'] = (await store.get('model_siliconflow', Constants.DEFAULT_MODEL_SILICONFLOW)) as string;
       this.savedModels['local'] = (await store.get('model_local', 'llama3')) as string;
       let orKey = (await store.get('key_openrouter', '')) as string;
       if (orKey.length === 0 && Constants.OPENROUTER_DEFAULT_KEY.length > 0) {
@@ -1417,11 +1423,13 @@ export struct SettingsPage {
       this.savedKeys['openrouter'] = orKey;
       this.savedKeys['anthropic'] = (await store.get('key_anthropic', '')) as string;
       this.savedKeys['openai'] = (await store.get('key_openai', '')) as string;
+      this.savedKeys['siliconflow'] = (await store.get('key_siliconflow', '')) as string;
       this.savedKeys['local'] = (await store.get('key_local', '')) as string;
       this.savedKeys['custom'] = (await store.get('key_custom', '')) as string;
       this.savedUrls['openrouter'] = (await store.get('url_openrouter', '')) as string;
       this.savedUrls['anthropic'] = (await store.get('url_anthropic', '')) as string;
       this.savedUrls['openai'] = (await store.get('url_openai', '')) as string;
+      this.savedUrls['siliconflow'] = (await store.get('url_siliconflow', '')) as string;
       this.savedUrls['local'] = (await store.get('url_local', '')) as string;
       this.savedUrls['custom'] = (await store.get('url_custom', '')) as string;
       this.savedModels['custom'] = (await store.get('model_custom', '')) as string;
@@ -1678,16 +1686,19 @@ export struct SettingsPage {
       await store.put('model_openrouter', this.savedModels['openrouter'] ?? Constants.DEFAULT_MODEL_OPENROUTER);
       await store.put('model_anthropic', this.savedModels['anthropic'] ?? Constants.DEFAULT_MODEL_ANTHROPIC);
       await store.put('model_openai', this.savedModels['openai'] ?? Constants.DEFAULT_MODEL_OPENAI);
+      await store.put('model_siliconflow', this.savedModels['siliconflow'] ?? Constants.DEFAULT_MODEL_SILICONFLOW);
       await store.put('model_local', this.savedModels['local'] ?? 'llama3');
       await store.put('model_custom', this.savedModels['custom'] ?? '');
       await store.put('key_openrouter', this.savedKeys['openrouter'] ?? '');
       await store.put('key_anthropic', this.savedKeys['anthropic'] ?? '');
       await store.put('key_openai', this.savedKeys['openai'] ?? '');
+      await store.put('key_siliconflow', this.savedKeys['siliconflow'] ?? '');
       await store.put('key_local', this.savedKeys['local'] ?? '');
       await store.put('key_custom', this.savedKeys['custom'] ?? '');
       await store.put('url_openrouter', this.savedUrls['openrouter'] ?? '');
       await store.put('url_anthropic', this.savedUrls['anthropic'] ?? '');
       await store.put('url_openai', this.savedUrls['openai'] ?? '');
+      await store.put('url_siliconflow', this.savedUrls['siliconflow'] ?? '');
       await store.put('url_local', this.savedUrls['local'] ?? '');
       await store.put('url_custom', this.savedUrls['custom'] ?? '');
       // ASR settings

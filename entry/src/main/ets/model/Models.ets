@@ -3,6 +3,17 @@
 // ============================================================
 
 @Observed
+export class InlineButton {
+  label: string;
+  action: string;
+
+  constructor(label: string, action: string) {
+    this.label = label;
+    this.action = action;
+  }
+}
+
+@Observed
 export class ChatMessage {
   id: string;
   role: string;        // 'user' | 'assistant' | 'tool'
@@ -14,6 +25,11 @@ export class ChatMessage {
   toolOutput: string;
   imagePath: string;   // local file path for photos displayed in chat
   audioPath: string;   // local file path for audio playback in chat
+  userImagePath: string;  // user-attached image path
+  feedback: string;       // 'up' | 'down' | ''
+  videoPath: string;      // local file path for video playback
+  buttons: InlineButton[];  // inline action buttons
+  attachmentName: string;   // file attachment display name
 
   constructor(role: string, content: string) {
     this.id = `m_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
@@ -26,6 +42,11 @@ export class ChatMessage {
     this.toolOutput = '';
     this.imagePath = '';
     this.audioPath = '';
+    this.userImagePath = '';
+    this.feedback = '';
+    this.videoPath = '';
+    this.buttons = [];
+    this.attachmentName = '';
   }
 }
 
@@ -99,6 +120,7 @@ export interface ApiMessage {
   content: string;
   toolCalls?: string;    // JSON string of OpenAI tool_calls array (for assistant messages)
   toolCallId?: string;   // tool_call_id (for role:"tool" result messages)
+  imageBase64?: string;  // base64-encoded image for multimodal messages
 }
 
 export interface ToolSchema {

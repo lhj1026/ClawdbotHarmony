@@ -64,6 +64,7 @@ export class GatewaySession {
   private closedHandled: boolean = false;
   private connectNonce: string | undefined = undefined;
   private connectNonceResolve: ((nonce: string | undefined) => void) | undefined = undefined;
+  private pairingResolve: (() => void) | undefined = undefined;
 
   // --- callbacks ---
   onStateChanged: (state: ConnectionState, message: string) => void = () => {};
@@ -105,6 +106,7 @@ export class GatewaySession {
   disconnect(): void {
     this.log.info(this.logTag, 'disconnect() called');
     this.shouldReconnect = false;
+    this.pairingResolve = undefined;
     if (this.reconnectTimer >= 0) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = -1;
@@ -130,6 +132,15 @@ export class GatewaySession {
     this.reconnectAttempt = 0;
     if (this.shouldReconnect) {
       this.connectOnce();
+    }
+  }
+
+  /** Signal that pairing approval is done (success or failure). */
+  notifyPairingDone(): void {
+    if (this.pairingResolve) {
+      let resolve = this.pairingResolve;
+      this.pairingResolve = undefined;
+      resolve();
     }
   }
 
@@ -315,9 +326,11 @@ export class GatewaySession {
 
   private performConnectAsync(): void {
     let gen = this.wsGeneration;
+    let savedNonce: string | undefined = undefined;
     this.log.info(this.logTag, 'Starting connect handshake (awaiting nonce)...');
     this.awaitConnectNonce().then((nonce) => {
       if (gen !== this.wsGeneration) return;
+      savedNonce = nonce;
       this.log.info(this.logTag, `Nonce received: ${nonce ?? '(none/timeout)'}`);
       return this.performConnect(nonce);
     }).then(() => {
@@ -328,10 +341,47 @@ export class GatewaySession {
       if (gen !== this.wsGeneration) return;
       let errMsg = err.message ?? '';
       this.log.error(this.logTag, `Connect handshake FAILED: ${errMsg}`);
-      // Clear stale device token on auth failure so next reconnect uses fresh credentials
-      if (!errMsg.includes('NOT_PAIRED')) {
-        this.clearStoredToken();
+
+      if (errMsg.includes('NOT_PAIRED')) {
+        // Keep WebSocket alive while pairing is being approved by operator session.
+        // The gateway invalidates the pairing requestId when the node WS closes,
+        // so we must stay connected until the approve completes.
+        this.log.info(this.logTag, 'Waiting for pairing approval (keeping WS alive)...');
+        let pairingTimeout = setTimeout(() => {
+          if (this.pairingResolve) {
+            this.log.warn(this.logTag, 'Pairing approval timed out after 12s');
+            let resolve = this.pairingResolve;
+            this.pairingResolve = undefined;
+            resolve();
+          }
+        }, 12000);
+        new Promise<void>((resolve) => {
+          this.pairingResolve = resolve;
+        }).then(() => {
+          clearTimeout(pairingTimeout);
+          if (gen !== this.wsGeneration) return;
+          // Retry connect RPC on the SAME WebSocket with password auth.
+          // Token auth fails after pairing because gateway may not issue a node token during approve.
+          // Password auth bypasses the pairing requirement entirely.
+          this.log.info(this.logTag, 'Pairing done, retrying connect on same WebSocket (forcePassword=true)...');
+          return this.performConnect(savedNonce, true);
+        }).then(() => {
+          if (gen !== this.wsGeneration) return;
+          this.reconnectAttempt = 0;
+          this.log.info(this.logTag, 'Connect handshake SUCCESS (after pairing)');
+        }).catch((retryErr: Error) => {
+          if (gen !== this.wsGeneration) return;
+          let retryMsg = retryErr.message ?? '';
+          this.log.error(this.logTag, `Connect retry after pairing FAILED: ${retryMsg}`);
+          this.closeSocket();
+          this.reconnectAttempt = 0;
+          this.onWsClosedOnce(`Auth failed after pairing: ${retryMsg}`);
+        });
+        return;
       }
+
+      // Clear stale device token on auth failure so next reconnect uses fresh credentials
+      this.clearStoredToken();
       this.closeSocket();
       this.onWsClosedOnce(`Auth failed: ${errMsg}`);
     });
@@ -340,9 +390,10 @@ export class GatewaySession {
   private clearStoredToken(): void {
     let ctx = this.context;
     if (!ctx) return;
-    this.identityStore.loadOrCreate(ctx).then((identity) => {
+    let safeCtx: common.UIAbilityContext = ctx;
+    this.identityStore.loadOrCreate(safeCtx).then((identity) => {
       this.log.info(this.logTag, `Clearing stale token for role=${this.options.role}`);
-      return this.authStore.clearToken(ctx, identity.deviceId, this.options.role);
+      return this.authStore.clearToken(safeCtx, identity.deviceId, this.options.role);
     }).catch(() => {
       // ignore
     });
@@ -367,7 +418,7 @@ export class GatewaySession {
     });
   }
 
-  private async performConnect(nonce: string | undefined): Promise<void> {
+  private async performConnect(nonce: string | undefined, forcePassword?: boolean): Promise<void> {
     let ctx = this.context;
     if (!ctx) {
       throw new Error('no context');
@@ -382,6 +433,27 @@ export class GatewaySession {
     let authToken = (storedToken && storedToken.length > 0) ? storedToken : trimmedToken;
     this.log.info(this.logTag, `Auth: storedToken=${storedToken ? 'yes(' + storedToken.length + ')' : 'no'} inputToken=${trimmedToken.length > 0 ? 'yes(' + trimmedToken.length + ')' : 'no'} using=${authToken.length > 0 ? 'token(' + authToken.length + ')' : 'none'}`);
 
+    // Decide auth method BEFORE signing — the signature must match the auth method used.
+    // Strategy for node role:
+    //   - If stored device token exists → use it (device was previously paired successfully)
+    //   - If no stored token + password available → use password (need to go through pairing first time)
+    //   - forcePassword=true → always use password (e.g. retry after pairing on same WS)
+    let hasPassword: boolean = (this.password !== undefined && this.password !== null && this.password.length > 0);
+    let hasStoredToken: boolean = (storedToken !== undefined && storedToken !== null && storedToken.length > 0);
+    let isNodeRole: boolean = (this.options.role === 'node');
+    let usePassword: boolean = false;
+    if (forcePassword === true && hasPassword) {
+      usePassword = true;
+    } else if (isNodeRole && hasPassword && !hasStoredToken) {
+      // Node without stored device token: use password auth for initial pairing flow
+      usePassword = true;
+    }
+    this.log.info(this.logTag, `Auth decision: role=${this.options.role} hasPassword=${hasPassword} hasStoredToken=${hasStoredToken} forcePassword=${forcePassword ?? false} usePassword=${usePassword}`);
+    // When using password auth, do NOT include token in the signed payload.
+    // The gateway verifies the signature against the connect params it receives,
+    // and password auth params don't include a token — so the payload must match.
+    let tokenForSignature: string | undefined = usePassword ? undefined : (authToken.length > 0 ? authToken : undefined);
+
     let signedAtMs = Date.now();
     let payload = this.identityStore.buildAuthPayload(
       identity.deviceId,
@@ -390,7 +462,7 @@ export class GatewaySession {
       this.options.role,
       this.options.scopes,
       signedAtMs,
-      authToken.length > 0 ? authToken : undefined,
+      tokenForSignature,
       nonce,
     );
     this.log.debug(this.logTag, `Auth payload: ${payload.substring(0, 200)}`);
@@ -401,7 +473,10 @@ export class GatewaySession {
 
     // Build auth JSON fragment
     let authFragment: string = '';
-    if (authToken.length > 0) {
+    if (usePassword) {
+      authFragment = `,"auth":{"password":${JSON.stringify(this.password)}}`;
+      this.log.info(this.logTag, `Using password auth (role=${this.options.role}, forcePassword=${forcePassword ?? false})`);
+    } else if (authToken.length > 0) {
       authFragment = `,"auth":{"token":${JSON.stringify(authToken)}}`;
       this.log.info(this.logTag, 'Using token auth');
     } else if (this.password && this.password.length > 0) {
@@ -469,9 +544,13 @@ export class GatewaySession {
           let deviceToken = authResult['deviceToken'];
           let authRole = authResult['role'] ?? this.options.role;
           if (deviceToken && deviceToken.length > 0) {
-            this.log.info(this.logTag, `Saving device token for role=${authRole}`);
+            this.log.info(this.logTag, `Saving device token for role=${authRole} (${deviceToken.length} chars)`);
             await this.authStore.saveToken(ctx, identity.deviceId, authRole, deviceToken);
+          } else {
+            this.log.info(this.logTag, `Connect response auth has no deviceToken, keys: [${Object.keys(authResult).join(',')}]`);
           }
+        } else {
+          this.log.info(this.logTag, `Connect response has no auth block, keys: [${Object.keys(resObj).join(',')}]`);
         }
       } catch {
         // ignore parse errors

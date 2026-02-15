@@ -160,68 +160,106 @@ export struct LogPage {
         .justifyContent(FlexAlign.Center)
         .width('100%')
       } else {
-        List({ space: 2, scroller: this.scroller }) {
-          ForEach(this.logs, (entry: LogEntry, index: number) => {
-            ListItem() {
-              Column({ space: 2 }) {
-                Row({ space: 6 }) {
-                  Text(this.formatTime(entry.timestamp))
-                    .fontSize(10)
-                    .fontColor('#999999')
-                    .fontFamily('monospace')
-                  Text(entry.level)
-                    .fontSize(9)
-                    .fontColor(Color.White)
-                    .fontWeight(FontWeight.Bold)
-                    .backgroundColor(this.levelColor(entry.level))
-                    .padding({ left: 4, right: 4, top: 1, bottom: 1 })
-                    .borderRadius(3)
-                  Text(entry.tag)
-                    .fontSize(10)
-                    .fontColor('#1976D2')
-                    .fontWeight(FontWeight.Medium)
-                }
-                .width('100%')
-                .justifyContent(FlexAlign.Start)
-
-                Text(entry.message)
-                  .fontSize(12)
-                  .fontColor(entry.level === 'ERROR' ? '#D32F2F' : entry.level === 'WARN' ? '#F57C00' : '#333333')
-                  .lineHeight(16)
+        Stack({ alignContent: Alignment.BottomEnd }) {
+          List({ space: 2, scroller: this.scroller }) {
+            ForEach(this.logs, (entry: LogEntry, index: number) => {
+              ListItem() {
+                Column({ space: 2 }) {
+                  Row({ space: 6 }) {
+                    Text(this.formatTime(entry.timestamp))
+                      .fontSize(10)
+                      .fontColor('#999999')
+                      .fontFamily('monospace')
+                    Text(entry.level)
+                      .fontSize(9)
+                      .fontColor(Color.White)
+                      .fontWeight(FontWeight.Bold)
+                      .backgroundColor(this.levelColor(entry.level))
+                      .padding({ left: 4, right: 4, top: 1, bottom: 1 })
+                      .borderRadius(3)
+                    Text(entry.tag)
+                      .fontSize(10)
+                      .fontColor('#1976D2')
+                      .fontWeight(FontWeight.Medium)
+                  }
                   .width('100%')
-                  .maxLines(this.expandedTimestamps.includes(entry.timestamp) ? 99999 : 5)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                  .copyOption(CopyOptions.LocalDevice)
+                  .justifyContent(FlexAlign.Start)
 
-                if (entry.message.length > 200 || entry.message.split('\n').length > 5) {
-                  Text(this.expandedTimestamps.includes(entry.timestamp) ? I18n.t('log.showLess') : I18n.t('log.readMore'))
-                    .fontSize(11)
-                    .fontColor('#1976D2')
-                    .padding({ top: 2, bottom: 2 })
-                    .onClick(() => {
-                      if (this.expandedTimestamps.includes(entry.timestamp)) {
-                        this.expandedTimestamps = this.expandedTimestamps.filter((ts: number) => ts !== entry.timestamp);
-                      } else {
-                        let newArr: number[] = [];
-                        for (let ts of this.expandedTimestamps) {
-                          newArr.push(ts);
+                  Text(entry.message)
+                    .fontSize(12)
+                    .fontColor(entry.level === 'ERROR' ? '#D32F2F' : entry.level === 'WARN' ? '#F57C00' : '#333333')
+                    .lineHeight(16)
+                    .width('100%')
+                    .maxLines(this.expandedTimestamps.includes(entry.timestamp) ? 99999 : 5)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .copyOption(CopyOptions.LocalDevice)
+
+                  if (entry.message.length > 200 || entry.message.split('\n').length > 5) {
+                    Text(this.expandedTimestamps.includes(entry.timestamp) ? I18n.t('log.showLess') : I18n.t('log.readMore'))
+                      .fontSize(11)
+                      .fontColor('#1976D2')
+                      .padding({ top: 2, bottom: 2 })
+                      .onClick(() => {
+                        if (this.expandedTimestamps.includes(entry.timestamp)) {
+                          this.expandedTimestamps = this.expandedTimestamps.filter((ts: number) => ts !== entry.timestamp);
+                        } else {
+                          let newArr: number[] = [];
+                          for (let ts of this.expandedTimestamps) {
+                            newArr.push(ts);
+                          }
+                          newArr.push(entry.timestamp);
+                          this.expandedTimestamps = newArr;
                         }
-                        newArr.push(entry.timestamp);
-                        this.expandedTimestamps = newArr;
-                      }
-                    })
+                      })
+                  }
                 }
+                .padding({ left: 12, right: 12, top: 4, bottom: 4 })
+                .width('100%')
+                .alignItems(HorizontalAlign.Start)
+                .backgroundColor(entry.level === 'ERROR' ? '#FFF5F5' : entry.level === 'WARN' ? '#FFFBF0' : Color.White)
               }
-              .padding({ left: 12, right: 12, top: 4, bottom: 4 })
-              .width('100%')
-              .alignItems(HorizontalAlign.Start)
-              .backgroundColor(entry.level === 'ERROR' ? '#FFF5F5' : entry.level === 'WARN' ? '#FFFBF0' : Color.White)
+            }, (_entry: LogEntry, index: number): string => index.toString())
+          }
+          .width('100%')
+          .height('100%')
+          .scrollBar(BarState.Off)
+          .edgeEffect(EdgeEffect.Spring)
+
+          // Scroll to top / bottom floating buttons
+          Column({ space: 8 }) {
+            Column() {
+              Text('\u25B2')
+                .fontSize(16)
+                .fontColor('#666666')
             }
-          }, (_entry: LogEntry, index: number): string => index.toString())
+            .width(36)
+            .height(36)
+            .borderRadius(18)
+            .backgroundColor('#FFFFFFDD')
+            .justifyContent(FlexAlign.Center)
+            .shadow({ radius: 4, color: '#20000000', offsetY: 2 })
+            .onClick(() => {
+              try { this.scroller.scrollEdge(Edge.Top); } catch { /* ignore */ }
+            })
+
+            Column() {
+              Text('\u25BC')
+                .fontSize(16)
+                .fontColor('#666666')
+            }
+            .width(36)
+            .height(36)
+            .borderRadius(18)
+            .backgroundColor('#FFFFFFDD')
+            .justifyContent(FlexAlign.Center)
+            .shadow({ radius: 4, color: '#20000000', offsetY: 2 })
+            .onClick(() => {
+              try { this.scroller.scrollEdge(Edge.Bottom); } catch { /* ignore */ }
+            })
+          }
+          .margin({ right: 12, bottom: 16 })
         }
         .layoutWeight(1)
-        .scrollBar(BarState.Off)
-        .edgeEffect(EdgeEffect.Spring)
       }
     }
     .width('100%')
