@@ -70,6 +70,52 @@ export function getSkillSystemPrompt(skills: SkillItem[], customSkills?: CustomS
   return parts.join('\n');
 }
 
+// ---------- filtered tool/prompt selection for intent classification ----------
+
+/** Return tool schemas for specific skill IDs only (+ memory, always included). */
+export function getToolSchemasForSkills(skillIds: string[]): ToolSchema[] {
+  let schemas: ToolSchema[] = [];
+  for (let id of skillIds) {
+    let defs = TOOL_SCHEMAS.get(id);
+    if (defs) {
+      for (let d of defs) {
+        schemas.push(d);
+      }
+    }
+  }
+  // always add memory tools
+  let memDefs = TOOL_SCHEMAS.get('skill_memory');
+  if (memDefs) {
+    for (let d of memDefs) {
+      schemas.push(d);
+    }
+  }
+  return schemas;
+}
+
+/** Return skill system prompt for specific skill IDs only. */
+export function getSkillSystemPromptForIds(skills: SkillItem[], skillIds: string[], customSkills?: CustomSkillDef[]): string {
+  let parts: string[] = [];
+  for (let skill of skills) {
+    if (!skill.enabled) continue;
+    if (!skillIds.includes(skill.id)) continue;
+    let prompt = SKILL_PROMPTS.get(skill.id);
+    if (prompt) parts.push(prompt);
+  }
+  if (customSkills && customSkills.length > 0) {
+    let customParts: string[] = [];
+    for (let cs of customSkills) {
+      if (cs.enabled) {
+        customParts.push(`[Custom Skill: ${cs.name}]\n${cs.prompt}`);
+      }
+    }
+    if (customParts.length > 0) {
+      parts.push('\n## Custom Skills\nThe user has created the following custom skills. When the user references a skill by name or describes a matching task, follow its prompt instructions.\n' + customParts.join('\n\n'));
+    }
+  }
+  return parts.join('\n');
+}
+
 // ---------- catalogue ----------
 
 export function getDefaultSkills(): SkillItem[] {

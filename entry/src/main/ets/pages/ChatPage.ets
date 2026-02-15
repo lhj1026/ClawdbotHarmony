@@ -6,7 +6,8 @@ import { SessionService } from '../service/SessionService';
 import { SessionDrawer } from '../components/SessionDrawer';
 import { AIService, AIResult } from '../service/AIService';
 import { MemoryService } from '../service/MemoryService';
-import { getEnabledToolSchemas, getSkillSystemPrompt, getDefaultSkills } from '../service/SkillData';
+import { getEnabledToolSchemas, getSkillSystemPrompt, getDefaultSkills, getToolSchemasForSkills, getSkillSystemPromptForIds } from '../service/SkillData';
+import { classifyIntent } from '../service/IntentClassifier';
 import { CustomSkillService } from '../service/CustomSkillService';
 import { CustomSkillDef } from '../model/Models';
 import { Constants } from '../common/Constants';
@@ -16,7 +17,7 @@ import { NotificationInfo } from '../service/gateway/NotificationCapability';
 import { LogService } from '../common/LogService';
 import { I18n } from '../common/I18n';
 import { ConversationLogger } from '../service/ConversationLogger';
-import { promptAction } from '@kit.ArkUI';
+import { promptAction, router } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { audio } from '@kit.AudioKit';
 import { fileIo, picker } from '@kit.CoreFileKit';
@@ -27,6 +28,7 @@ import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
 import { webview } from '@kit.ArkWeb';
 import { FeishuBotService } from '../service/FeishuBotService';
+import { LocalAsrService } from '../service/LocalAsrService';
 
 @Component
 export struct ChatPage {
@@ -72,6 +74,7 @@ export struct ChatPage {
   private audioCapturer: audio.AudioCapturer | undefined = undefined;
   private asrReading: boolean = false;
   private pcmBuffers: ArrayBuffer[] = [];
+  private lastPcmBuffers: ArrayBuffer[] = [];
   private cronTimer: number = -1;
   private talkModeActive: boolean = false;
   private ttsCompletionResolve: (() => void) | undefined = undefined;
@@ -325,7 +328,8 @@ export struct ChatPage {
           
           // Normal chat header — avatar
           if (this.gwConnected && this.gwAgentAvatar.length > 0) {
-            Image(this.gwAgentAvatar)
+            Image(this.gwAgentAvatar.startsWith('http') || this.gwAgentAvatar.startsWith('data:')
+              ? this.gwAgentAvatar : 'file://' + this.gwAgentAvatar)
               .width(34)
               .height(34)
               .borderRadius(17)
@@ -351,12 +355,12 @@ export struct ChatPage {
               .margin({ right: 10 })
           }
           Column() {
-            Row({ space: 6 }) {
-              Text(this.getAssistantDisplayName())
-                .fontSize(18)
-                .fontWeight(FontWeight.Bold)
-                .fontColor('#1A1A1A')
-            }
+            Text(this.getAssistantDisplayName())
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#1A1A1A')
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
             Row({ space: 6 }) {
               if (this.isLoading) {
                 Text(I18n.t('chat.thinking'))
@@ -369,6 +373,7 @@ export struct ChatPage {
                   .fontStyle(FontStyle.Italic)
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .layoutWeight(1)
               } else {
                 Text(I18n.t('chat.online'))
                   .fontSize(12)
@@ -386,11 +391,14 @@ export struct ChatPage {
                 .padding({ left: 6, right: 6, top: 2, bottom: 2 })
                 .borderRadius(8)
                 .backgroundColor('#E8F5E9')
+                .flexShrink(0)
               }
             }
+            .width('100%')
           }
           .alignItems(HorizontalAlign.Start)
           .layoutWeight(1)
+          .clip(true)
 
           // History button
           Text('\uD83D\uDCCB')
@@ -852,6 +860,14 @@ export struct ChatPage {
           },
           onSessionClear: (sessionId: string) => {
             this.clearSessionMessages(sessionId);
+          },
+          onOpenSettings: () => {
+            this.showSessionDrawer = false;
+            router.pushUrl({ url: 'pages/SettingsRoutePage' });
+          },
+          onOpenLogs: () => {
+            this.showSessionDrawer = false;
+            router.pushUrl({ url: 'pages/LogRoutePage' });
           },
           onClose: () => {
             this.showSessionDrawer = false;
@@ -2090,8 +2106,26 @@ Keep it short but preserve all important information. Use the same language as t
       let skills = getDefaultSkills();
       let customSkills = await CustomSkillService.getInstance().loadAll(ctx);
 
-      let systemPrompt = this.buildSystemPrompt(memItems, skills, settings.model, customSkills);
-      let tools = getEnabledToolSchemas(skills);
+      // Classify intent to select only relevant tools/prompts
+      let hasMedia = this.messages.length > 0 &&
+        this.messages[this.messages.length - 1].role === 'user' &&
+        ((this.messages[this.messages.length - 1].userImagePath?.length ?? 0) > 0 ||
+         (this.messages[this.messages.length - 1].attachmentName?.length ?? 0) > 0);
+      let intent = classifyIntent(text, hasMedia);
+      this.log.info('ChatPage', `Intent: ${intent.type} skills=[${intent.skillIds.join(',')}]`);
+
+      let systemPrompt: string;
+      let tools: import('../model/Models').ToolSchema[];
+      if (intent.type === 'general') {
+        systemPrompt = this.buildSystemPrompt(memItems, skills, settings.model, customSkills);
+        tools = getEnabledToolSchemas(skills);
+      } else if (intent.type === 'chitchat') {
+        systemPrompt = this.buildSystemPrompt(memItems, skills, settings.model, customSkills);
+        tools = getToolSchemasForSkills([]); // memory only
+      } else {
+        systemPrompt = this.buildSystemPromptFiltered(memItems, skills, settings.model, intent.skillIds, customSkills);
+        tools = getToolSchemasForSkills(intent.skillIds);
+      }
 
       // Create placeholder assistant message for streaming
       let streamMsg = new ChatMessage('assistant', '');
@@ -2643,6 +2677,7 @@ Keep it short but preserve all important information. Use the same language as t
       try { await this.audioCapturer.stop(); } catch { /* ignore */ }
     }
 
+    let savedPcmBuffers = this.pcmBuffers.slice();
     let wavPath = this.saveWavFile(this.pcmBuffers);
     this.pcmBuffers = [];
 
@@ -2664,8 +2699,8 @@ Keep it short but preserve all important information. Use the same language as t
 
     await this.cleanupAsr();
 
-    // Call ASR API
-    let recognizedText = await this.callAsrApi(wavPath);
+    // Call ASR (hybrid: local + cloud based on mode setting)
+    let recognizedText = await this.recognizeSpeech(wavPath, savedPcmBuffers);
 
     let displayText = recognizedText.length > 0 ? recognizedText : I18n.t('chat.voiceNoText');
     let userMsg = new ChatMessage('user', displayText);
@@ -2751,6 +2786,42 @@ Keep it short but preserve all important information. Use the same language as t
       this.asrDebug('ASR failed: ' + ((err as Error).message ?? String(err)));
       return '';
     }
+  }
+
+  /** Hybrid ASR: local speechRecognizer + cloud Whisper based on user's mode setting */
+  private async recognizeSpeech(wavPath: string, pcmBuffers: ArrayBuffer[]): Promise<string> {
+    let ctx = getContext(this) as common.UIAbilityContext;
+    let store = await preferences.getPreferences(ctx, Constants.PREFS_SETTINGS);
+    let asrMode = (await store.get('asr_mode', 'auto')) as string;
+
+    this.asrDebug(`recognizeSpeech: mode=${asrMode}`);
+
+    if (asrMode === 'cloud') {
+      return await this.callAsrApi(wavPath);
+    }
+
+    // Try local ASR first (for 'auto' and 'local' modes)
+    let localResult = '';
+    try {
+      let localAsr = LocalAsrService.getInstance();
+      localResult = await localAsr.recognizeFromPcm(pcmBuffers);
+      this.asrDebug(`Local ASR result: "${localResult}"`);
+    } catch (err) {
+      this.asrDebug(`Local ASR error: ${(err as Error).message}`);
+    }
+
+    if (localResult.length > 0) {
+      return localResult;
+    }
+
+    // Fall back to cloud if mode is 'auto' and local returned empty
+    if (asrMode === 'auto') {
+      this.asrDebug('Local ASR empty, falling back to cloud');
+      return await this.callAsrApi(wavPath);
+    }
+
+    // 'local' mode with empty result
+    return '';
   }
 
   /** Send ASR-recognized text to AI without creating a user message bubble. */
@@ -2926,6 +2997,12 @@ You have persistent memory that survives across conversations. Use it proactivel
     let memBlock = this.memSvc.buildPromptBlock(memItems);
     let skillBlock = getSkillSystemPrompt(skills, customSkills);
     return base + (memBlock ? '\n' + memBlock + '\n' : '') + (skillBlock ? '\n' + skillBlock : '');
+  }
+
+  private buildSystemPromptFiltered(memItems: MemoryItem[], skills: import('../model/Models').SkillItem[], modelName?: string, skillIds?: string[], customSkills?: CustomSkillDef[]): string {
+    let base = this.buildSystemPrompt(memItems, skills, modelName);
+    let skillBlock = getSkillSystemPromptForIds(skills, skillIds ?? [], customSkills);
+    return skillBlock.length > 0 ? base + '\n' + skillBlock : base;
   }
 
   private async loadSettings(ctx: common.UIAbilityContext): Promise<SettingsData> {
@@ -3593,9 +3670,9 @@ You have persistent memory that survives across conversations. Use it proactivel
         continue;
       }
 
-      // Step 2: ASR
+      // Step 2: ASR (hybrid: local + cloud based on mode setting)
       this.talkStatus = I18n.t('chat.talkThinking');
-      let recognizedText = await this.callAsrApi(wavPath);
+      let recognizedText = await this.recognizeSpeech(wavPath, this.lastPcmBuffers);
 
       // Clean up the WAV file after ASR
       try { fileIo.unlinkSync(wavPath); } catch { /* ignore */ }
@@ -3733,6 +3810,7 @@ You have persistent memory that survives across conversations. Use it proactivel
         try { await this.audioCapturer.stop(); } catch { /* ignore */ }
       }
 
+      this.lastPcmBuffers = this.pcmBuffers.slice();
       let wavPath = this.saveWavFile(this.pcmBuffers);
       this.pcmBuffers = [];
       await this.cleanupAsr();
