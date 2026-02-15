@@ -5,7 +5,6 @@ export class Constants {
   static readonly PREFS_GATEWAY: string = 'clawdbot_gateway';
   static readonly PREFS_DEVICE_IDENTITY: string = 'clawdbot_device_identity';
   static readonly PREFS_DEVICE_AUTH: string = 'clawdbot_device_auth';
-  static readonly PREFS_LOGIN: string = 'clawdbot_login';
   static readonly PREFS_CRON: string = 'clawdbot_cron';
   static readonly PREFS_EMAIL: string = 'clawdbot_email';
   static readonly PREFS_FEISHU: string = 'clawdbot_feishu';

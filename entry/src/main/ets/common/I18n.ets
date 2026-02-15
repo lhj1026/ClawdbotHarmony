@@ -60,6 +60,14 @@ function buildZh(): Map<string, string> {
   m.set('chat.deleteHistoryConfirm', '确定删除这条历史对话？');
   m.set('chat.historyDeleted', '已删除');
 
+  // Attachment & media
+  m.set('chat.attachTitle', '添加附件');
+  m.set('chat.attachPhoto', '选择图片');
+  m.set('chat.attachFile', '选择文件');
+  m.set('chat.sentImage', '[图片]');
+  m.set('chat.describeImage', '请描述这张图片');
+  m.set('chat.fileTooLarge', '文件过大（最大512KB）');
+
   // Custom provider & ASR
   m.set('settings.customProvider', '定制化');
   m.set('settings.asrEnabled', '云端 ASR');
@@ -182,39 +190,6 @@ function buildZh(): Map<string, string> {
   m.set('log.showLess', '收起');
   m.set('log.filePath', '文件路径');
 
-  // LoginPage
-  m.set('login.signUpTitle', '首次配置');
-  m.set('login.signInTitle', '登录');
-  m.set('login.address', '网关地址');
-  m.set('login.addressPlaceholder', '192.168.1.100:18789');
-  m.set('login.token', '令牌');
-  m.set('login.tokenPlaceholder', '管理员分配的共享令牌');
-  m.set('login.setPassword', '设置密码');
-  m.set('login.setPasswordPlaceholder', '设置登录密码');
-  m.set('login.confirmPassword', '确认密码');
-  m.set('login.confirmPasswordPlaceholder', '再次输入密码');
-  m.set('login.password', '密码');
-  m.set('login.passwordPlaceholder', '输入登录密码');
-  m.set('login.signUpButton', '注册并连接');
-  m.set('login.signInButton', '登录');
-  m.set('login.connecting', '连接中...');
-  m.set('login.switchToSignIn', '已有密码？直接登录');
-  m.set('login.switchToSignUp', '重新配置网关');
-  m.set('login.error.emptyAddress', '请输入网关地址');
-  m.set('login.error.emptyToken', '请输入令牌');
-  m.set('login.error.emptyPassword', '请输入密码');
-  m.set('login.error.passwordMismatch', '两次输入的密码不一致');
-  m.set('login.error.wrongPassword', '密码错误');
-  m.set('login.error.authFailed', '认证失败，请检查令牌');
-  m.set('login.error.connectionFailed', '连接失败，请检查地址');
-  m.set('login.error.timeout', '连接超时，请检查网络');
-
-  // Settings - Logout
-  m.set('settings.logout', '退出登录');
-  m.set('settings.logoutConfirmTitle', '退出登录');
-  m.set('settings.logoutConfirmMessage', '退出后需要重新输入密码登录，确定退出？');
-  m.set('settings.cancel', '取消');
-  m.set('settings.confirm', '确定');
   m.set('settings.gatewayAddress', '网关地址');
 
   // Cron
@@ -350,6 +325,14 @@ function buildEn(): Map<string, string> {
   m.set('chat.deleteHistoryConfirm', 'Delete this conversation?');
   m.set('chat.historyDeleted', 'Deleted');
 
+  // Attachment & media
+  m.set('chat.attachTitle', 'Add Attachment');
+  m.set('chat.attachPhoto', 'Choose Photo');
+  m.set('chat.attachFile', 'Choose File');
+  m.set('chat.sentImage', '[Image]');
+  m.set('chat.describeImage', 'Please describe this image');
+  m.set('chat.fileTooLarge', 'File too large (max 512KB)');
+
   // Custom provider & ASR
   m.set('settings.customProvider', 'Custom');
   m.set('settings.asrEnabled', 'Cloud ASR');
@@ -472,39 +455,6 @@ function buildEn(): Map<string, string> {
   m.set('log.showLess', 'Show less');
   m.set('log.filePath', 'File path');
 
-  // LoginPage
-  m.set('login.signUpTitle', 'First-time Setup');
-  m.set('login.signInTitle', 'Sign In');
-  m.set('login.address', 'Gateway Address');
-  m.set('login.addressPlaceholder', '192.168.1.100:18789');
-  m.set('login.token', 'Token');
-  m.set('login.tokenPlaceholder', 'Shared token from admin');
-  m.set('login.setPassword', 'Set Password');
-  m.set('login.setPasswordPlaceholder', 'Set a login password');
-  m.set('login.confirmPassword', 'Confirm Password');
-  m.set('login.confirmPasswordPlaceholder', 'Enter password again');
-  m.set('login.password', 'Password');
-  m.set('login.passwordPlaceholder', 'Enter your password');
-  m.set('login.signUpButton', 'Register & Connect');
-  m.set('login.signInButton', 'Sign In');
-  m.set('login.connecting', 'Connecting...');
-  m.set('login.switchToSignIn', 'Already set up? Sign in');
-  m.set('login.switchToSignUp', 'Reconfigure gateway');
-  m.set('login.error.emptyAddress', 'Please enter gateway address');
-  m.set('login.error.emptyToken', 'Please enter token');
-  m.set('login.error.emptyPassword', 'Please enter password');
-  m.set('login.error.passwordMismatch', 'Passwords do not match');
-  m.set('login.error.wrongPassword', 'Wrong password');
-  m.set('login.error.authFailed', 'Authentication failed, check token');
-  m.set('login.error.connectionFailed', 'Connection failed, check address');
-  m.set('login.error.timeout', 'Connection timed out, check network');
-
-  // Settings - Logout
-  m.set('settings.logout', 'Logout');
-  m.set('settings.logoutConfirmTitle', 'Logout');
-  m.set('settings.logoutConfirmMessage', 'You will need to re-enter password to login. Are you sure?');
-  m.set('settings.cancel', 'Cancel');
-  m.set('settings.confirm', 'Confirm');
   m.set('settings.gatewayAddress', 'Gateway Address');
 
   // Cron

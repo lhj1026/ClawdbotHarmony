@@ -1,6 +1,6 @@
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
-import { promptAction, router } from '@kit.ArkUI';
+import { promptAction } from '@kit.ArkUI';
 import { fileIo, picker } from '@kit.CoreFileKit';
 import { Constants } from '../common/Constants';
 import { NodeRuntime } from '../service/gateway/NodeRuntime';
@@ -1087,7 +1087,7 @@ export struct SettingsPage {
         Column() {
           this.InfoRow(I18n.t('settings.app'), I18n.t('settings.appValue'))
           Divider().color('#F0F0F0')
-          this.InfoRow(I18n.t('settings.version'), '2.9.3')
+          this.InfoRow(I18n.t('settings.version'), '2.9.5')
           Divider().color('#F0F0F0')
           this.InfoRow(I18n.t('settings.basedOn'), 'OpenClaw / ClawdBot')
           Divider().color('#F0F0F0')
@@ -1218,15 +1218,6 @@ export struct SettingsPage {
               .fontColor('#999999')
           }
 
-          Button(I18n.t('settings.logout'))
-            .width('90%')
-            .height(44)
-            .backgroundColor('#D32F2F')
-            .fontColor(Color.White)
-            .fontSize(15)
-            .fontWeight(FontWeight.Medium)
-            .borderRadius(12)
-            .onClick(() => { this.confirmLogout(); })
         }
         .width('100%')
         .alignItems(HorizontalAlign.Center)
@@ -1764,47 +1755,6 @@ export struct SettingsPage {
       promptAction.showToast({ message: I18n.t('settings.saved'), duration: 1500 });
     } catch (e) {
       promptAction.showToast({ message: I18n.t('settings.saveFailed') + String(e), duration: 2000 });
-    }
-  }
-
-  private confirmLogout(): void {
-    AlertDialog.show({
-      title: I18n.t('settings.logoutConfirmTitle'),
-      message: I18n.t('settings.logoutConfirmMessage'),
-      primaryButton: {
-        value: I18n.t('settings.cancel'),
-        action: () => {}
-      },
-      secondaryButton: {
-        value: I18n.t('settings.confirm'),
-        fontColor: '#D32F2F',
-        action: () => { this.doLogout(); }
-      }
-    });
-  }
-
-  private async doLogout(): Promise<void> {
-    try {
-      // Disconnect gateway
-      NodeRuntime.getInstance().disconnect();
-
-      let ctx = getContext(this) as common.UIAbilityContext;
-
-      // Clear login state
-      let loginStore = await preferences.getPreferences(ctx, Constants.PREFS_LOGIN);
-      await loginStore.put('loggedIn', false);
-      await loginStore.flush();
-
-      // Clear gateway enabled flag (keep address for convenience)
-      let gwStore = await preferences.getPreferences(ctx, Constants.PREFS_GATEWAY);
-      await gwStore.put('enabled', false);
-      await gwStore.put('password', '');
-      await gwStore.flush();
-
-      // Navigate to login page
-      router.replaceUrl({ url: 'pages/LoginPage' });
-    } catch (e) {
-      promptAction.showToast({ message: 'Logout failed: ' + String(e), duration: 2000 });
     }
   }
 

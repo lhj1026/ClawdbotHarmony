@@ -7,10 +7,9 @@ import { I18n, LangCode } from '../common/I18n';
 import { LogService } from '../common/LogService';
 import { Constants } from '../common/Constants';
 import { NodeRuntime } from '../service/gateway/NodeRuntime';
-import { ConnectionState, GatewayEndpoint } from '../service/gateway/GatewayModels';
+import { GatewayEndpoint } from '../service/gateway/GatewayModels';
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
-import { router } from '@kit.ArkUI';
 
 @Entry
 @Component
@@ -69,20 +68,6 @@ struct Index {
       let endpoint: GatewayEndpoint = { host: host, port: port, useTls: useTls };
       let runtime = NodeRuntime.getInstance();
       runtime.updateCapabilities(capLocation, capCamera, capCanvas, capScreen, capNotification, undefined, capMicrophone, capSpeaker);
-      // Listen for auth failures during auto-reconnect
-      let authFailListener = (state: ConnectionState, text: string) => {
-        if (state === ConnectionState.Error) {
-          let lower = text.toLowerCase();
-          if (lower.includes('auth') || lower.includes('unauthorized') || lower.includes('forbidden') || lower.includes('password')) {
-            LogService.getInstance().warn('App', `Auth failure detected: ${text}, redirecting to login`);
-            runtime.removeStateListener(authFailListener);
-            runtime.disconnect();
-            this.clearLoginState();
-          }
-        }
-      };
-      runtime.addStateListener(authFailListener);
-
       await runtime.loadDisplayName(ctx);
       runtime.connect(ctx, endpoint,
         token.length > 0 ? token : undefined,
@@ -92,16 +77,6 @@ struct Index {
     } catch {
       LogService.getInstance().warn('App', 'Failed to auto-connect gateway');
     }
-  }
-
-  private async clearLoginState(): Promise<void> {
-    try {
-      let ctx = getContext(this) as common.UIAbilityContext;
-      let loginStore = await preferences.getPreferences(ctx, Constants.PREFS_LOGIN);
-      await loginStore.put('loggedIn', false);
-      await loginStore.flush();
-    } catch { /* ignore */ }
-    router.replaceUrl({ url: 'pages/LoginPage' });
   }
 
   private async loadLang(): Promise<void> {

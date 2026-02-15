@@ -1,7 +1,5 @@
 import { UIAbility, AbilityConstant, Want } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
-import { preferences } from '@kit.ArkData';
-import { Constants } from '../common/Constants';
 
 export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
@@ -59,18 +57,8 @@ export default class EntryAbility extends UIAbility {
   }
 
   private async getInitialPage(): Promise<string> {
-    try {
-      let loginStore = await preferences.getPreferences(this.context, Constants.PREFS_LOGIN);
-      let loggedIn = (await loginStore.get('loggedIn', false)) as boolean;
-      if (loggedIn) {
-        console.info('[ClawdBot] User logged in, loading Index');
-        return 'pages/Index';
-      }
-    } catch (e) {
-      console.warn('[ClawdBot] Failed to check login state: ' + (e as Error).message);
-    }
-    console.info('[ClawdBot] Not logged in, loading LoginPage');
-    return 'pages/LoginPage';
+    console.info('[ClawdBot] Loading Index directly');
+    return 'pages/Index';
   }
 
   onWindowStageDestroy(): void {
