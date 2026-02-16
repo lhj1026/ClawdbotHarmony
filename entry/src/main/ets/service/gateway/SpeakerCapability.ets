@@ -62,6 +62,9 @@ export class SpeakerCapability {
       throw new Error('speaker.speak: "text" is required');
     }
 
+    // Normalize text for better TTS pronunciation
+    text = this.normalizeTextForTts(text);
+
     if (params['speed'] !== undefined) {
       speed = Math.max(0.5, Math.min(3.0, params['speed'] as number));
     }
@@ -453,5 +456,31 @@ export class SpeakerCapability {
     return new Promise<void>((resolve) => {
       setTimeout(() => { resolve(); }, ms);
     });
+  }
+
+  /**
+   * Normalize text for better TTS pronunciation.
+   * - ~ → 到 (range indicator)
+   * - Numbers with k/K → 千 (e.g., 1.0k → 1点0千)
+   * - + at end of numbers → 加 (e.g., 100+ → 100加)
+   * - . in numbers → 点 (e.g., 1.5 → 1点5)
+   */
+  private normalizeTextForTts(text: string): string {
+    let result = text;
+
+    // Replace ~ with 到 (range indicator, e.g., "1~3度" → "1到3度")
+    result = result.replace(/(\d)\s*[~～]\s*(\d)/g, '$1到$2');
+
+    // Replace k/K suffix with 千 (e.g., "1.0k" → "1.0千", "2K" → "2千")
+    result = result.replace(/(\d)([kK])\b/g, '$1千');
+
+    // Replace + at end of numbers with 加 (e.g., "100+" → "100加", "1.0k+" already handled → "1.0千加")
+    result = result.replace(/(\d千?)\+/g, '$1加');
+
+    // Replace decimal point with 点 for numbers (e.g., "1.5" → "1点5")
+    // But preserve URLs and other contexts - only process standalone numbers
+    result = result.replace(/(\d)\.(\d)/g, '$1点$2');
+
+    return result;
   }
 }
