@@ -77,7 +77,10 @@ export class LocalEmbedding {
   }
 
   isReady(): boolean {
-    return this.loaded;
+    // DISABLED: Local embedding causes ANR due to heavy computation
+    // TODO: Implement proper Worker-based solution
+    return false;
+    // return this.loaded;
   }
 
   async embed(text: string): Promise<number[]> {
