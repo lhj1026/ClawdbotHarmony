@@ -44,7 +44,7 @@ import { Constants } from '../../common/Constants';
 import { NotificationHelper } from '../NotificationHelper';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.18.0';
+const APP_VERSION = '2.18.1';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -279,7 +279,8 @@ export class NodeRuntime {
 
     this._chatIdCounter++;
     let idempotencyKey = `harmony-${Date.now()}-${this._chatIdCounter}`;
-    let sessionKey = 'agent:main:main';
+    // Dynamic sessionKey: each local session maps to its own Gateway session for parallel execution
+    let sessionKey = chatSessionId ? `agent:main:harmony:${chatSessionId}` : 'agent:main:main';
 
     let params = `{"sessionKey":${JSON.stringify(sessionKey)},"message":${JSON.stringify(text)},"idempotencyKey":${JSON.stringify(idempotencyKey)}}`;
     this.log.info(TAG, `sendChatMessage: key=${idempotencyKey} chatSession=${chatSessionId ?? 'none'} text=${text.substring(0, 100)}`);
