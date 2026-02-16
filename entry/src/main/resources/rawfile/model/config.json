@@ -1,0 +1,10 @@
+{
+  "hidden_size": 384,
+  "num_hidden_layers": 6,
+  "num_attention_heads": 12,
+  "intermediate_size": 1536,
+  "max_position_embeddings": 512,
+  "vocab_size": 30522,
+  "embedding_dim": 384,
+  "model_name": "all-MiniLM-L6-v2"
+}

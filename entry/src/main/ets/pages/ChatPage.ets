@@ -29,6 +29,7 @@ import { util } from '@kit.ArkTS';
 import { webview } from '@kit.ArkWeb';
 import { FeishuBotService } from '../service/FeishuBotService';
 import { LocalAsrService } from '../service/LocalAsrService';
+import { detectMood, MoodResult } from '../service/MoodDetector';
 
 @Component
 export struct ChatPage {
@@ -61,6 +62,7 @@ export struct ChatPage {
   @State pendingFileName: string = '';    // user-selected file name
   @State replyingToMessage: ChatMessage | null = null;  // message being replied to
   @State showReplyPreview: boolean = false;  // controls reply preview visibility
+  @State currentMood: string = '';  // mood emoji + label displayed in talk mode
   @State showSessionDrawer: boolean = false;  // session list drawer visibility
   @State sessions: ChatSession[] = [];  // all sessions
   @State currentSessionId: string = 'default';  // current active session ID
@@ -120,9 +122,11 @@ export struct ChatPage {
     this.loadTtsAutoReadSetting();
     this.loadAssistantSettings();
     this.gwConnected = NodeRuntime.getInstance().isConnected;
+    this.memSvc.setNodeMode(this.gwConnected);
     this.gwListener = (state: ConnectionState, _text: string) => {
       let wasConnected = this.gwConnected;
       this.gwConnected = (state === ConnectionState.Connected);
+      this.memSvc.setNodeMode(this.gwConnected);
       // When gateway first connects, sync memories from server
       if (!wasConnected && this.gwConnected) {
         this.syncMemoriesFromServer().catch(() => { /* ignore */ });
@@ -764,6 +768,11 @@ export struct ChatPage {
             Text(this.talkStatus)
               .fontSize(13)
               .fontColor('#4CAF50')
+            if (this.currentMood.length > 0) {
+              Text(this.currentMood)
+                .fontSize(13)
+                .fontColor('#FF9800')
+            }
           }
           .layoutWeight(1)
           .height(42)
@@ -1463,6 +1472,24 @@ Keep it short but preserve all important information. Use the same language as t
   private async sendViaGateway(text: string): Promise<void> {
     try {
       this.log.info('ChatPage', `Sending via gateway: ${text.substring(0, 100)}`);
+
+      // Inject local memory context based on embedding mode setting.
+      // In node mode, cloud embedding is handled by the gateway server,
+      // so only local embedding runs on-device (pass empty apiKey to prevent cloud API calls).
+      try {
+        let ctx = getContext(this) as common.UIAbilityContext;
+        let embMode = await this.memSvc.getEmbeddingMode(ctx);
+        if (embMode !== 'cloud') {
+          let memories = await this.memSvc.vectorSearch(ctx, text, '', 3);
+          if (memories.length > 0) {
+            let memContext = memories.map((m: MemoryItem): string => `[${m.memType}] ${m.content}`).join('\n');
+            text = text + '\n\n[local_memory]\n' + memContext;
+            this.log.info('ChatPage', `Injected ${memories.length} local memories (mode=${embMode})`);
+          }
+        }
+      } catch (memErr) {
+        this.log.warn('ChatPage', `Local memory search failed: ${(memErr as Error).message}`);
+      }
 
       // Reset state flags
       this.gwEarlyFinish = false;
@@ -2794,18 +2821,28 @@ Keep it short but preserve all important information. Use the same language as t
     let store = await preferences.getPreferences(ctx, Constants.PREFS_SETTINGS);
     let asrMode = (await store.get('asr_mode', 'auto')) as string;
 
-    this.asrDebug(`recognizeSpeech: mode=${asrMode}`);
+    this.asrDebug(`recognizeSpeech: mode=${asrMode} gwConnected=${this.gwConnected}`);
+
+    // In node mode, cloud ASR is handled by the gateway server,
+    // so only local ASR runs on-device. Don't call standalone cloud API.
+    if (this.gwConnected && asrMode !== 'local') {
+      asrMode = 'local';
+      this.asrDebug('Node mode: forcing local ASR (cloud handled by gateway)');
+    }
 
     if (asrMode === 'local') {
       // Local only mode
+      this.updateAsrStatus('local');
       return await this.callLocalAsr(pcmBuffers);
     }
 
     if (asrMode === 'cloud') {
+      this.updateAsrStatus('cloud');
       return await this.callAsrApi(wavPath);
     }
 
     // Auto mode: try cloud first (better accuracy), fall back to local
+    this.updateAsrStatus('cloud');
     let cloudResult = await this.callAsrApi(wavPath);
     if (cloudResult.length > 0) {
       return cloudResult;
@@ -2813,7 +2850,15 @@ Keep it short but preserve all important information. Use the same language as t
 
     // Cloud failed or not configured, fall back to local
     this.asrDebug('Cloud ASR empty, falling back to local');
+    this.updateAsrStatus('local');
     return await this.callLocalAsr(pcmBuffers);
+  }
+
+  /** Update talkStatus to show which ASR model is being used */
+  private updateAsrStatus(source: string): void {
+    if (!this.isTalkMode) return;
+    let label = source === 'local' ? I18n.t('settings.asrModeLocal') : I18n.t('settings.asrModeCloud');
+    this.talkStatus = I18n.t('chat.talkRecognizing') + ` (${label})...`;
   }
 
   /** Call local speechRecognizer */
@@ -2999,6 +3044,18 @@ You have persistent memory that survives across conversations. Use it proactivel
 - Categories: fact (personal info), preference (likes/dislikes), instruction (rules)
 - Also include [已记住: <content>] in your response text when saving memory
 `;
+    // Add mood detection instructions when in talk mode
+    if (this.isTalkMode) {
+      base += `
+## Voice Mood Detection
+The user is in voice conversation mode. Their detected mood/emotion may be included as [用户当前语气/情绪: ...] in their message.
+Adjust your tone accordingly:
+- Happy/excited: be upbeat and match their energy
+- Sad/tired: be gentle and empathetic
+- Angry: be calm and understanding
+- Humming: they are relaxed, keep it light
+`;
+    }
     let memBlock = this.memSvc.buildPromptBlock(memItems);
     let skillBlock = getSkillSystemPrompt(skills, customSkills);
     return base + (memBlock ? '\n' + memBlock + '\n' : '') + (skillBlock ? '\n' + skillBlock : '');
@@ -3642,6 +3699,7 @@ You have persistent memory that survives across conversations. Use it proactivel
     this.talkModeActive = false;
     this.isTalkMode = false;
     this.talkStatus = '';
+    this.currentMood = '';
     this.asrReading = false;
     this.showWaveform = false;
     this.waveBars = [0, 0, 0, 0, 0, 0, 0];
@@ -3663,20 +3721,26 @@ You have persistent memory that survives across conversations. Use it proactivel
   }
 
   private async talkCycle(): Promise<void> {
+    let pendingWav = '';
     while (this.talkModeActive) {
-      // Step 1: Record with silence detection
-      this.talkStatus = I18n.t('chat.talkListening');
-      let wavPath = await this.talkRecord();
+      // Step 1: Record (or use audio from TTS interruption)
+      let wavPath: string;
+      if (pendingWav.length > 0) {
+        wavPath = pendingWav;
+        pendingWav = '';
+      } else {
+        this.talkStatus = I18n.t('chat.talkListening');
+        wavPath = await this.talkRecord();
+      }
 
       if (!this.talkModeActive) break;
 
       if (wavPath.length === 0) {
-        // No speech detected — keep listening (phone call mode)
         continue;
       }
 
       // Step 2: ASR (hybrid: local + cloud based on mode setting)
-      this.talkStatus = I18n.t('chat.talkThinking');
+      // talkStatus is updated inside recognizeSpeech → updateAsrStatus to show ASR source
       let recognizedText = await this.recognizeSpeech(wavPath, this.lastPcmBuffers);
 
       // Clean up the WAV file after ASR
@@ -3685,9 +3749,19 @@ You have persistent memory that survives across conversations. Use it proactivel
       if (!this.talkModeActive) break;
 
       if (recognizedText.length === 0) {
-        // ASR returned empty — keep listening (phone call mode)
+        // ASR returned empty — check for humming (sustained audio + no text)
+        let hummingCheck = detectMood(this.lastPcmBuffers, '');
+        if (hummingCheck.mood === 'humming') {
+          this.currentMood = hummingCheck.emoji + ' ' + hummingCheck.label;
+          this.log.info('ChatPage', `Mood detected (no text): ${hummingCheck.mood}`);
+        }
         continue;
       }
+
+      // Step 2.5: Detect mood from voice + text
+      let moodResult: MoodResult = detectMood(this.lastPcmBuffers, recognizedText);
+      this.currentMood = moodResult.emoji + ' ' + moodResult.label;
+      this.log.info('ChatPage', `Mood detected: ${moodResult.mood} (${moodResult.confidence.toFixed(2)})`);
 
       // Step 3: Add user message + send to AI
       let userMsg = new ChatMessage('user', recognizedText);
@@ -3695,11 +3769,15 @@ You have persistent memory that survives across conversations. Use it proactivel
       this.messages.push(userMsg);
       this.scrollToEnd();
 
+      this.talkStatus = I18n.t('chat.talkThinking');
       this.isLoading = true;
       this.startDotAnimation();
-      this.talkStatus = I18n.t('chat.talkThinking');
 
       let enrichedText = await this.enrichWithLocation(recognizedText);
+      // Append mood context for LLM
+      if (moodResult.mood !== 'neutral') {
+        enrichedText = enrichedText + '\n[' + '\u7528\u6237\u5F53\u524D\u8BED\u6C14/\u60C5\u7EEA: ' + moodResult.label + ']';
+      }
       if (this.gwConnected) {
         await this.sendViaGateway(enrichedText);
       } else {
@@ -3711,10 +3789,24 @@ You have persistent memory that survives across conversations. Use it proactivel
 
       if (!this.talkModeActive) break;
 
-      // Step 4: Wait for TTS to finish (if auto-read is on)
+      // Step 4: TTS with voice-interrupt detection
       if (this.ttsAutoRead) {
-        this.talkStatus = I18n.t('chat.talkSpeaking');
-        await this.waitForTtsCompletion();
+        // Wait briefly for TTS to start (autoReadAloud is async)
+        if (!this.ttsPlaying) {
+          await new Promise<void>((r) => { setTimeout(r, 300); });
+        }
+        if (this.ttsPlaying) {
+          this.talkStatus = I18n.t('chat.talkSpeaking');
+          let interruptWav = await this.listenDuringTts();
+          if (!this.talkModeActive) break;
+          if (interruptWav.length > 0) {
+            pendingWav = interruptWav;
+            continue; // skip pause, go directly to ASR
+          }
+        } else {
+          // TTS didn't start — wait for completion in case it's delayed
+          await this.waitForTtsCompletion();
+        }
       }
 
       if (!this.talkModeActive) break;
@@ -3837,6 +3929,138 @@ You have persistent memory that survives across conversations. Use it proactivel
     } catch (err) {
       this.log.error('ChatPage', `talkRecord error: ${(err as Error).message ?? ''}`);
       this.isRecording = false;
+      this.showWaveform = false;
+      this.waveBars = [0, 0, 0, 0, 0, 0, 0];
+      await this.cleanupAsr();
+      return '';
+    }
+  }
+
+  /**
+   * Listen on mic during TTS playback. If user speaks (voice interrupt),
+   * stop TTS, continue recording until silence, return WAV path.
+   * If TTS finishes naturally, return empty string.
+   * Uses higher RMS threshold (3000) to filter out TTS speaker echo.
+   */
+  private async listenDuringTts(): Promise<string> {
+    try {
+      await this.cleanupAsr();
+
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let atManager = abilityAccessCtrl.createAtManager();
+      let permResult = await atManager.requestPermissionsFromUser(ctx, ['ohos.permission.MICROPHONE']);
+      if (permResult.authResults[0] !== 0) return '';
+
+      let capturerOptions: audio.AudioCapturerOptions = {
+        streamInfo: {
+          samplingRate: audio.AudioSamplingRate.SAMPLE_RATE_16000,
+          channels: audio.AudioChannel.CHANNEL_1,
+          sampleFormat: audio.AudioSampleFormat.SAMPLE_FORMAT_S16LE,
+          encodingType: audio.AudioEncodingType.ENCODING_TYPE_RAW
+        },
+        capturerInfo: {
+          source: audio.SourceType.SOURCE_TYPE_VOICE_RECOGNITION,
+          capturerFlags: 0
+        }
+      };
+      this.audioCapturer = await audio.createAudioCapturer(capturerOptions);
+      await this.audioCapturer.start();
+
+      let bufSize = await this.audioCapturer.getBufferSize();
+      let speechDetected = false;
+      let silenceStart = 0;
+      let interruptThreshold = 3000; // higher than normal (1500) to filter TTS echo
+      let silenceTimeoutMs = 1500;
+      this.pcmBuffers = [];
+
+      // Phase 1: Monitor for voice while TTS plays
+      while (this.talkModeActive && this.audioCapturer) {
+        let buf: ArrayBuffer;
+        try {
+          buf = await this.audioCapturer.read(bufSize, true);
+        } catch { break; }
+        if (buf.byteLength === 0) continue;
+
+        let samples = new Int16Array(buf);
+        let sumSq = 0;
+        for (let i = 0; i < samples.length; i++) {
+          sumSq += samples[i] * samples[i];
+        }
+        let rms = Math.sqrt(sumSq / samples.length);
+
+        if (!speechDetected && rms > interruptThreshold) {
+          // Voice interrupt detected — stop TTS
+          this.log.info('ChatPage', `TTS interrupted by voice (RMS=${rms.toFixed(0)})`);
+          speechDetected = true;
+          NodeRuntime.getInstance().stopSpeaker().catch(() => {});
+          this.ttsPlaying = false;
+          if (this.ttsCompletionResolve) {
+            this.ttsCompletionResolve();
+            this.ttsCompletionResolve = undefined;
+          }
+          this.talkStatus = I18n.t('chat.talkListening');
+          this.showWaveform = true;
+        }
+
+        if (speechDetected) {
+          // Recording phase — collect audio until silence
+          this.pcmBuffers.push(buf.slice(0));
+          let normalized = Math.min(1.0, rms / 8000);
+          this.updateWaveBars(normalized);
+
+          if (rms > 1500) {
+            silenceStart = 0;
+          } else {
+            if (silenceStart === 0) {
+              silenceStart = Date.now();
+            } else if (Date.now() - silenceStart > silenceTimeoutMs) {
+              this.log.info('ChatPage', 'TTS interrupt: silence after speech, stopping');
+              break;
+            }
+          }
+        }
+
+        // TTS finished naturally — no interrupt
+        if (!speechDetected && !this.ttsPlaying) {
+          this.log.info('ChatPage', 'TTS finished, no voice interrupt');
+          break;
+        }
+      }
+
+      // Cleanup mic
+      this.showWaveform = false;
+      this.waveBars = [0, 0, 0, 0, 0, 0, 0];
+      if (this.audioCapturer) {
+        try { await this.audioCapturer.stop(); } catch {}
+      }
+
+      if (!speechDetected || this.pcmBuffers.length === 0) {
+        this.pcmBuffers = [];
+        await this.cleanupAsr();
+        return '';
+      }
+
+      // Save interrupt audio
+      this.lastPcmBuffers = this.pcmBuffers.slice();
+      let wavPath = this.saveWavFile(this.pcmBuffers);
+      this.pcmBuffers = [];
+      await this.cleanupAsr();
+
+      if (wavPath.length === 0) return '';
+
+      // Check minimum size
+      try {
+        let stat = fileIo.statSync(wavPath);
+        if (stat.size < 48044) {
+          try { fileIo.unlinkSync(wavPath); } catch {}
+          return '';
+        }
+      } catch {}
+
+      return wavPath;
+
+    } catch (err) {
+      this.log.error('ChatPage', `listenDuringTts error: ${(err as Error).message ?? ''}`);
       this.showWaveform = false;
       this.waveBars = [0, 0, 0, 0, 0, 0, 0];
       await this.cleanupAsr();

@@ -273,6 +273,137 @@ export class LocalTransformer {
     return this.config.embedding_dim;
   }
 
+  /**
+   * Async forward pass with yields between layers to prevent UI blocking.
+   */
+  async forwardAsync(inputIds: Int32Array, attentionMask: Int32Array, tokenTypeIds: Int32Array): Promise<Float32Array> {
+    let h = this.config.hidden_size;
+    let seqLen = inputIds.length;
+
+    // 1. Embedding lookup
+    let hidden = new Float32Array(seqLen * h);
+    for (let s = 0; s < seqLen; s++) {
+      let wordRow = this.lookupWordEmb(inputIds[s]);
+      let posOff = s * h;
+      let typeOff = tokenTypeIds[s] * h;
+      let outOff = s * h;
+      for (let d = 0; d < h; d++) {
+        hidden[outOff + d] = wordRow[d] + this.posEmb[posOff + d] + this.typeEmb[typeOff + d];
+      }
+    }
+
+    // Embedding LayerNorm
+    this.layerNormBatch(hidden, this.embLnW, this.embLnB, seqLen, h);
+
+    // Yield after embedding
+    await this.yieldToEventLoop();
+
+    // 2. Transformer layers with yield between each layer
+    let numHeads = this.config.num_attention_heads;
+    let headDim = h / numHeads;
+    let scale = 1.0 / Math.sqrt(headDim);
+
+    for (let li = 0; li < this.layers.length; li++) {
+      let layer = this.layers[li];
+
+      // Self-attention: Q, K, V projections
+      let Q = this.linearBatch(hidden, layer.qWeight, layer.qBias, seqLen, h, h);
+      let K = this.linearBatch(hidden, layer.kWeight, layer.kBias, seqLen, h, h);
+      let V = this.linearBatch(hidden, layer.vWeight, layer.vBias, seqLen, h, h);
+
+      // Multi-head attention
+      let attnOut = new Float32Array(seqLen * h);
+      for (let head = 0; head < numHeads; head++) {
+        let hOff = head * headDim;
+
+        let scores = new Float32Array(seqLen * seqLen);
+        for (let i = 0; i < seqLen; i++) {
+          for (let j = 0; j < seqLen; j++) {
+            let dot = 0;
+            let qi = i * h + hOff;
+            let kj = j * h + hOff;
+            for (let d = 0; d < headDim; d++) {
+              dot += Q[qi + d] * K[kj + d];
+            }
+            scores[i * seqLen + j] = dot * scale;
+          }
+        }
+
+        for (let i = 0; i < seqLen; i++) {
+          for (let j = 0; j < seqLen; j++) {
+            if (attentionMask[j] === 0) {
+              scores[i * seqLen + j] = -10000.0;
+            }
+          }
+        }
+
+        for (let i = 0; i < seqLen; i++) {
+          this.softmax(scores, i * seqLen, seqLen);
+        }
+
+        for (let i = 0; i < seqLen; i++) {
+          for (let d = 0; d < headDim; d++) {
+            let sum = 0;
+            for (let j = 0; j < seqLen; j++) {
+              sum += scores[i * seqLen + j] * V[j * h + hOff + d];
+            }
+            attnOut[i * h + hOff + d] = sum;
+          }
+        }
+      }
+
+      let attnProj = this.linearBatch(attnOut, layer.oWeight, layer.oBias, seqLen, h, h);
+      for (let i = 0; i < seqLen * h; i++) {
+        hidden[i] += attnProj[i];
+      }
+      this.layerNormBatch(hidden, layer.ln1Weight, layer.ln1Bias, seqLen, h);
+
+      let inter = this.config.intermediate_size;
+      let ffnUp = this.linearBatch(hidden, layer.intWeight, layer.intBias, seqLen, h, inter);
+      for (let i = 0; i < seqLen * inter; i++) {
+        ffnUp[i] = this.gelu(ffnUp[i]);
+      }
+      let ffnDown = this.linearBatch(ffnUp, layer.outWeight, layer.outBias, seqLen, inter, h);
+      for (let i = 0; i < seqLen * h; i++) {
+        hidden[i] += ffnDown[i];
+      }
+      this.layerNormBatch(hidden, layer.ln2Weight, layer.ln2Bias, seqLen, h);
+
+      // Yield after each layer to let UI respond
+      await this.yieldToEventLoop();
+    }
+
+    // 3. Mean pooling
+    let pooled = new Float32Array(h);
+    let maskSum = 0;
+    for (let s = 0; s < seqLen; s++) {
+      maskSum += attentionMask[s];
+    }
+    if (maskSum === 0) maskSum = 1;
+
+    for (let d = 0; d < h; d++) {
+      let sum = 0;
+      for (let s = 0; s < seqLen; s++) {
+        sum += hidden[s * h + d] * attentionMask[s];
+      }
+      pooled[d] = sum / maskSum;
+    }
+
+    // 4. L2 normalize
+    let norm = 0;
+    for (let d = 0; d < h; d++) {
+      norm += pooled[d] * pooled[d];
+    }
+    norm = Math.sqrt(norm);
+    if (norm > 0) {
+      for (let d = 0; d < h; d++) {
+        pooled[d] /= norm;
+      }
+    }
+
+    return pooled;
+  }
+
   // ---- Private helpers ----
 
   private lookupWordEmb(tokenId: number): Float32Array {

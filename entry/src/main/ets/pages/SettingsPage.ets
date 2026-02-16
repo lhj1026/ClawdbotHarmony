@@ -35,8 +35,8 @@ export struct SettingsPage {
     'openrouter': '', 'anthropic': '', 'openai': '', 'siliconflow': '', 'local': '', 'custom': ''
   };
   @State asrMode: string = 'cloud'; // 'auto' | 'local' | 'cloud'
-  @State embeddingMode: string = 'cloud'; // 'auto' | 'local' | 'cloud'
-  @State intentMode: string = 'cloud'; // 'auto' | 'local' | 'cloud'
+  @State embeddingMode: string = 'auto'; // 'auto' | 'local' | 'cloud'
+  @State intentMode: string = 'auto'; // 'auto' | 'local' | 'cloud'
   @State showKey: boolean = false;
   @State @Watch('onLangChange') lang: string = 'zh';
   @State settingsTab: string = Constants.DEFAULT_MODE; // 'standalone' | 'node' | 'service'
@@ -1653,9 +1653,9 @@ export struct SettingsPage {
       this.asrApiKey = (await store.get('asr_key', '')) as string;
       this.asrModel = (await store.get('asr_model', 'FunAudioLLM/SenseVoiceSmall')) as string;
       // Embedding & Intent modes
-      this.embeddingMode = (await store.get('embedding_mode', 'cloud')) as string;
+      this.embeddingMode = (await store.get('embedding_mode', 'auto')) as string;
       this.embeddingApiKey = (await store.get('embedding_key', '')) as string;
-      this.intentMode = (await store.get('intent_mode', 'cloud')) as string;
+      this.intentMode = (await store.get('intent_mode', 'auto')) as string;
       // Soul
       this.soul = (await store.get('soul', Constants.DEFAULT_SOUL)) as string;
       // Assistant customization

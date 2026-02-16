@@ -58,10 +58,10 @@ export class LocalEmbedding {
       this.transformer = new LocalTransformer();
       await this.transformer.load(context);
       this.loaded = true;
-      this.log.info(this.TAG, `Local embedding model loaded in ${Date.now() - t0}ms`);
+      this.log.info(this.TAG, 'Local embedding model loaded in ' + (Date.now() - t0).toString() + 'ms');
       return true;
     } catch (e) {
-      this.log.warn(this.TAG, `Failed to load model: ${(e as Error).message ?? String(e)}`);
+      this.log.warn(this.TAG, 'Failed to load model: ' + ((e as Error).message ?? String(e)));
       this.loaded = false;
       return false;
     } finally {
@@ -85,12 +85,13 @@ export class LocalEmbedding {
     try {
       let t0 = Date.now();
       let encoded = this.tokenizer.encode(text);
-      let vec = this.transformer.forward(encoded.inputIds, encoded.attentionMask, encoded.tokenTypeIds);
+      // Use async forward with yields to prevent UI blocking
+      let vec = await this.transformer.forwardAsync(encoded.inputIds, encoded.attentionMask, encoded.tokenTypeIds);
       let elapsed = Date.now() - t0;
-      this.log.info(this.TAG, `embed: ${elapsed}ms, dim=${vec.length}, text="${text.substring(0, 40)}"`);
+      this.log.info(this.TAG, 'embed: ' + elapsed.toString() + 'ms, dim=' + vec.length.toString() + ', text="' + text.substring(0, 40) + '"');
       return Array.from(vec);
     } catch (e) {
-      this.log.warn(this.TAG, `embed failed: ${(e as Error).message ?? String(e)}`);
+      this.log.warn(this.TAG, 'embed failed: ' + ((e as Error).message ?? String(e)));
       return [];
     }
   }

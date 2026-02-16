@@ -1,6 +1,6 @@
 # ninja log v6
-75	2303	7928796802507915	CMakeFiles/exec.dir/napi_exec.cpp.o	9f186dacda35ab9a
-12	33	7928802806804628	clean	742aed982e631a06
-2305	2543	7928796824803558	C:/Users/Liuho/ClawdbotHarmony/entry/build/default/intermediates/cmake/default/obj/arm64-v8a/libexec.so	c80a72751e930c01
+89	111	7929683542655322	clean	742aed982e631a06
 63	2224	7928802890656567	CMakeFiles/exec.dir/napi_exec.cpp.o	9f186dacda35ab9a
 2225	2471	7928802912286594	C:/Users/Liuho/ClawdbotHarmony/entry/build/default/intermediates/cmake/default/obj/arm64-v8a/libexec.so	c80a72751e930c01
+60	13890	7929683649077968	CMakeFiles/exec.dir/napi_exec.cpp.o	9f186dacda35ab9a
+13891	14155	7929683787394409	C:/Users/Liuho/ClawdbotHarmony/entry/build/default/intermediates/cmake/default/obj/arm64-v8a/libexec.so	c80a72751e930c01

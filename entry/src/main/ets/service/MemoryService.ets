@@ -32,6 +32,14 @@ export class MemoryService {
   private readonly TAG = 'MemoryService';
   private localEmb: LocalEmbedding = LocalEmbedding.getInstance();
   private migrationDone: boolean = false;
+  private _nodeMode: boolean = false;
+
+  /** Set node mode flag. In node mode, cloud embedding API is not called
+   *  because cloud processing is handled by the gateway server. */
+  setNodeMode(nodeMode: boolean): void {
+    this._nodeMode = nodeMode;
+    this.log.info(this.TAG, `nodeMode=${nodeMode}`);
+  }
 
   static getInstance(): MemoryService {
     if (!MemoryService.instance) {
@@ -208,6 +216,10 @@ export class MemoryService {
    */
   async embed(text: string, apiKey: string, mode: string = 'auto'): Promise<number[]> {
     if (text.length === 0) return [];
+    // In node mode, cloud embedding is handled by the gateway server — only local runs on-device
+    if (this._nodeMode && mode !== 'local') {
+      mode = 'local';
+    }
     // Local embedding (for 'auto' or 'local' modes)
     if (mode !== 'cloud' && this.localEmb.isReady()) {
       let vec = await this.localEmb.embed(text);

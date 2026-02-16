@@ -247,6 +247,7 @@ function buildZh(): Map<string, string> {
   m.set('chat.talkModeOn', '对话模式已开启');
   m.set('chat.talkModeOff', '对话模式已关闭');
   m.set('chat.talkListening', '正在聆听...');
+  m.set('chat.talkRecognizing', '语音识别');
   m.set('chat.talkThinking', '正在思考...');
   m.set('chat.talkSpeaking', '正在说话...');
   m.set('chat.talkSilence', '静默超时，对话模式已关闭');
@@ -572,6 +573,7 @@ function buildEn(): Map<string, string> {
   m.set('chat.talkModeOn', 'Talk mode activated');
   m.set('chat.talkModeOff', 'Talk mode deactivated');
   m.set('chat.talkListening', 'Listening...');
+  m.set('chat.talkRecognizing', 'Recognizing');
   m.set('chat.talkThinking', 'Thinking...');
   m.set('chat.talkSpeaking', 'Speaking...');
   m.set('chat.talkSilence', 'Silence timeout, talk mode ended');

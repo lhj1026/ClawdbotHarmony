@@ -8,7 +8,7 @@ import { LogService } from '../common/LogService';
 
 const TAG = 'LocalASR';
 const CHUNK_SIZE = 1280; // 1280 bytes = 40ms at 16kHz/16bit/mono
-const CHUNK_INTERVAL_MS = 40; // Write pace: one chunk every 40ms to simulate real-time
+const CHUNK_INTERVAL_MS = 10; // Write pace: 10ms per chunk ≈ 4x real-time (good accuracy + speed balance)
 
 export class LocalAsrService {
   private static instance: LocalAsrService | undefined;
@@ -39,12 +39,14 @@ export class LocalAsrService {
     }
     this.log.info(TAG, `recognizeFromPcm: ${pcmBuffers.length} buffers, ${totalBytes} bytes`);
 
-    // Always create a fresh engine for each recognition
-    try {
-      await this.createEngine();
-    } catch (err) {
-      this.log.error(TAG, `Failed to create engine: ${(err as Error).message}`);
-      return '';
+    // Reuse engine if available, only create when needed
+    if (!this.engine) {
+      try {
+        await this.createEngine();
+      } catch (err) {
+        this.log.error(TAG, `Failed to create engine: ${(err as Error).message}`);
+        return '';
+      }
     }
 
     if (!this.engine) {
@@ -112,6 +114,10 @@ export class LocalAsrService {
             soundChannel: 1,
             sampleBit: 16,
           },
+          extraParams: {
+            'vadEnd': 3000,
+            'addPunc': true,
+          },
         };
         this.engine!.startListening(startParams);
 
@@ -126,9 +132,11 @@ export class LocalAsrService {
       resultText = '';
     }
 
-    // Shutdown engine after use
-    try { this.engine.shutdown(); } catch { /* ignore */ }
-    this.engine = undefined;
+    // Keep engine alive for reuse — only destroy on error
+    if (resultText.length === 0) {
+      try { this.engine.shutdown(); } catch { /* ignore */ }
+      this.engine = undefined;
+    }
 
     this.log.info(TAG, `Final result: "${resultText}"`);
     return resultText.trim();
@@ -136,24 +144,26 @@ export class LocalAsrService {
 
   /**
    * Feed PCM audio data to the engine with real-time pacing.
-   * Writes one chunk every CHUNK_INTERVAL_MS to simulate real-time streaming.
+   * Every chunk is fed via setTimeout to give the engine time to process.
+   * Uses CHUNK_INTERVAL_MS per chunk (~4x real-time) for good accuracy.
    */
   private feedAudioPaced(merged: Uint8Array, totalLen: number,
     doResolve: (text: string) => void): void {
     let chunksWritten = 0;
-    let totalChunks = Math.ceil(totalLen / CHUNK_SIZE);
     let chunkIndex = 0;
 
     let feedNextChunk = (): void => {
       let byteOffset = chunkIndex * CHUNK_SIZE;
       if (byteOffset >= totalLen) {
-        // All chunks sent, signal end of audio
+        // All chunks sent — delay before finish() to let engine process last data
         this.log.info(TAG, `Fed ${totalLen} bytes in ${chunksWritten} chunks, calling finish()`);
-        try {
-          this.engine!.finish(this.sessionId);
-        } catch (e) {
-          this.log.warn(TAG, `finish() error: ${(e as Error).message}`);
-        }
+        setTimeout((): void => {
+          try {
+            this.engine!.finish(this.sessionId);
+          } catch (e) {
+            this.log.warn(TAG, `finish() error: ${(e as Error).message}`);
+          }
+        }, 100);
         return;
       }
 
@@ -168,19 +178,8 @@ export class LocalAsrService {
       }
 
       chunkIndex++;
-
-      // Pace: write next chunk after interval (but batch fast for large audio)
-      if (totalChunks > 50) {
-        // For large audio (>2s), write 10 chunks at a time then pause
-        if (chunkIndex % 10 === 0) {
-          setTimeout(feedNextChunk, CHUNK_INTERVAL_MS);
-        } else {
-          feedNextChunk();
-        }
-      } else {
-        // For short audio, write all at once
-        feedNextChunk();
-      }
+      // Always use setTimeout for every chunk — never feed synchronously
+      setTimeout(feedNextChunk, CHUNK_INTERVAL_MS);
     };
 
     feedNextChunk();
