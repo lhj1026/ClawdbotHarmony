@@ -118,6 +118,7 @@ export interface GatewayChatEvent {
   message?: GatewayChatMessage;
   errorMessage?: string;
   stopReason?: string;
+  chatSessionId?: string;  // client-side session ID for multi-session routing
 }
 
 // --------------- Exec approval ---------------

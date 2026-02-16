@@ -1,13 +1,8 @@
 // Session management service for multi-conversation support
 import { preferences } from '@kit.ArkData';
-import { ChatSession, ChatSessionData, ChatMessage } from '../model/Models';
+import { ChatSession, ChatSessionData, ChatMessage, QueuedMessage } from '../model/Models';
 import { LogService } from '../common/LogService';
-
-const PREFS_NAME = 'chat_sessions';
-const SESSIONS_KEY = 'session_list';
-const MESSAGES_PREFIX = 'session_messages_';
-const CURRENT_SESSION_KEY = 'current_session_id';
-const DEFAULT_SESSION_ID = 'default';
+import { Constants } from '../common/Constants';
 
 // Serializable message data structure
 interface MessageData {
@@ -35,7 +30,7 @@ export class SessionService {
   private prefs: preferences.Preferences | undefined;
   private log: LogService = LogService.getInstance();
   private sessions: ChatSession[] = [];
-  private currentSessionId: string = DEFAULT_SESSION_ID;
+  private currentSessionId: string = Constants.DEFAULT_SESSION_ID;
   private initialized: boolean = false;
 
   private constructor() {}
@@ -51,14 +46,14 @@ export class SessionService {
     if (this.initialized) return;
     
     try {
-      this.prefs = await preferences.getPreferences(context, PREFS_NAME);
+      this.prefs = await preferences.getPreferences(context, Constants.PREFS_SESSIONS);
       await this.loadSessions();
       await this.loadCurrentSessionId();
       
       // Ensure at least one session exists
       if (this.sessions.length === 0) {
         const defaultSession = new ChatSession('默认对话');
-        defaultSession.id = DEFAULT_SESSION_ID;
+        defaultSession.id = Constants.DEFAULT_SESSION_ID;
         this.sessions.push(defaultSession);
         await this.saveSessions();
       }
@@ -74,7 +69,7 @@ export class SessionService {
     if (!this.prefs) return;
     
     try {
-      const json = await this.prefs.get(SESSIONS_KEY, '[]') as string;
+      const json = await this.prefs.get(Constants.SESSIONS_KEY, '[]') as string;
       const dataList: ChatSessionData[] = JSON.parse(json);
       
       this.sessions = dataList.map(data => {
@@ -85,6 +80,7 @@ export class SessionService {
         session.messageCount = data.messageCount;
         session.lastMessage = data.lastMessage;
         session.isPinned = data.isPinned || false;
+        session.isClosed = data.isClosed || false;
         return session;
       });
     } catch (err) {
@@ -105,11 +101,12 @@ export class SessionService {
           updatedAt: s.updatedAt,
           messageCount: s.messageCount,
           lastMessage: s.lastMessage,
-          isPinned: s.isPinned
+          isPinned: s.isPinned,
+          isClosed: s.isClosed
         };
       });
       
-      await this.prefs.put(SESSIONS_KEY, JSON.stringify(dataList));
+      await this.prefs.put(Constants.SESSIONS_KEY, JSON.stringify(dataList));
       await this.prefs.flush();
     } catch (err) {
       this.log.error('SessionService', `Save sessions failed: ${err}`);
@@ -120,9 +117,9 @@ export class SessionService {
     if (!this.prefs) return;
     
     try {
-      this.currentSessionId = await this.prefs.get(CURRENT_SESSION_KEY, DEFAULT_SESSION_ID) as string;
+      this.currentSessionId = await this.prefs.get(Constants.CURRENT_SESSION_KEY, Constants.DEFAULT_SESSION_ID) as string;
     } catch (err) {
-      this.currentSessionId = DEFAULT_SESSION_ID;
+      this.currentSessionId = Constants.DEFAULT_SESSION_ID;
     }
   }
 
@@ -130,20 +127,25 @@ export class SessionService {
     if (!this.prefs) return;
     
     try {
-      await this.prefs.put(CURRENT_SESSION_KEY, this.currentSessionId);
+      await this.prefs.put(Constants.CURRENT_SESSION_KEY, this.currentSessionId);
       await this.prefs.flush();
     } catch (err) {
       this.log.error('SessionService', `Save current session ID failed: ${err}`);
     }
   }
 
-  // Get all sessions sorted by pinned first, then by updatedAt
+  // Get active (non-closed) sessions sorted by pinned first, then by updatedAt
   getSessions(): ChatSession[] {
-    return [...this.sessions].sort((a, b) => {
+    return [...this.sessions].filter(s => !s.isClosed).sort((a, b) => {
       if (a.isPinned && !b.isPinned) return -1;
       if (!a.isPinned && b.isPinned) return 1;
       return b.updatedAt - a.updatedAt;
     });
+  }
+
+  // Get all sessions including closed ones, sorted by updatedAt
+  getAllSessions(): ChatSession[] {
+    return [...this.sessions].sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
   getCurrentSessionId(): string {
@@ -171,30 +173,91 @@ export class SessionService {
   }
 
   async deleteSession(sessionId: string): Promise<boolean> {
-    // Don't delete the last session
-    if (this.sessions.length <= 1) {
-      this.log.warn('SessionService', 'Cannot delete the last session');
-      return false;
-    }
-    
     const index = this.sessions.findIndex(s => s.id === sessionId);
     if (index === -1) return false;
-    
-    this.sessions.splice(index, 1);
-    
-    // Clear messages for this session
-    if (this.prefs) {
-      await this.prefs.delete(MESSAGES_PREFIX + sessionId);
+
+    // If deleting the last session, create a new empty one first
+    if (this.sessions.length <= 1) {
+      const newSession = new ChatSession('新对话');
+      this.sessions.unshift(newSession);
+      this.log.info('SessionService', `Created replacement session: ${newSession.id}`);
     }
-    
+
+    this.sessions.splice(this.sessions.findIndex(s => s.id === sessionId), 1);
+
+    // Clear messages and queue for this session
+    if (this.prefs) {
+      await this.prefs.delete(Constants.MESSAGES_PREFIX + sessionId);
+      await this.prefs.delete(Constants.QUEUE_PREFIX + sessionId);
+    }
+
     // If deleted current session, switch to first available
     if (this.currentSessionId === sessionId) {
       this.currentSessionId = this.sessions[0].id;
       await this.saveCurrentSessionId();
     }
-    
+
     await this.saveSessions();
     this.log.info('SessionService', `Deleted session: ${sessionId}`);
+    return true;
+  }
+
+  // Close session: hide from drawer but preserve history data
+  async closeSession(sessionId: string): Promise<boolean> {
+    const session = this.sessions.find(s => s.id === sessionId);
+    if (!session) return false;
+
+    // If closing the last active session, create a new one first
+    const activeSessions = this.sessions.filter(s => !s.isClosed);
+    if (activeSessions.length <= 1) {
+      const newSession = new ChatSession('新对话');
+      this.sessions.unshift(newSession);
+      this.log.info('SessionService', `Created replacement session: ${newSession.id}`);
+    }
+
+    session.isClosed = true;
+    session.updatedAt = Date.now();
+
+    // If closed current session, switch to first active
+    if (this.currentSessionId === sessionId) {
+      const firstActive = this.sessions.find(s => !s.isClosed);
+      if (firstActive) {
+        this.currentSessionId = firstActive.id;
+        await this.saveCurrentSessionId();
+      }
+    }
+
+    await this.saveSessions();
+    this.log.info('SessionService', `Closed session: ${sessionId}`);
+    return true;
+  }
+
+  // Permanently delete session: remove from list AND delete all history data
+  async deleteSessionPermanently(sessionId: string): Promise<boolean> {
+    const index = this.sessions.findIndex(s => s.id === sessionId);
+    if (index === -1) return false;
+
+    this.sessions.splice(index, 1);
+
+    // Clear messages and queue for this session
+    if (this.prefs) {
+      await this.prefs.delete(Constants.MESSAGES_PREFIX + sessionId);
+      await this.prefs.delete(Constants.QUEUE_PREFIX + sessionId);
+    }
+
+    // If deleted current session, switch to first available active
+    if (this.currentSessionId === sessionId) {
+      const firstActive = this.sessions.find(s => !s.isClosed);
+      if (firstActive) {
+        this.currentSessionId = firstActive.id;
+      } else if (this.sessions.length > 0) {
+        this.currentSessionId = this.sessions[0].id;
+      }
+      await this.saveCurrentSessionId();
+    }
+
+    await this.saveSessions();
+    this.log.info('SessionService', `Permanently deleted session: ${sessionId}`);
     return true;
   }
 
@@ -223,7 +286,7 @@ export class SessionService {
     if (!this.prefs) return [];
     
     try {
-      const json = await this.prefs.get(MESSAGES_PREFIX + sessionId, '[]') as string;
+      const json = await this.prefs.get(Constants.MESSAGES_PREFIX + sessionId, '[]') as string;
       const dataList = JSON.parse(json) as object[];
       
       return dataList.map(data => {
@@ -281,7 +344,7 @@ export class SessionService {
         dataList.push(item);
       }
       
-      await this.prefs.put(MESSAGES_PREFIX + sessionId, JSON.stringify(dataList));
+      await this.prefs.put(Constants.MESSAGES_PREFIX + sessionId, JSON.stringify(dataList));
       await this.prefs.flush();
       
       // Update session metadata
@@ -303,7 +366,7 @@ export class SessionService {
     if (!this.prefs) return;
     
     try {
-      await this.prefs.delete(MESSAGES_PREFIX + sessionId);
+      await this.prefs.delete(Constants.MESSAGES_PREFIX + sessionId);
       await this.prefs.flush();
       
       const session = this.sessions.find(s => s.id === sessionId);
@@ -318,19 +381,50 @@ export class SessionService {
     }
   }
 
-  // Auto-generate title from first user message
-  async autoGenerateTitle(sessionId: string, firstMessage: string): Promise<void> {
-    const session = this.sessions.find(s => s.id === sessionId);
-    if (!session) return;
-    
-    // Only auto-generate if title is default
-    if (session.title === '新对话' || session.title === '默认对话') {
-      // Take first 20 chars of message as title
-      const title = firstMessage.substring(0, 20).replace(/\n/g, ' ').trim();
-      if (title) {
-        session.title = title + (firstMessage.length > 20 ? '...' : '');
-        await this.saveSessions();
-      }
+  // Save message queue for a session
+  async saveMessageQueue(sessionId: string, queue: QueuedMessage[]): Promise<void> {
+    if (!this.prefs) return;
+
+    try {
+      await this.prefs.put(Constants.QUEUE_PREFIX + sessionId, JSON.stringify(queue));
+      await this.prefs.flush();
+    } catch (err) {
+      this.log.error('SessionService', `Save queue failed for ${sessionId}: ${err}`);
+    }
+  }
+
+  // Load message queue for a session
+  async loadMessageQueue(sessionId: string): Promise<QueuedMessage[]> {
+    if (!this.prefs) return [];
+
+    try {
+      const json = await this.prefs.get(Constants.QUEUE_PREFIX + sessionId, '[]') as string;
+      const items = JSON.parse(json) as object[];
+      return items.map((item): QueuedMessage => {
+        const d = item as Record<string, Object>;
+        return {
+          id: d['id'] as string || '',
+          text: d['text'] as string || '',
+          status: d['status'] as string || 'pending',
+          timestamp: d['timestamp'] as number || Date.now(),
+          sessionId: d['sessionId'] as string || sessionId
+        } as QueuedMessage;
+      });
+    } catch (err) {
+      this.log.error('SessionService', `Load queue failed for ${sessionId}: ${err}`);
+      return [];
+    }
+  }
+
+  // Clear message queue for a session
+  async clearMessageQueue(sessionId: string): Promise<void> {
+    if (!this.prefs) return;
+
+    try {
+      await this.prefs.delete(Constants.QUEUE_PREFIX + sessionId);
+      await this.prefs.flush();
+    } catch (err) {
+      this.log.error('SessionService', `Clear queue failed for ${sessionId}: ${err}`);
     }
   }
 }

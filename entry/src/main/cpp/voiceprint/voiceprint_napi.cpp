@@ -9,6 +9,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <map>
 #include <napi/native_api.h>
 
 // TODO: Include sherpa-onnx headers when library is integrated
@@ -22,15 +23,61 @@ static bool g_initialized = false;
 
 // TODO: sherpa-onnx speaker embedding extractor handle
 // static const SherpaOnnxSpeakerEmbeddingExtractor *g_extractor = nullptr;
+// static const SherpaOnnxSpeakerEmbeddingManager *g_manager = nullptr;
+
+// In-memory speaker store (stub for Manager until sherpa-onnx is linked)
+static std::map<std::string, std::vector<float>> g_speakers;
+
+// ===== Helper: get string from napi_value =====
+static std::string NapiGetString(napi_env env, napi_value value) {
+    size_t len = 0;
+    napi_get_value_string_utf8(env, value, nullptr, 0, &len);
+    std::string str(len, '\0');
+    napi_get_value_string_utf8(env, value, &str[0], len + 1, &len);
+    return str;
+}
+
+// ===== Helper: get float array from Float32Array =====
+static bool NapiGetFloat32Array(napi_env env, napi_value value, float **data, size_t *length) {
+    bool isTypedArray = false;
+    napi_is_typedarray(env, value, &isTypedArray);
+    if (!isTypedArray) return false;
+
+    napi_typedarray_type type;
+    napi_value arrayBuffer;
+    size_t byteOffset;
+    napi_get_typedarray_info(env, value, &type, length, (void **)data, &arrayBuffer, &byteOffset);
+    return type == napi_float32_array;
+}
+
+// ===== Helper: create Float32Array result =====
+static napi_value NapiCreateFloat32Array(napi_env env, const float *data, size_t length) {
+    napi_value outputBuffer;
+    void *outputData = nullptr;
+    napi_create_arraybuffer(env, length * sizeof(float), &outputData, &outputBuffer);
+    memcpy(outputData, data, length * sizeof(float));
+
+    napi_value resultArray;
+    napi_create_typedarray(env, napi_float32_array, length, outputBuffer, 0, &resultArray);
+    return resultArray;
+}
+
+// ===== Helper: cosine similarity =====
+static double CosineSimilarity(const float *a, const float *b, int dim) {
+    double dot = 0.0, normA = 0.0, normB = 0.0;
+    for (int i = 0; i < dim; i++) {
+        dot += a[i] * b[i];
+        normA += a[i] * a[i];
+        normB += b[i] * b[i];
+    }
+    if (normA > 0 && normB > 0) {
+        return dot / (std::sqrt(normA) * std::sqrt(normB));
+    }
+    return 0.0;
+}
 
 /**
  * initModel(modelDir: string): boolean
- *
- * Initialize the sherpa-onnx speaker embedding extractor.
- * Must be called before extractEmbedding/computeSimilarity.
- *
- * @param modelDir - Path to the directory containing the ONNX model file
- * @returns true if initialization succeeded
  */
 static napi_value InitModel(napi_env env, napi_callback_info info) {
     size_t argc = 1;
@@ -42,11 +89,7 @@ static napi_value InitModel(napi_env env, napi_callback_info info) {
         return nullptr;
     }
 
-    // Get model directory path
-    size_t pathLen = 0;
-    napi_get_value_string_utf8(env, args[0], nullptr, 0, &pathLen);
-    std::string modelDir(pathLen, '\0');
-    napi_get_value_string_utf8(env, args[0], &modelDir[0], pathLen + 1, &pathLen);
+    std::string modelDir = NapiGetString(env, args[0]);
 
     // TODO: Initialize sherpa-onnx speaker embedding extractor
     // SherpaOnnxSpeakerEmbeddingExtractorConfig config;
@@ -55,6 +98,8 @@ static napi_value InitModel(napi_env env, napi_callback_info info) {
     // config.num_threads = 2;
     // config.provider = "cpu";
     // g_extractor = SherpaOnnxCreateSpeakerEmbeddingExtractor(&config);
+    // int dim = SherpaOnnxSpeakerEmbeddingExtractorDim(g_extractor);
+    // g_manager = SherpaOnnxCreateSpeakerEmbeddingManager(dim);
 
     g_initialized = true; // Stub: always succeed for now
 
@@ -65,12 +110,6 @@ static napi_value InitModel(napi_env env, napi_callback_info info) {
 
 /**
  * extractEmbedding(pcmData: Float32Array, sampleRate: number): Float32Array | null
- *
- * Extract a 192-dimensional speaker embedding from PCM audio data.
- *
- * @param pcmData - Float32Array of PCM samples (normalized to [-1, 1])
- * @param sampleRate - Sample rate in Hz (expected: 16000)
- * @returns Float32Array of 192 floats, or null on failure
  */
 static napi_value ExtractEmbedding(napi_env env, napi_callback_info info) {
     size_t argc = 2;
@@ -87,65 +126,42 @@ static napi_value ExtractEmbedding(napi_env env, napi_callback_info info) {
         return nullptr;
     }
 
-    // Get PCM data from Float32Array
-    bool isTypedArray = false;
-    napi_is_typedarray(env, args[0], &isTypedArray);
-    if (!isTypedArray) {
-        napi_throw_error(env, nullptr, "pcmData must be a Float32Array");
-        return nullptr;
-    }
-
-    napi_typedarray_type type;
+    float *pcmSamples = nullptr;
     size_t length = 0;
-    void *data = nullptr;
-    napi_value arrayBuffer;
-    size_t byteOffset = 0;
-    napi_get_typedarray_info(env, args[0], &type, &length, &data, &arrayBuffer, &byteOffset);
-
-    if (type != napi_float32_array) {
+    if (!NapiGetFloat32Array(env, args[0], &pcmSamples, &length)) {
         napi_throw_error(env, nullptr, "pcmData must be a Float32Array");
         return nullptr;
     }
 
-    // Get sample rate
     int32_t sampleRate = 16000;
     napi_get_value_int32(env, args[1], &sampleRate);
-
-    float *pcmSamples = static_cast<float *>(data);
 
     // TODO: Use sherpa-onnx to extract embedding
     // SherpaOnnxOnlineStream *stream = SherpaOnnxSpeakerEmbeddingExtractorCreateStream(g_extractor);
     // SherpaOnnxOnlineStreamAcceptWaveform(stream, sampleRate, pcmSamples, length);
     // SherpaOnnxOnlineStreamInputFinished(stream);
+    // if (!SherpaOnnxSpeakerEmbeddingExtractorIsReady(g_extractor, stream)) { ... }
     // const float *embedding = SherpaOnnxSpeakerEmbeddingExtractorComputeEmbedding(g_extractor, stream);
 
-    // Stub: return zero embedding
+    // Stub: return deterministic pseudo-embedding based on audio energy
     std::vector<float> embedding(EMBEDDING_DIM, 0.0f);
+    if (length > 0) {
+        double energy = 0.0;
+        for (size_t i = 0; i < length; i++) {
+            energy += pcmSamples[i] * pcmSamples[i];
+        }
+        energy = std::sqrt(energy / length);
+        // Fill with small deterministic values so similarity works
+        for (int i = 0; i < EMBEDDING_DIM; i++) {
+            embedding[i] = static_cast<float>(std::sin(i * 0.1 + energy * 10.0) * 0.5);
+        }
+    }
 
-    // Create Float32Array result
-    napi_value outputBuffer;
-    void *outputData = nullptr;
-    napi_create_arraybuffer(env, EMBEDDING_DIM * sizeof(float), &outputData, &outputBuffer);
-    memcpy(outputData, embedding.data(), EMBEDDING_DIM * sizeof(float));
-
-    napi_value resultArray;
-    napi_create_typedarray(env, napi_float32_array, EMBEDDING_DIM, outputBuffer, 0, &resultArray);
-
-    // TODO: Free sherpa-onnx resources
-    // SherpaOnnxSpeakerEmbeddingExtractorDestroyEmbedding(embedding);
-    // SherpaOnnxDestroyOnlineStream(stream);
-
-    return resultArray;
+    return NapiCreateFloat32Array(env, embedding.data(), EMBEDDING_DIM);
 }
 
 /**
  * computeSimilarity(embedding1: Float32Array, embedding2: Float32Array): number
- *
- * Compute cosine similarity between two speaker embeddings.
- *
- * @param embedding1 - First 192-dim embedding
- * @param embedding2 - Second 192-dim embedding
- * @returns Cosine similarity in range [-1, 1]
  */
 static napi_value ComputeSimilarity(napi_env env, napi_callback_info info) {
     size_t argc = 2;
@@ -157,23 +173,11 @@ static napi_value ComputeSimilarity(napi_env env, napi_callback_info info) {
         return nullptr;
     }
 
-    // Get embedding 1
-    void *data1 = nullptr;
-    size_t len1 = 0;
-    napi_typedarray_type type1;
-    napi_value ab1;
-    size_t offset1;
-    napi_get_typedarray_info(env, args[0], &type1, &len1, &data1, &ab1, &offset1);
+    float *emb1 = nullptr, *emb2 = nullptr;
+    size_t len1 = 0, len2 = 0;
 
-    // Get embedding 2
-    void *data2 = nullptr;
-    size_t len2 = 0;
-    napi_typedarray_type type2;
-    napi_value ab2;
-    size_t offset2;
-    napi_get_typedarray_info(env, args[1], &type2, &len2, &data2, &ab2, &offset2);
-
-    if (type1 != napi_float32_array || type2 != napi_float32_array) {
+    if (!NapiGetFloat32Array(env, args[0], &emb1, &len1) ||
+        !NapiGetFloat32Array(env, args[1], &emb2, &len2)) {
         napi_throw_error(env, nullptr, "Both embeddings must be Float32Array");
         return nullptr;
     }
@@ -183,21 +187,7 @@ static napi_value ComputeSimilarity(napi_env env, napi_callback_info info) {
         return nullptr;
     }
 
-    float *emb1 = static_cast<float *>(data1);
-    float *emb2 = static_cast<float *>(data2);
-
-    // Cosine similarity: dot(a,b) / (norm(a) * norm(b))
-    double dot = 0.0, norm1 = 0.0, norm2 = 0.0;
-    for (int i = 0; i < EMBEDDING_DIM; i++) {
-        dot += emb1[i] * emb2[i];
-        norm1 += emb1[i] * emb1[i];
-        norm2 += emb2[i] * emb2[i];
-    }
-
-    double similarity = 0.0;
-    if (norm1 > 0 && norm2 > 0) {
-        similarity = dot / (std::sqrt(norm1) * std::sqrt(norm2));
-    }
+    double similarity = CosineSimilarity(emb1, emb2, EMBEDDING_DIM);
 
     napi_value result;
     napi_create_double(env, similarity, &result);
@@ -206,8 +196,6 @@ static napi_value ComputeSimilarity(napi_env env, napi_callback_info info) {
 
 /**
  * getEmbeddingDim(): number
- *
- * @returns The embedding dimension (192 for 3D-Speaker)
  */
 static napi_value GetEmbeddingDim(napi_env env, napi_callback_info info) {
     napi_value result;
@@ -217,8 +205,6 @@ static napi_value GetEmbeddingDim(napi_env env, napi_callback_info info) {
 
 /**
  * isModelLoaded(): boolean
- *
- * @returns Whether the model has been initialized
  */
 static napi_value IsModelLoaded(napi_env env, napi_callback_info info) {
     napi_value result;
@@ -226,15 +212,363 @@ static napi_value IsModelLoaded(napi_env env, napi_callback_info info) {
     return result;
 }
 
+// ===== Speaker Management Functions =====
+
+/**
+ * registerSpeaker(name: string, embeddings: Float32Array[]): boolean
+ */
+static napi_value RegisterSpeaker(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value args[2];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 2) {
+        napi_throw_error(env, nullptr, "registerSpeaker requires (name, embeddings[])");
+        return nullptr;
+    }
+
+    std::string name = NapiGetString(env, args[0]);
+
+    // Parse embeddings array
+    bool isArray = false;
+    napi_is_array(env, args[1], &isArray);
+    if (!isArray) {
+        napi_throw_error(env, nullptr, "embeddings must be an array of Float32Array");
+        return nullptr;
+    }
+
+    uint32_t arrayLen = 0;
+    napi_get_array_length(env, args[1], &arrayLen);
+
+    // Average all embeddings
+    std::vector<float> avgEmb(EMBEDDING_DIM, 0.0f);
+    uint32_t validCount = 0;
+
+    for (uint32_t i = 0; i < arrayLen; i++) {
+        napi_value element;
+        napi_get_element(env, args[1], i, &element);
+
+        float *embData = nullptr;
+        size_t embLen = 0;
+        if (NapiGetFloat32Array(env, element, &embData, &embLen) && embLen == EMBEDDING_DIM) {
+            for (int j = 0; j < EMBEDDING_DIM; j++) {
+                avgEmb[j] += embData[j];
+            }
+            validCount++;
+        }
+    }
+
+    if (validCount == 0) {
+        napi_value result;
+        napi_get_boolean(env, false, &result);
+        return result;
+    }
+
+    for (int j = 0; j < EMBEDDING_DIM; j++) {
+        avgEmb[j] /= validCount;
+    }
+
+    // TODO: Use SherpaOnnxSpeakerEmbeddingManagerAddListFlattened when sherpa-onnx is linked
+    g_speakers[name] = avgEmb;
+
+    napi_value result;
+    napi_get_boolean(env, true, &result);
+    return result;
+}
+
+/**
+ * removeSpeaker(name: string): boolean
+ */
+static napi_value RemoveSpeaker(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 1) {
+        napi_throw_error(env, nullptr, "removeSpeaker requires name");
+        return nullptr;
+    }
+
+    std::string name = NapiGetString(env, args[0]);
+    bool removed = g_speakers.erase(name) > 0;
+
+    napi_value result;
+    napi_get_boolean(env, removed, &result);
+    return result;
+}
+
+/**
+ * getAllSpeakers(): string[]
+ */
+static napi_value GetAllSpeakers(napi_env env, napi_callback_info info) {
+    napi_value result;
+    napi_create_array_with_length(env, g_speakers.size(), &result);
+
+    uint32_t idx = 0;
+    for (auto &pair : g_speakers) {
+        napi_value nameVal;
+        napi_create_string_utf8(env, pair.first.c_str(), pair.first.length(), &nameVal);
+        napi_set_element(env, result, idx++, nameVal);
+    }
+
+    return result;
+}
+
+/**
+ * getNumSpeakers(): number
+ */
+static napi_value GetNumSpeakers(napi_env env, napi_callback_info info) {
+    napi_value result;
+    napi_create_int32(env, static_cast<int32_t>(g_speakers.size()), &result);
+    return result;
+}
+
+/**
+ * containsSpeaker(name: string): boolean
+ */
+static napi_value ContainsSpeaker(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 1) {
+        napi_throw_error(env, nullptr, "containsSpeaker requires name");
+        return nullptr;
+    }
+
+    std::string name = NapiGetString(env, args[0]);
+    bool found = g_speakers.find(name) != g_speakers.end();
+
+    napi_value result;
+    napi_get_boolean(env, found, &result);
+    return result;
+}
+
+/**
+ * identifySpeaker(embedding: Float32Array, threshold: number): SpeakerMatch
+ */
+static napi_value IdentifySpeaker(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value args[2];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 2) {
+        napi_throw_error(env, nullptr, "identifySpeaker requires (embedding, threshold)");
+        return nullptr;
+    }
+
+    float *embData = nullptr;
+    size_t embLen = 0;
+    if (!NapiGetFloat32Array(env, args[0], &embData, &embLen) || embLen != EMBEDDING_DIM) {
+        napi_throw_error(env, nullptr, "embedding must be a Float32Array of 192 dimensions");
+        return nullptr;
+    }
+
+    double threshold = 0.5;
+    napi_get_value_double(env, args[1], &threshold);
+
+    std::string bestName;
+    double bestScore = -1.0;
+
+    for (auto &pair : g_speakers) {
+        double score = CosineSimilarity(embData, pair.second.data(), EMBEDDING_DIM);
+        if (score >= threshold && score > bestScore) {
+            bestScore = score;
+            bestName = pair.first;
+        }
+    }
+
+    // Create result object { name: string, score: number }
+    napi_value result;
+    napi_create_object(env, &result);
+
+    napi_value nameVal, scoreVal;
+    napi_create_string_utf8(env, bestName.c_str(), bestName.length(), &nameVal);
+    napi_create_double(env, bestScore > 0 ? bestScore : 0.0, &scoreVal);
+
+    napi_set_named_property(env, result, "name", nameVal);
+    napi_set_named_property(env, result, "score", scoreVal);
+
+    return result;
+}
+
+/**
+ * getBestMatches(embedding: Float32Array, threshold: number, topN: number): SpeakerMatch[]
+ */
+static napi_value GetBestMatches(napi_env env, napi_callback_info info) {
+    size_t argc = 3;
+    napi_value args[3];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 3) {
+        napi_throw_error(env, nullptr, "getBestMatches requires (embedding, threshold, topN)");
+        return nullptr;
+    }
+
+    float *embData = nullptr;
+    size_t embLen = 0;
+    if (!NapiGetFloat32Array(env, args[0], &embData, &embLen) || embLen != EMBEDDING_DIM) {
+        napi_throw_error(env, nullptr, "embedding must be a Float32Array of 192 dimensions");
+        return nullptr;
+    }
+
+    double threshold = 0.5;
+    napi_get_value_double(env, args[1], &threshold);
+    int32_t topN = 3;
+    napi_get_value_int32(env, args[2], &topN);
+
+    // Collect matches above threshold
+    std::vector<std::pair<std::string, double>> matches;
+    for (auto &pair : g_speakers) {
+        double score = CosineSimilarity(embData, pair.second.data(), EMBEDDING_DIM);
+        if (score >= threshold) {
+            matches.push_back({pair.first, score});
+        }
+    }
+
+    // Sort by score descending
+    std::sort(matches.begin(), matches.end(),
+        [](const auto &a, const auto &b) { return a.second > b.second; });
+
+    // Limit to topN
+    if (matches.size() > static_cast<size_t>(topN)) {
+        matches.resize(topN);
+    }
+
+    // Create result array
+    napi_value result;
+    napi_create_array_with_length(env, matches.size(), &result);
+
+    for (size_t i = 0; i < matches.size(); i++) {
+        napi_value obj;
+        napi_create_object(env, &obj);
+
+        napi_value nameVal, scoreVal;
+        napi_create_string_utf8(env, matches[i].first.c_str(), matches[i].first.length(), &nameVal);
+        napi_create_double(env, matches[i].second, &scoreVal);
+
+        napi_set_named_property(env, obj, "name", nameVal);
+        napi_set_named_property(env, obj, "score", scoreVal);
+        napi_set_element(env, result, i, obj);
+    }
+
+    return result;
+}
+
+/**
+ * verifySpeaker(name: string, embedding: Float32Array, threshold: number): boolean
+ */
+static napi_value VerifySpeaker(napi_env env, napi_callback_info info) {
+    size_t argc = 3;
+    napi_value args[3];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 3) {
+        napi_throw_error(env, nullptr, "verifySpeaker requires (name, embedding, threshold)");
+        return nullptr;
+    }
+
+    std::string name = NapiGetString(env, args[0]);
+
+    float *embData = nullptr;
+    size_t embLen = 0;
+    if (!NapiGetFloat32Array(env, args[1], &embData, &embLen) || embLen != EMBEDDING_DIM) {
+        napi_throw_error(env, nullptr, "embedding must be a Float32Array of 192 dimensions");
+        return nullptr;
+    }
+
+    double threshold = 0.6;
+    napi_get_value_double(env, args[2], &threshold);
+
+    bool verified = false;
+    auto it = g_speakers.find(name);
+    if (it != g_speakers.end()) {
+        double score = CosineSimilarity(embData, it->second.data(), EMBEDDING_DIM);
+        verified = score >= threshold;
+    }
+
+    napi_value result;
+    napi_get_boolean(env, verified, &result);
+    return result;
+}
+
+/**
+ * exportSpeakerEmbedding(name: string): Float32Array | null
+ */
+static napi_value ExportSpeakerEmbedding(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 1) {
+        napi_throw_error(env, nullptr, "exportSpeakerEmbedding requires name");
+        return nullptr;
+    }
+
+    std::string name = NapiGetString(env, args[0]);
+
+    auto it = g_speakers.find(name);
+    if (it == g_speakers.end()) {
+        napi_value null;
+        napi_get_null(env, &null);
+        return null;
+    }
+
+    return NapiCreateFloat32Array(env, it->second.data(), EMBEDDING_DIM);
+}
+
+/**
+ * importSpeakerEmbedding(name: string, embedding: Float32Array): boolean
+ */
+static napi_value ImportSpeakerEmbedding(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value args[2];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    if (argc < 2) {
+        napi_throw_error(env, nullptr, "importSpeakerEmbedding requires (name, embedding)");
+        return nullptr;
+    }
+
+    std::string name = NapiGetString(env, args[0]);
+
+    float *embData = nullptr;
+    size_t embLen = 0;
+    if (!NapiGetFloat32Array(env, args[1], &embData, &embLen) || embLen != EMBEDDING_DIM) {
+        napi_throw_error(env, nullptr, "embedding must be a Float32Array of 192 dimensions");
+        return nullptr;
+    }
+
+    // Copy embedding into storage
+    std::vector<float> emb(embData, embData + EMBEDDING_DIM);
+    g_speakers[name] = emb;
+
+    napi_value result;
+    napi_get_boolean(env, true, &result);
+    return result;
+}
+
 // Module registration
 EXTERN_C_START
 static napi_value Init(napi_env env, napi_value exports) {
     napi_property_descriptor desc[] = {
+        // Existing
         {"initModel", nullptr, InitModel, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"extractEmbedding", nullptr, ExtractEmbedding, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"computeSimilarity", nullptr, ComputeSimilarity, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"getEmbeddingDim", nullptr, GetEmbeddingDim, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"isModelLoaded", nullptr, IsModelLoaded, nullptr, nullptr, nullptr, napi_default, nullptr},
+        // Speaker Management
+        {"registerSpeaker", nullptr, RegisterSpeaker, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"removeSpeaker", nullptr, RemoveSpeaker, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"getAllSpeakers", nullptr, GetAllSpeakers, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"getNumSpeakers", nullptr, GetNumSpeakers, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"containsSpeaker", nullptr, ContainsSpeaker, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"identifySpeaker", nullptr, IdentifySpeaker, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"getBestMatches", nullptr, GetBestMatches, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"verifySpeaker", nullptr, VerifySpeaker, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"exportSpeakerEmbedding", nullptr, ExportSpeakerEmbedding, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"importSpeakerEmbedding", nullptr, ImportSpeakerEmbedding, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     return exports;

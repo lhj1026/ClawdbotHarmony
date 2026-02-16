@@ -49,6 +49,7 @@ function buildZh(): Map<string, string> {
   m.set('chat.voiceMessage', '语音消息');
   m.set('chat.copy', '复制');
   m.set('chat.reply', '引用回复');
+  m.set('chat.newSession', '新建会话');
   m.set('chat.you', '你');
   m.set('chat.voiceNoText', '[语音消息]');
   m.set('chat.speechError', '语音识别失败');
@@ -148,6 +149,18 @@ function buildZh(): Map<string, string> {
   m.set('memory.clearMessage', '确定要永久删除所有存储的记忆吗？');
   m.set('memory.cancel', '取消');
   m.set('memory.clear', '清除');
+  m.set('memory.extractFromChat', '从对话提取');
+  m.set('memory.extracting', '正在分析...');
+  m.set('memory.syncFromServer', '从服务器同步');
+  m.set('memory.syncing', '正在同步...');
+  m.set('memory.syncDone', '同步完成，新增 {0} 条');
+  m.set('memory.syncFailed', '同步失败');
+  m.set('memory.noMessages', '当前对话为空');
+  m.set('memory.tabMemory', '记忆');
+  m.set('memory.tabHistory', '对话历史');
+  m.set('memory.noSessions', '暂无对话记录');
+  m.set('memory.messages', '条消息');
+  m.set('memory.backToList', '返回列表');
 
   // SettingsPage - Soul
   m.set('settings.soul', '人格 / Soul');
@@ -316,6 +329,10 @@ function buildZh(): Map<string, string> {
   m.set('session.title', '对话');
   m.set('session.new', '新对话');
   m.set('session.default', '默认对话');
+  m.set('session.close', '关闭');
+  m.set('session.closeConfirm', '关闭此对话？对话历史将保留。');
+  m.set('session.closed', '已关闭');
+  m.set('session.closedTag', '已关闭');
   m.set('session.delete', '删除');
   m.set('session.deleteConfirm', '确定删除此对话？');
   m.set('session.deleted', '已删除');
@@ -328,6 +345,46 @@ function buildZh(): Map<string, string> {
   m.set('session.clearConfirm', '确定清空此对话的所有消息？');
   m.set('session.cleared', '已清空');
   m.set('session.cannotDeleteLast', '无法删除最后一个对话');
+  m.set('memory.deleteSession', '删除对话');
+  m.set('memory.deleteSessionConfirm', '确定永久删除此对话及所有历史消息？此操作不可恢复。');
+
+  // Queue
+  m.set('queue.pending', '排队中');
+  m.set('queue.failed', '发送失败');
+  m.set('queue.resend', '重新发送');
+  m.set('queue.delete', '删除');
+  m.set('queue.resendAll', '全部重发');
+  m.set('queue.clearAll', '全部清除');
+  m.set('queue.banner', '有 {0} 条排队消息');
+
+  // Voiceprint
+  m.set('voiceprint.title', '声纹管理');
+  m.set('voiceprint.speakerCount', '位说话人');
+  m.set('voiceprint.empty', '暂无注册声纹');
+  m.set('voiceprint.samples', '个样本');
+  m.set('voiceprint.remove', '删除');
+  m.set('voiceprint.enroll', '注册新声纹');
+  m.set('voiceprint.enterName', '请输入说话人名称');
+  m.set('voiceprint.namePlaceholder', '例如：小明');
+  m.set('voiceprint.nameExists', '该名称已注册');
+  m.set('voiceprint.next', '下一步');
+  m.set('voiceprint.cancel', '取消');
+  m.set('voiceprint.recordStep', '录制语音样本');
+  m.set('voiceprint.readAloud', '请朗读以下文字：');
+  m.set('voiceprint.recording', '录音中...');
+  m.set('voiceprint.startRecord', '开始录音');
+  m.set('voiceprint.tooShort', '录音太短，请重试');
+  m.set('voiceprint.sampleOk', '样本录制成功');
+  m.set('voiceprint.processing', '正在处理...');
+  m.set('voiceprint.success', '声纹注册成功');
+  m.set('voiceprint.enrollFailed', '声纹注册失败');
+  m.set('voiceprint.recordFailed', '录音失败');
+  m.set('voiceprint.done', '完成');
+  m.set('voiceprint.deleteConfirm', '确定删除 {0} 的声纹？');
+  m.set('voiceprint.confirmDelete', '确认删除');
+  m.set('voiceprint.removed', '声纹已删除');
+  m.set('settings.voiceprint', '声纹识别');
+  m.set('settings.voiceprintDesc', '本地声纹注册与识别');
 
   return m;
 }
@@ -375,6 +432,7 @@ function buildEn(): Map<string, string> {
   m.set('chat.voiceMessage', 'Voice message');
   m.set('chat.copy', 'Copy');
   m.set('chat.reply', 'Reply');
+  m.set('chat.newSession', 'New Session');
   m.set('chat.you', 'You');
   m.set('chat.voiceNoText', '[Voice message]');
   m.set('chat.speechError', 'Speech recognition failed');
@@ -474,6 +532,18 @@ function buildEn(): Map<string, string> {
   m.set('memory.clearMessage', 'Permanently delete all stored memories?');
   m.set('memory.cancel', 'Cancel');
   m.set('memory.clear', 'Clear');
+  m.set('memory.extractFromChat', 'Extract from Chat');
+  m.set('memory.extracting', 'Analyzing...');
+  m.set('memory.syncFromServer', 'Sync from Server');
+  m.set('memory.syncing', 'Syncing...');
+  m.set('memory.syncDone', 'Synced, {0} new items');
+  m.set('memory.syncFailed', 'Sync failed');
+  m.set('memory.noMessages', 'No messages in current chat');
+  m.set('memory.tabMemory', 'Memory');
+  m.set('memory.tabHistory', 'Chat History');
+  m.set('memory.noSessions', 'No conversations yet');
+  m.set('memory.messages', ' messages');
+  m.set('memory.backToList', 'Back');
 
   // SettingsPage - Soul
   m.set('settings.soul', 'SOUL / PERSONALITY');
@@ -642,6 +712,10 @@ function buildEn(): Map<string, string> {
   m.set('session.title', 'Chats');
   m.set('session.new', 'New Chat');
   m.set('session.default', 'Default Chat');
+  m.set('session.close', 'Close');
+  m.set('session.closeConfirm', 'Close this conversation? History will be preserved.');
+  m.set('session.closed', 'Closed');
+  m.set('session.closedTag', 'Closed');
   m.set('session.delete', 'Delete');
   m.set('session.deleteConfirm', 'Delete this conversation?');
   m.set('session.deleted', 'Deleted');
@@ -654,6 +728,46 @@ function buildEn(): Map<string, string> {
   m.set('session.clearConfirm', 'Clear all messages in this conversation?');
   m.set('session.cleared', 'Cleared');
   m.set('session.cannotDeleteLast', 'Cannot delete the last conversation');
+  m.set('memory.deleteSession', 'Delete Conversation');
+  m.set('memory.deleteSessionConfirm', 'Permanently delete this conversation and all its messages? This cannot be undone.');
+
+  // Queue
+  m.set('queue.pending', 'Pending');
+  m.set('queue.failed', 'Failed');
+  m.set('queue.resend', 'Resend');
+  m.set('queue.delete', 'Delete');
+  m.set('queue.resendAll', 'Resend All');
+  m.set('queue.clearAll', 'Clear All');
+  m.set('queue.banner', '{0} queued message(s)');
+
+  // Voiceprint
+  m.set('voiceprint.title', 'Voiceprint');
+  m.set('voiceprint.speakerCount', 'speaker(s)');
+  m.set('voiceprint.empty', 'No registered voiceprints');
+  m.set('voiceprint.samples', 'sample(s)');
+  m.set('voiceprint.remove', 'Remove');
+  m.set('voiceprint.enroll', 'Register New Voiceprint');
+  m.set('voiceprint.enterName', 'Enter speaker name');
+  m.set('voiceprint.namePlaceholder', 'e.g. John');
+  m.set('voiceprint.nameExists', 'Name already registered');
+  m.set('voiceprint.next', 'Next');
+  m.set('voiceprint.cancel', 'Cancel');
+  m.set('voiceprint.recordStep', 'Record Voice Sample');
+  m.set('voiceprint.readAloud', 'Please read the following text aloud:');
+  m.set('voiceprint.recording', 'Recording...');
+  m.set('voiceprint.startRecord', 'Start Recording');
+  m.set('voiceprint.tooShort', 'Recording too short, please retry');
+  m.set('voiceprint.sampleOk', 'Sample recorded successfully');
+  m.set('voiceprint.processing', 'Processing...');
+  m.set('voiceprint.success', 'Voiceprint registered');
+  m.set('voiceprint.enrollFailed', 'Voiceprint registration failed');
+  m.set('voiceprint.recordFailed', 'Recording failed');
+  m.set('voiceprint.done', 'Done');
+  m.set('voiceprint.deleteConfirm', 'Delete voiceprint for {0}?');
+  m.set('voiceprint.confirmDelete', 'Confirm Delete');
+  m.set('voiceprint.removed', 'Voiceprint removed');
+  m.set('settings.voiceprint', 'VOICEPRINT');
+  m.set('settings.voiceprintDesc', 'Local voiceprint enrollment & identification');
 
   return m;
 }

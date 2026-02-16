@@ -1,7 +1,7 @@
 import { preferences } from '@kit.ArkData';
 import { common, abilityAccessCtrl } from '@kit.AbilityKit';
 import { MessageBubble } from '../components/MessageBubble';
-import { ChatMessage, InlineButton, SettingsData, MemoryItem, ConversationFile, CronTask, ChatSession } from '../model/Models';
+import { ChatMessage, InlineButton, SettingsData, MemoryItem, CronTask, ChatSession, QueuedMessage } from '../model/Models';
 import { SessionService } from '../service/SessionService';
 import { SessionDrawer } from '../components/SessionDrawer';
 import { AIService, AIResult } from '../service/AIService';
@@ -18,7 +18,6 @@ import { LogService } from '../common/LogService';
 import { I18n } from '../common/I18n';
 import { ConversationLogger } from '../service/ConversationLogger';
 import { promptAction, router } from '@kit.ArkUI';
-import { pasteboard } from '@kit.BasicServicesKit';
 import { audio } from '@kit.AudioKit';
 import { fileIo, picker } from '@kit.CoreFileKit';
 import { image } from '@kit.ImageKit';
@@ -36,6 +35,7 @@ export struct ChatPage {
   @State messages: ChatMessage[] = [];
   @State inputText: string = '';
   @State isLoading: boolean = false;
+  @State loadingSessionId: string = '';  // tracks which session isLoading belongs to
   @State gwConnected: boolean = false;
   @State @Watch('onLangChange') lang: string = 'zh';
   @State ttsAutoRead: boolean = false;
@@ -47,10 +47,6 @@ export struct ChatPage {
   @State gwAgentEmoji: string = '';
   @State gwAgentAvatar: string = '';
   @State gwAgentTheme: string = '';
-  @State showHistory: boolean = false;
-  @State historyFiles: ConversationFile[] = [];
-  @State historyContent: string = '';
-  @State historyFilename: string = '';
   @State isTalkMode: boolean = false;
   @State talkStatus: string = '';
   @State previewImagePath: string = '';
@@ -67,6 +63,7 @@ export struct ChatPage {
   @State showSessionDrawer: boolean = false;  // session list drawer visibility
   @State sessions: ChatSession[] = [];  // all sessions
   @State currentSessionId: string = 'default';  // current active session ID
+  @State queuedMessages: QueuedMessage[] = [];  // persisted message queue
   private pendingFileContent: string = '';  // file text content to attach
   private sessionSvc: SessionService = SessionService.getInstance();
   @StorageLink('share_timestamp') @Watch('onShareReceived') shareTimestamp: number = 0;
@@ -106,6 +103,9 @@ export struct ChatPage {
   // Track unsolicited agent events (from other channels like WhatsApp)
   private unsolicitedRuns: Map<string, string> = new Map<string, string>(); // runId → msgId
   private unsolicitedTexts: Map<string, string> = new Map<string, string>(); // runId → accumulated text
+  // Track cross-session responses (replies for a session different from the current one)
+  private crossSessionTexts: Map<string, string> = new Map<string, string>(); // runId → accumulated text
+  private crossSessionMsgIds: Map<string, string> = new Map<string, string>(); // runId → assistantMsgId
   private soulText: string = Constants.DEFAULT_SOUL;
   // Track the current gateway chat run
   private gwRunId: string = '';
@@ -288,39 +288,6 @@ export struct ChatPage {
     Column() {
       // -- header --
       Row() {
-        if (this.showHistory) {
-          // History mode header
-          Text('\u2190')
-            .fontSize(22)
-            .fontColor('#1A1A1A')
-            .padding(8)
-            .onClick(() => { this.closeHistory(); })
-          Text(this.historyContent.length > 0 ? this.historyFilename : I18n.t('chat.history'))
-            .fontSize(18)
-            .fontWeight(FontWeight.Bold)
-            .fontColor('#1A1A1A')
-            .layoutWeight(1)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .margin({ left: 4 })
-          if (this.historyContent.length > 0) {
-            // Export (copy to clipboard)
-            Text('\uD83D\uDCE4')
-              .fontSize(20)
-              .padding(6)
-              .onClick(() => { this.exportHistory(); })
-            // Compress (AI summarize)
-            Text('\uD83D\uDCE6')
-              .fontSize(20)
-              .padding(6)
-              .onClick(() => { this.compressHistory(); })
-            // Delete
-            Text('\uD83D\uDDD1')
-              .fontSize(20)
-              .padding(6)
-              .onClick(() => { this.deleteHistory(); })
-          }
-        } else {
           // Session menu button (hamburger)
           Text('☰')
             .fontSize(22)
@@ -367,7 +334,7 @@ export struct ChatPage {
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
             Row({ space: 6 }) {
-              if (this.isLoading) {
+              if (this.isLoading && this.loadingSessionId === this.currentSessionId) {
                 Text(I18n.t('chat.thinking'))
                   .fontSize(12)
                   .fontColor('#FF9800')
@@ -406,16 +373,11 @@ export struct ChatPage {
           .clip(true)
 
           // New conversation button
-          Text('\u270E')
-            .fontSize(20)
+          Text('+')
+            .fontSize(28)
+            .fontWeight(FontWeight.Bold)
             .padding(8)
             .onClick(() => { this.createNewSession(); })
-
-          // History button
-          Text('\uD83D\uDCCB')
-            .fontSize(20)
-            .padding(8)
-            .onClick(() => { this.openHistory(); })
 
           // TTS auto-read quick toggle
           Text(this.ttsAutoRead ? '\uD83D\uDD0A' : '\uD83D\uDD07')
@@ -436,7 +398,6 @@ export struct ChatPage {
             .fontSize(20)
             .padding(8)
             .onClick(() => { this.clearMessages(); })
-        }
       }
       .width('100%')
       .height(56)
@@ -444,70 +405,73 @@ export struct ChatPage {
       .backgroundColor(Color.White)
       .shadow({ radius: 2, color: '#00000008', offsetY: 1 })
 
-      // -- message list / history views --
-      if (this.showHistory) {
-        if (this.historyContent.length > 0) {
-          // Viewing a single conversation
-          Scroll() {
-            Text(this.historyContent)
-              .fontSize(14)
-              .fontColor('#333333')
-              .lineHeight(22)
-              .padding(16)
-              .width('100%')
-          }
-          .layoutWeight(1)
-          .scrollBar(BarState.Auto)
-          .edgeEffect(EdgeEffect.Spring)
-        } else if (this.historyFiles.length === 0) {
-          // Empty history
-          Column() {
-            Text('\uD83D\uDCDA')
-              .fontSize(48)
-              .margin({ bottom: 12 })
-            Text(I18n.t('chat.historyEmpty'))
-              .fontSize(16)
+      // -- queued messages banner --
+      if (this.queuedMessages.length > 0 && !this.isLoading) {
+        Column({ space: 0 }) {
+          // Banner header with count and bulk actions
+          Row() {
+            Text(`\u23F3 ${I18n.t('queue.banner').replace('{0}', this.queuedMessages.length.toString())}`)
+              .fontSize(13)
+              .fontColor('#E65100')
+              .layoutWeight(1)
+            Text(I18n.t('queue.resendAll'))
+              .fontSize(12)
+              .fontColor(Color.White)
+              .backgroundColor('#D2691E')
+              .borderRadius(12)
+              .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+              .onClick(() => { this.resendAllQueued(); })
+            Text(I18n.t('queue.clearAll'))
+              .fontSize(12)
               .fontColor('#999999')
+              .margin({ left: 8 })
+              .onClick(() => { this.clearAllQueued(); })
           }
-          .layoutWeight(1)
-          .justifyContent(FlexAlign.Center)
-        } else {
-          // History file list
-          List() {
-            ForEach(this.historyFiles, (file: ConversationFile) => {
-              ListItem() {
-                Row() {
-                  Column() {
-                    Text(this.formatConversationDate(file.filename))
-                      .fontSize(15)
-                      .fontWeight(FontWeight.Medium)
-                      .fontColor('#1A1A1A')
-                    Text(`~${file.messageCount} messages`)
-                      .fontSize(12)
-                      .fontColor('#999999')
-                      .margin({ top: 4 })
-                  }
-                  .alignItems(HorizontalAlign.Start)
-                  .layoutWeight(1)
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 8, bottom: 6 })
 
-                  Text('\u203A')
-                    .fontSize(22)
-                    .fontColor('#CCCCCC')
-                }
-                .width('100%')
-                .padding({ left: 16, right: 16, top: 14, bottom: 14 })
-                .backgroundColor(Color.White)
-                .borderRadius(10)
-                .onClick(() => { this.viewConversation(file.filename); })
+          // Individual queued items
+          ForEach(this.queuedMessages, (q: QueuedMessage) => {
+            Row() {
+              Column() {
+                Text(q.text)
+                  .fontSize(13)
+                  .fontColor('#333333')
+                  .maxLines(2)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                Text(q.status === 'failed' ? I18n.t('queue.failed') : I18n.t('queue.pending'))
+                  .fontSize(11)
+                  .fontColor(q.status === 'failed' ? '#D32F2F' : '#FF9800')
+                  .margin({ top: 2 })
               }
-              .padding({ left: 12, right: 12, top: 4 })
-            }, (file: ConversationFile): string => file.filename)
-          }
-          .layoutWeight(1)
-          .edgeEffect(EdgeEffect.Spring)
-          .scrollBar(BarState.Off)
+              .alignItems(HorizontalAlign.Start)
+              .layoutWeight(1)
+
+              Text(I18n.t('queue.resend'))
+                .fontSize(12)
+                .fontColor('#D2691E')
+                .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+                .borderRadius(10)
+                .borderWidth(1)
+                .borderColor('#D2691E')
+                .onClick(() => { this.resendQueuedItem(q); })
+              Text(I18n.t('queue.delete'))
+                .fontSize(12)
+                .fontColor('#999999')
+                .margin({ left: 6 })
+                .onClick(() => { this.deleteQueuedItem(q.id); })
+            }
+            .width('100%')
+            .padding({ left: 16, right: 16, top: 6, bottom: 6 })
+          }, (q: QueuedMessage): string => q.id)
         }
-      } else if (this.messages.length === 0) {
+        .width('100%')
+        .backgroundColor('#FFF8E1')
+        .borderRadius(0)
+      }
+
+      // -- message list --
+      if (this.messages.length === 0) {
         this.EmptyState()
       } else {
         List({ scroller: this.scroller }) {
@@ -527,6 +491,7 @@ export struct ChatPage {
                   this.replyingToMessage = message;
                   this.showReplyPreview = true;
                 },
+                onNewSession: (message: ChatMessage): void => { this.createNewSession(message); },
                 onQuoteClick: (replyToId: string): void => { this.scrollToMessage(replyToId); }
               })
             }
@@ -534,8 +499,8 @@ export struct ChatPage {
             .animation({ duration: 500 })
           }, (msg: ChatMessage): string => msg.id)
 
-          // loading indicator — animated dots while waiting for response
-          if (this.isLoading) {
+          // loading indicator — animated dots while waiting for response (only for current session)
+          if (this.isLoading && this.loadingSessionId === this.currentSessionId) {
             ListItem() {
               Row() {
                 if (this.getEffectiveAvatar().length > 0) {
@@ -582,8 +547,7 @@ export struct ChatPage {
         .scrollBar(BarState.Off)
       }
 
-      // -- input bar (hidden in history mode) --
-      if (!this.showHistory) {
+      // -- input bar --
       // Reply preview (微信风格 - 显示在输入框上方)
       if (this.showReplyPreview && this.replyingToMessage !== null) {
         Row() {
@@ -808,15 +772,14 @@ export struct ChatPage {
         .width(42)
         .height(42)
         .borderRadius(21)
-        .backgroundColor((this.inputText.trim().length > 0 || this.pendingImagePath.length > 0 || this.pendingImagePaths.length > 0 || this.pendingFileName.length > 0) && !this.isLoading ? '#D2691E' : '#CCCCCC')
-        .enabled((this.inputText.trim().length > 0 || this.pendingImagePath.length > 0 || this.pendingImagePaths.length > 0 || this.pendingFileName.length > 0) && !this.isLoading)
+        .backgroundColor((this.inputText.trim().length > 0 || this.pendingImagePath.length > 0 || this.pendingImagePaths.length > 0 || this.pendingFileName.length > 0) ? '#D2691E' : '#CCCCCC')
+        .enabled(this.inputText.trim().length > 0 || this.pendingImagePath.length > 0 || this.pendingImagePaths.length > 0 || this.pendingFileName.length > 0)
         .onClick(() => { this.send(); })
       }
       .width('100%')
       .padding(10)
       .backgroundColor(Color.White)
       .shadow({ radius: 4, color: '#00000008', offsetY: -1 })
-      } // end if (!showHistory)
     }
     .width('100%')
     .height('100%')
@@ -867,8 +830,8 @@ export struct ChatPage {
           onSessionCreate: () => {
             this.createNewSession();
           },
-          onSessionDelete: (sessionId: string) => {
-            this.deleteSession(sessionId);
+          onSessionClose: (sessionId: string) => {
+            this.closeSession(sessionId);
           },
           onSessionRename: (sessionId: string, newName: string) => {
             this.renameSession(sessionId, newName);
@@ -1019,43 +982,6 @@ export struct ChatPage {
     return this.assistantAvatar;
   }
 
-  // ---- History UI ----
-
-  private openHistory(): void {
-    let ctx = getContext(this);
-    ConversationLogger.getInstance().listConversations(ctx).then((files: ConversationFile[]) => {
-      this.historyFiles = files;
-      this.historyContent = '';
-      this.historyFilename = '';
-      this.showHistory = true;
-    }).catch(() => {
-      this.historyFiles = [];
-      this.historyContent = '';
-      this.historyFilename = '';
-      this.showHistory = true;
-    });
-  }
-
-  private viewConversation(filename: string): void {
-    let ctx = getContext(this);
-    ConversationLogger.getInstance().readConversation(ctx, filename).then((content: string) => {
-      this.historyContent = content;
-      this.historyFilename = this.formatConversationDate(filename);
-    }).catch(() => { /* ignore */ });
-  }
-
-  private closeHistory(): void {
-    if (this.historyContent.length > 0) {
-      // Go back to file list
-      this.historyContent = '';
-      this.historyFilename = '';
-    } else {
-      // Go back to chat
-      this.showHistory = false;
-      this.historyFiles = [];
-    }
-  }
-
   /**
    * Auto-extract memories from a conversation using AI.
    * Called automatically when a conversation is saved (fire-and-forget).
@@ -1140,133 +1066,6 @@ Respond ONLY with the JSON array.`;
     }).catch(() => { /* ignore settings load error */ });
   }
 
-  /** Export: copy conversation content to clipboard */
-  private exportHistory(): void {
-    if (this.historyContent.length === 0) return;
-    let pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, this.historyContent);
-    let sysBoard = pasteboard.getSystemPasteboard();
-    sysBoard.setData(pasteData).then(() => {
-      promptAction.showToast({ message: I18n.t('chat.exported'), duration: 1500 });
-    }).catch(() => {
-      promptAction.showToast({ message: 'Export failed', duration: 1500 });
-    });
-  }
-
-  /**
-   * Compress: use AI to summarize the conversation, replacing the file content.
-   */
-  private async compressHistory(): Promise<void> {
-    if (this.historyContent.length === 0 || this.historyFilename.length === 0) return;
-    promptAction.showToast({ message: I18n.t('chat.compressing'), duration: 2000 });
-
-    try {
-      let ctx = getContext(this) as common.UIAbilityContext;
-      let settings = await this.loadSettings(ctx);
-
-      let systemPrompt = `You are a conversation summarizer. Compress the following conversation into a concise summary in the SAME language as the original conversation.
-
-Format:
-# Summary
-<date from the original title>
-
-## Key Points
-- point 1
-- point 2
-...
-
-## Decisions / Outcomes
-- outcome 1
-...
-
-## Memories (facts/preferences learned)
-- memory 1
-...
-
-Keep it short but preserve all important information. Use the same language as the conversation.`;
-
-      let content = this.historyContent;
-      let result = await this.ai.simpleChat(systemPrompt, content, settings);
-
-      if (result.length > 0) {
-        // Find original filename to overwrite
-        let origFilename = this.findOriginalFilename();
-        if (origFilename.length > 0) {
-          let filePath = ctx.filesDir + '/conversations/' + origFilename;
-          let encoder = new util.TextEncoder();
-          let encoded = encoder.encodeInto(result);
-          let file = fileIo.openSync(filePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-          fileIo.writeSync(file.fd, encoded.buffer);
-          fileIo.closeSync(file);
-
-          this.historyContent = result;
-          promptAction.showToast({ message: I18n.t('chat.compressed'), duration: 1500 });
-          this.log.info('ChatPage', `Conversation compressed: ${content.length} -> ${result.length} bytes`);
-        }
-      }
-    } catch (e) {
-      this.log.error('ChatPage', `compressHistory error: ${(e as Error).message ?? ''}`);
-      promptAction.showToast({ message: I18n.t('chat.compressFailed'), duration: 1500 });
-    }
-  }
-
-  /** Delete the currently viewed conversation file */
-  private deleteHistory(): void {
-    if (this.historyFilename.length === 0) return;
-    let origFilename = this.findOriginalFilename();
-    if (origFilename.length === 0) return;
-
-    promptAction.showDialog({
-      title: '',
-      message: I18n.t('chat.deleteHistoryConfirm'),
-      buttons: [
-        { text: I18n.t('memory.cancel'), color: '#999999' },
-        { text: I18n.t('settings.confirm'), color: '#F44336' }
-      ]
-    }).then((result) => {
-      if (result.index === 1) {
-        let ctx = getContext(this) as common.UIAbilityContext;
-        let filePath = ctx.filesDir + '/conversations/' + origFilename;
-        try {
-          fileIo.unlinkSync(filePath);
-        } catch { /* ignore */ }
-        promptAction.showToast({ message: I18n.t('chat.historyDeleted'), duration: 1500 });
-        // Go back to file list and refresh
-        this.historyContent = '';
-        this.historyFilename = '';
-        this.openHistory();
-      }
-    }).catch(() => { /* cancelled */ });
-  }
-
-  /**
-   * Recover original filename from the display title.
-   * historyFilename is formatted as "2026-02-11 15:30:45"
-   * original filename is "chat_2026-02-11_153045.md"
-   */
-  private findOriginalFilename(): string {
-    // Try to match from historyFiles list
-    for (let f of this.historyFiles) {
-      if (this.formatConversationDate(f.filename) === this.historyFilename) {
-        return f.filename;
-      }
-    }
-    // Fallback: reconstruct from formatted name
-    let match = /(\d{4}-\d{2}-\d{2})\s+(\d{2}):(\d{2}):(\d{2})/.exec(this.historyFilename);
-    if (match) {
-      return `chat_${match[1]}_${match[2]}${match[3]}${match[4]}.md`;
-    }
-    return '';
-  }
-
-  private formatConversationDate(filename: string): string {
-    // filename: chat_2026-02-11_153045.md
-    let match = /chat_(\d{4}-\d{2}-\d{2})_(\d{2})(\d{2})(\d{2})\.md/.exec(filename);
-    if (match) {
-      return `${match[1]} ${match[2]}:${match[3]}:${match[4]}`;
-    }
-    return filename.replace('.md', '');
-  }
-
   private async loadAssistantSettings(): Promise<void> {
     try {
       let ctx = getContext(this) as common.UIAbilityContext;
@@ -1284,9 +1083,10 @@ Keep it short but preserve all important information. Use the same language as t
       await this.sessionSvc.initialize(ctx);
       this.sessions = this.sessionSvc.getSessions();
       this.currentSessionId = this.sessionSvc.getCurrentSessionId();
-      // Load messages for current session
+      // Load messages and queue for current session
       await this.loadSessionMessages();
-      this.log.info('ChatPage', `Sessions initialized: ${this.sessions.length} sessions, current: ${this.currentSessionId}`);
+      await this.loadSessionQueue();
+      this.log.info('ChatPage', `Sessions initialized: ${this.sessions.length} sessions, current: ${this.currentSessionId}, queue: ${this.queuedMessages.length}`);
     } catch (err) {
       this.log.error('ChatPage', `Failed to initialize sessions: ${err}`);
       // Fallback: load history the old way
@@ -1315,60 +1115,299 @@ Keep it short but preserve all important information. Use the same language as t
     }
   }
 
+  private async loadSessionQueue(): Promise<void> {
+    try {
+      let loaded = await this.sessionSvc.loadMessageQueue(this.currentSessionId);
+      // Mark any 'sending' items back to 'pending' on reload (app was interrupted)
+      for (let item of loaded) {
+        if (item.status === 'sending') {
+          item.status = 'pending';
+        }
+      }
+      this.queuedMessages = loaded;
+      this.log.info('ChatPage', `Loaded ${loaded.length} queued messages for session ${this.currentSessionId}`);
+    } catch (err) {
+      this.log.error('ChatPage', `Failed to load session queue: ${err}`);
+      this.queuedMessages = [];
+    }
+  }
+
+  private async saveSessionQueue(): Promise<void> {
+    try {
+      await this.sessionSvc.saveMessageQueue(this.currentSessionId, this.queuedMessages);
+    } catch (err) {
+      this.log.error('ChatPage', `Failed to save session queue: ${err}`);
+    }
+  }
+
+  /** Resend all queued messages (resets to pending and starts processing). */
+  private async resendAllQueued(): Promise<void> {
+    if (this.queuedMessages.length === 0 || this.isLoading) return;
+    for (let item of this.queuedMessages) {
+      item.status = 'pending';
+    }
+    this.queuedMessages = [...this.queuedMessages];
+    await this.saveSessionQueue();
+    await this.processQueue();
+  }
+
+  /** Clear all queued messages. */
+  private async clearAllQueued(): Promise<void> {
+    this.queuedMessages = [];
+    await this.saveSessionQueue();
+  }
+
+  /** Resend a single queued item — moves it to front and starts processing. */
+  private async resendQueuedItem(item: QueuedMessage): Promise<void> {
+    if (this.isLoading) return;
+    item.status = 'pending';
+    // Move to front of queue
+    let rest = this.queuedMessages.filter(q => q.id !== item.id);
+    this.queuedMessages = [item, ...rest];
+    await this.saveSessionQueue();
+    await this.processQueue();
+  }
+
+  /** Delete a single queued item. */
+  private async deleteQueuedItem(itemId: string): Promise<void> {
+    this.queuedMessages = this.queuedMessages.filter(q => q.id !== itemId);
+    await this.saveSessionQueue();
+  }
+
   private async switchToSession(sessionId: string): Promise<void> {
     if (sessionId === this.currentSessionId) {
       this.showSessionDrawer = false;
       return;
     }
-    
+
+    // Capture old session info before switching
+    const oldSessionId = this.currentSessionId;
+    const oldMessages = [...this.messages];
+
     // Save current session first
     await this.saveSessionMessages();
-    
+    await this.saveSessionQueue();
+
     // Switch to new session
     await this.sessionSvc.setCurrentSession(sessionId);
     this.currentSessionId = sessionId;
-    
-    // Load new session's messages
+
+    // Load new session's messages and queue
     await this.loadSessionMessages();
-    
+    await this.loadSessionQueue();
+
     // Refresh session list and close drawer
     this.sessions = this.sessionSvc.getSessions();
     this.showSessionDrawer = false;
-    
+
     this.log.info('ChatPage', `Switched to session: ${sessionId}`);
+
+    // Generate title and extract memories for old session in background
+    this.tryGenerateTitleOnLeave(oldSessionId, oldMessages);
+    this.tryExtractMemoryOnLeave(oldSessionId, oldMessages);
   }
 
-  private async createNewSession(): Promise<void> {
+  private async createNewSession(sourceMessage?: ChatMessage): Promise<void> {
+    // Capture old session info before switching
+    const oldSessionId = this.currentSessionId;
+    const oldMessages = [...this.messages];
+
     // Save current session first
     await this.saveSessionMessages();
-    
+    await this.saveSessionQueue();
+
     // Create new session
     const newSession = await this.sessionSvc.createSession();
-    
+
     // Switch to new session
     await this.sessionSvc.setCurrentSession(newSession.id);
     this.currentSessionId = newSession.id;
     this.messages = [];
-    
+    this.queuedMessages = [];
+
+    // If a source message was provided, copy it as the first message in the new session
+    if (sourceMessage) {
+      const copiedMsg = new ChatMessage(sourceMessage.role, sourceMessage.content);
+      copiedMsg.timestamp = sourceMessage.timestamp;
+      copiedMsg.imagePath = sourceMessage.imagePath;
+      copiedMsg.audioPath = sourceMessage.audioPath;
+      copiedMsg.userImagePath = sourceMessage.userImagePath;
+      copiedMsg.userImagePaths = sourceMessage.userImagePaths;
+      copiedMsg.videoPath = sourceMessage.videoPath;
+      copiedMsg.attachmentName = sourceMessage.attachmentName;
+      this.messages.push(copiedMsg);
+      await this.saveSessionMessages();
+    }
+
     // Refresh session list
     this.sessions = this.sessionSvc.getSessions();
     this.showSessionDrawer = false;
-    
+
     this.log.info('ChatPage', `Created new session: ${newSession.id}`);
+
+    // Generate title and extract memories for old session in background
+    this.tryGenerateTitleOnLeave(oldSessionId, oldMessages);
+    this.tryExtractMemoryOnLeave(oldSessionId, oldMessages);
   }
 
-  private async deleteSession(sessionId: string): Promise<void> {
-    const success = await this.sessionSvc.deleteSession(sessionId);
+  /** Check if a session needs title generation and trigger it in background. */
+  private tryGenerateTitleOnLeave(sessionId: string, messages: ChatMessage[]): void {
+    if (messages.length === 0) return;
+    const session = this.sessionSvc.getSessions().find(s => s.id === sessionId);
+    if (!session) return;
+    if (session.title !== '新对话' && session.title !== '默认对话') return;
+    this.generateSessionTitle(sessionId, messages);
+  }
+
+  /** Generate a session title by summarizing the entire conversation. */
+  private async generateSessionTitle(sessionId: string, messages: ChatMessage[]): Promise<void> {
+    try {
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let settings = await this.loadSettings(ctx);
+
+      // Build conversation summary from all messages
+      let summary = '';
+      for (let msg of messages) {
+        let role = msg.role === 'user' ? '用户' : '助手';
+        let content = msg.content.substring(0, 200);
+        summary += `${role}: ${content}\n`;
+        if (summary.length > 800) break;
+      }
+
+      // Only attempt AI title generation when we have a valid API key
+      if (settings.apiKey && settings.apiKey.length > 0) {
+        const systemPrompt = '你是标题生成器。根据以下对话内容，生成一个简短的对话标题（10字以内）。只输出标题文字，不要加引号或其他符号。';
+        const title = await this.ai.simpleChat(systemPrompt, summary, settings);
+        const trimmedTitle = title.trim().substring(0, 10);
+        if (trimmedTitle.length > 0) {
+          await this.sessionSvc.renameSession(sessionId, trimmedTitle);
+          this.sessions = this.sessionSvc.getSessions();
+          this.log.info('ChatPage', `AI-generated title for session ${sessionId}: ${trimmedTitle}`);
+          return;
+        }
+      }
+
+      // Fallback: extract a meaningful title from the conversation
+      this.log.info('ChatPage', `Using heuristic title for session ${sessionId} (no API key or empty AI result)`);
+      await this.applyHeuristicTitle(sessionId, messages);
+    } catch (err) {
+      this.log.error('ChatPage', `AI title generation failed: ${err}, using heuristic`);
+      try {
+        await this.applyHeuristicTitle(sessionId, messages);
+      } catch { /* ignore */ }
+    }
+  }
+
+  /** Generate a session title heuristically from conversation messages. */
+  private async applyHeuristicTitle(sessionId: string, messages: ChatMessage[]): Promise<void> {
+    let firstUserMsg = messages.find(m => m.role === 'user');
+    if (!firstUserMsg) return;
+
+    // Clean up user content (remove file/reply prefixes)
+    let cleaned = firstUserMsg.content
+      .replace(/^\[File:.*?\]\n[\s\S]*?\n\n/g, '')
+      .replace(/^\[Replying to:.*?\]\n/g, '')
+      .replace(/^\[.*?张.*?图片\]$/g, '')
+      .trim();
+
+    if (cleaned.length === 0) return;
+
+    let title = cleaned.substring(0, 10).replace(/\n/g, ' ').trim();
+    if (title.length > 0) {
+      if (cleaned.length > 10) {
+        title += '...';
+      }
+      await this.sessionSvc.renameSession(sessionId, title);
+      this.sessions = this.sessionSvc.getSessions();
+    }
+  }
+
+  /** Extract memorable info from session messages when leaving. */
+  private tryExtractMemoryOnLeave(sessionId: string, messages: ChatMessage[]): void {
+    // Only extract if there are enough messages
+    if (messages.length < 3) return;
+    
+    // Run extraction in background
+    this.extractMemoryFromSession(sessionId, messages);
+  }
+
+  /** Extract facts, preferences, and instructions from conversation. */
+  private async extractMemoryFromSession(sessionId: string, messages: ChatMessage[]): Promise<void> {
+    try {
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let settings = await this.loadSettings(ctx);
+      
+      // Skip if no API key
+      if (!settings.apiKey || settings.apiKey.length === 0) {
+        this.log.info('ChatPage', `Skipping memory extraction for ${sessionId}: no API key`);
+        return;
+      }
+
+      // Build conversation text
+      let lines: string[] = [];
+      for (let msg of messages) {
+        if (msg.role === 'user') {
+          lines.push(`User: ${msg.content}`);
+        } else if (msg.role === 'assistant' && !msg.isToolCall) {
+          lines.push(`Assistant: ${msg.content}`);
+        }
+      }
+      let conversationText = lines.join('\n');
+      
+      // Skip if too short
+      if (conversationText.length < 50) return;
+      
+      // Truncate if too long
+      if (conversationText.length > 4000) {
+        conversationText = conversationText.substring(conversationText.length - 4000);
+      }
+
+      const systemPrompt = `You are a memory extraction assistant. Analyze the conversation and extract important facts, preferences, and instructions worth remembering across sessions.
+
+Return ONLY a JSON array of objects with:
+- "type": "fact" | "preference" | "instruction"
+- "content": the memory text (concise, 1 sentence)
+
+If nothing worth remembering, return [].
+Respond ONLY with the JSON array.`;
+
+      let result = await this.ai.simpleChat(systemPrompt, conversationText, settings);
+      let jsonMatch = /\[[\s\S]*\]/.exec(result);
+      if (!jsonMatch) {
+        this.log.info('ChatPage', `No memories extracted from session ${sessionId}`);
+        return;
+      }
+
+      interface MemoryExtractItem { type: string; content: string; }
+      let memories = JSON.parse(jsonMatch[0]) as MemoryExtractItem[];
+      let addedCount = 0;
+      
+      for (let mem of memories) {
+        if (mem.content && mem.content.length > 0) {
+          let memType = mem.type ?? 'fact';
+          let item = await this.memSvc.addIfNew(ctx, memType, mem.content, 0.8);
+          if (item) {
+            addedCount++;
+          }
+        }
+      }
+
+      this.log.info('ChatPage', `Memory extraction for session ${sessionId}: found ${memories.length}, added ${addedCount} new`);
+    } catch (err) {
+      this.log.warn('ChatPage', `Memory extraction failed for session ${sessionId}: ${(err as Error).message ?? ''}`);
+    }
+  }
+
+  private async closeSession(sessionId: string): Promise<void> {
+    const success = await this.sessionSvc.closeSession(sessionId);
     if (success) {
-      // If current session was deleted, load the new current session's messages
+      // If current session was closed, switch to the new current session
       if (sessionId === this.currentSessionId) {
         this.currentSessionId = this.sessionSvc.getCurrentSessionId();
         await this.loadSessionMessages();
       }
       this.sessions = this.sessionSvc.getSessions();
-      promptAction.showToast({ message: I18n.t('session.deleted') });
-    } else {
-      promptAction.showToast({ message: I18n.t('session.cannotDeleteLast') });
+      promptAction.showToast({ message: I18n.t('session.closed') });
     }
   }
 
@@ -1401,7 +1440,7 @@ Keep it short but preserve all important information. Use the same language as t
     let text = this.inputText.trim();
     let hasImage = this.pendingImagePath.length > 0 || this.pendingImagePaths.length > 0;
     let hasAttachment = hasImage || this.pendingFileName.length > 0;
-    if ((text.length === 0 && !hasAttachment) || this.isLoading) return;
+    if (text.length === 0 && !hasAttachment) return;
     this.inputText = '';
 
     // Capture pending attachments before clearing
@@ -1455,18 +1494,31 @@ Keep it short but preserve all important information. Use the same language as t
     this.messages.push(userMsg);
     this.scrollToEnd();
 
-    // Auto-generate session title from first user message
-    if (this.messages.length === 1 && text.length > 0) {
-      this.sessionSvc.autoGenerateTitle(this.currentSessionId, text).then(() => {
-        this.sessions = this.sessionSvc.getSessions();
-      });
+    // Determine the text to send to AI
+    let textForAI = text.length > 0 ? text : (hasImages ? I18n.t('chat.describeImage') : '');
+
+    // If AI is busy, queue the message for later processing
+    if (this.isLoading) {
+      let qItem: QueuedMessage = {
+        id: `q_${Date.now()}_${Math.floor(Math.random() * 100000)}`,
+        text: textForAI,
+        status: 'pending',
+        timestamp: Date.now(),
+        sessionId: this.currentSessionId
+      };
+      this.queuedMessages = [...this.queuedMessages, qItem];
+      this.saveSessionQueue();
+      this.scrollToEnd();
+      this.saveHistory();
+      return;
     }
 
     this.isLoading = true;
+    this.loadingSessionId = this.currentSessionId;
     this.startDotAnimation();
 
     // Auto-enrich with location for weather queries
-    let enrichedText = await this.enrichWithLocation(text.length > 0 ? text : (hasImages ? I18n.t('chat.describeImage') : ''));
+    let enrichedText = await this.enrichWithLocation(textForAI);
 
     if (this.gwConnected) {
       await this.sendViaGateway(enrichedText);
@@ -1476,7 +1528,49 @@ Keep it short but preserve all important information. Use the same language as t
 
     this.scrollToEnd();
     this.saveHistory();
+
+    // Process queued messages
+    await this.processQueue();
   }
+
+  /** Process the next message in the queue after AI finishes responding. */
+  private async processQueue(): Promise<void> {
+    while (this.queuedMessages.length > 0) {
+      let item = this.queuedMessages[0];
+      // Mark as sending
+      item.status = 'sending';
+      this.queuedMessages = [...this.queuedMessages];
+      await this.saveSessionQueue();
+
+      this.isLoading = true;
+      this.loadingSessionId = this.currentSessionId;
+      this.startDotAnimation();
+
+      let enrichedText = await this.enrichWithLocation(item.text);
+
+      try {
+        if (this.gwConnected) {
+          await this.sendViaGateway(enrichedText);
+        } else {
+          await this.sendViaLocalAI(enrichedText);
+        }
+        // Success — remove from queue
+        this.queuedMessages = this.queuedMessages.filter(q => q.id !== item.id);
+      } catch (err) {
+        // Mark as failed and stop processing
+        item.status = 'failed';
+        this.queuedMessages = [...this.queuedMessages];
+        this.log.error('ChatPage', `Queue item failed: ${err}`);
+        await this.saveSessionQueue();
+        break;
+      }
+
+      this.scrollToEnd();
+      this.saveHistory();
+      await this.saveSessionQueue();
+    }
+  }
+
 
   /** Send message through the gateway operator session (chat.send RPC). */
   private async sendViaGateway(text: string): Promise<void> {
@@ -1520,8 +1614,8 @@ Keep it short but preserve all important information. Use the same language as t
       this.scrollToEnd();
 
       let runtime = NodeRuntime.getInstance();
-      let runId = await runtime.sendChatMessage(text);
-      this.log.info('ChatPage', `chat.send returned runId=${runId}, current gwRunId=${this.gwRunId}`);
+      let runId = await runtime.sendChatMessage(text, this.currentSessionId);
+      this.log.info('ChatPage', `chat.send returned runId=${runId}, current gwRunId=${this.gwRunId} session=${this.currentSessionId}`);
 
       // Only set gwRunId from RPC if events haven't already set it
       if (this.gwRunId.length === 0) {
@@ -1531,11 +1625,16 @@ Keep it short but preserve all important information. Use the same language as t
         this.log.info('ChatPage', `gwRunId already adopted from events: ${this.gwRunId} (RPC returned: ${runId})`);
       }
 
+      // Register cross-session assistant message ID for routing if user switches sessions
+      let effectiveRunId = this.gwRunId.length > 0 ? this.gwRunId : runId;
+      this.crossSessionMsgIds.set(effectiveRunId, this.gwAssistantMsgId);
+
       // Check if we already received a final/error event while awaiting the RPC
       if (this.gwEarlyFinish) {
         this.log.info('ChatPage', `Early finish detected for runId=${this.gwRunId}`);
         this.gwEarlyFinish = false;
         this.isLoading = false;
+        this.loadingSessionId = '';
     this.stopDotAnimation();
         return;
       }
@@ -1554,6 +1653,7 @@ Keep it short but preserve all important information. Use the same language as t
         this.messages.push(new ChatMessage('assistant', `Gateway error: ${errMsg}`));
       }
       this.isLoading = false;
+      this.loadingSessionId = '';
     this.stopDotAnimation();
       this.gwRunId = '';
       this.gwAssistantMsgId = '';
@@ -1583,6 +1683,7 @@ Keep it short but preserve all important information. Use the same language as t
           }
         }
         this.isLoading = false;
+        this.loadingSessionId = '';
     this.stopDotAnimation();
         this.gwRunId = '';
         this.gwAssistantMsgId = '';
@@ -1672,7 +1773,15 @@ Keep it short but preserve all important information. Use the same language as t
       }
     }
 
-    this.log.info('ChatPage', `gwChatEvent: state=${event.state} runId=${event.runId} myRunId=${this.gwRunId} msgId=${this.gwAssistantMsgId} textLen=${text.length} text(80)="${text.substring(0, 80)}"`);
+    this.log.info('ChatPage', `gwChatEvent: state=${event.state} runId=${event.runId} myRunId=${this.gwRunId} msgId=${this.gwAssistantMsgId} session=${event.chatSessionId ?? 'none'} current=${this.currentSessionId} textLen=${text.length} text(80)="${text.substring(0, 80)}"`);
+
+    // Multi-session routing: if the event has a chatSessionId that differs from
+    // the current session, route it to the correct background session.
+    if (event.chatSessionId && event.chatSessionId.length > 0 && event.chatSessionId !== this.currentSessionId) {
+      this.log.info('ChatPage', `Cross-session event: routing to session ${event.chatSessionId} (current: ${this.currentSessionId})`);
+      this.handleCrossSessionEvent(event, text);
+      return;
+    }
 
     // Accept events if:
     // 1. We have a pending assistant message (gwAssistantMsgId is set)
@@ -1700,6 +1809,8 @@ Keep it short but preserve all important information. Use the same language as t
       if (this.gwAccumulatedText.length === 0 && text.length > 0) {
         this.log.info('ChatPage', `Accepting agent event with different runId (no text yet): event.runId=${event.runId} gwRunId=${this.gwRunId}`);
         this.gwRunId = event.runId; // Switch to tracking this runId
+        // Register session mapping for the newly adopted runId
+        NodeRuntime.getInstance().registerRunSession(event.runId, this.currentSessionId);
       } else if (this.gwAccumulatedText.length === 0 && event.state === 'final') {
         // Empty final for a different runId — might be a lifecycle end, skip it
         this.log.info('ChatPage', `Ignoring empty final from different runId: ${event.runId}`);
@@ -1714,6 +1825,8 @@ Keep it short but preserve all important information. Use the same language as t
     if (this.gwRunId.length === 0 && event.runId.length > 0) {
       this.log.info('ChatPage', `Adopting runId from event: ${event.runId}`);
       this.gwRunId = event.runId;
+      // Register session mapping for the adopted runId
+      NodeRuntime.getInstance().registerRunSession(event.runId, this.currentSessionId);
     }
 
     if (event.state === 'delta') {
@@ -1854,7 +1967,13 @@ Keep it short but preserve all important information. Use the same language as t
 
   /** Actually reset all gateway chat state */
   private doCleanupGatewayChat(): void {
+    // Clean up cross-session tracking for this run
+    if (this.gwRunId.length > 0) {
+      this.crossSessionMsgIds.delete(this.gwRunId);
+      this.crossSessionTexts.delete(this.gwRunId);
+    }
     this.isLoading = false;
+    this.loadingSessionId = '';
     this.stopDotAnimation();
     this.gwRunId = '';
     this.gwAssistantMsgId = '';
@@ -1929,6 +2048,103 @@ Keep it short but preserve all important information. Use the same language as t
       this.unsolicitedTexts.delete(runId);
       this.scrollToEnd();
       this.saveHistory();
+    }
+  }
+
+  /**
+   * Handle a gateway chat event that belongs to a different session (cross-session routing).
+   * Accumulates text and saves to the correct session's storage in background.
+   */
+  private handleCrossSessionEvent(event: GatewayChatEvent, text: string): void {
+    let targetSessionId = event.chatSessionId!;
+    let runId = event.runId;
+
+    if (event.state === 'delta') {
+      // Accumulate text
+      let acc = (this.crossSessionTexts.get(runId) ?? '') + text;
+      this.crossSessionTexts.set(runId, acc);
+      this.log.info('ChatPage', `Cross-session delta: runId=${runId} session=${targetSessionId} accLen=${acc.length}`);
+    } else if (event.state === 'final') {
+      // Use final text or accumulated deltas (whichever is longer)
+      let accText = this.crossSessionTexts.get(runId) ?? '';
+      if (text.length >= accText.length) {
+        accText = text;
+      }
+      this.log.info('ChatPage', `Cross-session final: runId=${runId} session=${targetSessionId} textLen=${accText.length}`);
+
+      // Save the response to the target session in the background
+      if (accText.length > 0) {
+        this.saveCrossSessionResponse(targetSessionId, runId, accText);
+      }
+
+      // Cleanup tracking
+      this.crossSessionTexts.delete(runId);
+      this.crossSessionMsgIds.delete(runId);
+
+      // If this was our active gateway chat (user switched sessions mid-response), clean up state
+      if (this.gwAssistantMsgId.length > 0 && this.gwRunId === runId) {
+        this.doCleanupGatewayChat();
+      }
+    } else if (event.state === 'error' || event.state === 'aborted') {
+      let errText = event.errorMessage ?? event.state;
+      let accText = this.crossSessionTexts.get(runId) ?? '';
+      // If we have accumulated text, save it; otherwise save error
+      let finalText = accText.length > 0 ? accText : `Gateway: ${errText}`;
+      this.saveCrossSessionResponse(targetSessionId, runId, finalText);
+
+      // Cleanup
+      this.crossSessionTexts.delete(runId);
+      this.crossSessionMsgIds.delete(runId);
+
+      if (this.gwAssistantMsgId.length > 0 && this.gwRunId === runId) {
+        this.doCleanupGatewayChat();
+      }
+    }
+  }
+
+  /**
+   * Save a cross-session response to the correct session's message store.
+   * Loads that session's messages, appends the assistant response, and saves.
+   */
+  private async saveCrossSessionResponse(sessionId: string, runId: string, text: string): Promise<void> {
+    try {
+      // Load the target session's messages
+      let messages = await this.sessionSvc.loadMessages(sessionId);
+
+      // Find the existing placeholder message (created when we sent the request)
+      let msgId = this.crossSessionMsgIds.get(runId);
+      let found = false;
+      if (msgId) {
+        for (let i = messages.length - 1; i >= 0; i--) {
+          if (messages[i].id === msgId) {
+            messages[i].content = text;
+            found = true;
+            break;
+          }
+        }
+      }
+      // If no placeholder found, check for the last empty assistant message
+      if (!found) {
+        for (let i = messages.length - 1; i >= 0; i--) {
+          if (messages[i].role === 'assistant' && messages[i].content.length === 0) {
+            messages[i].content = text;
+            found = true;
+            break;
+          }
+        }
+      }
+      // If still not found, append a new assistant message
+      if (!found) {
+        let msg = new ChatMessage('assistant', text);
+        messages.push(msg);
+      }
+
+      // Save back to session storage
+      await this.sessionSvc.saveMessages(sessionId, messages);
+      this.sessions = this.sessionSvc.getSessions();
+      this.log.info('ChatPage', `Cross-session response saved: session=${sessionId} textLen=${text.length}`);
+    } catch (err) {
+      this.log.error('ChatPage', `Failed to save cross-session response: ${err}`);
     }
   }
 
@@ -2232,6 +2448,7 @@ Keep it short but preserve all important information. Use the same language as t
     }
 
     this.isLoading = false;
+    this.loadingSessionId = '';
     this.stopDotAnimation();
   }
 
@@ -2882,6 +3099,7 @@ Keep it short but preserve all important information. Use the same language as t
     if (text.length === 0 || this.isLoading) return;
 
     this.isLoading = true;
+    this.loadingSessionId = this.currentSessionId;
     this.startDotAnimation();
 
     try {
@@ -2897,9 +3115,13 @@ Keep it short but preserve all important information. Use the same language as t
     }
 
     this.isLoading = false;
+    this.loadingSessionId = '';
     this.stopDotAnimation();
     this.scrollToEnd();
     this.saveHistory();
+
+    // Process queued messages
+    await this.processQueue();
   }
 
   private saveWavFile(buffers: ArrayBuffer[]): string {
@@ -3323,6 +3545,8 @@ Adjust your tone accordingly:
       this.autoExtractMemoriesFromMessages(msgCopy);
     }
     this.messages = [];
+    this.queuedMessages = [];
+    this.saveSessionQueue();
     this.saveHistory();
   }
 
@@ -3670,6 +3894,7 @@ Adjust your tone accordingly:
     this.scrollToEnd();
 
     this.isLoading = true;
+    this.loadingSessionId = this.currentSessionId;
     this.startDotAnimation();
 
     if (this.gwConnected) {
@@ -3680,6 +3905,9 @@ Adjust your tone accordingly:
 
     this.scrollToEnd();
     this.saveHistory();
+
+    // Process queued messages
+    await this.processQueue();
   }
 
   // ---- Talk Mode (continuous conversation) ----
@@ -3787,6 +4015,7 @@ Adjust your tone accordingly:
 
       this.talkStatus = I18n.t('chat.talkThinking');
       this.isLoading = true;
+      this.loadingSessionId = this.currentSessionId;
       this.startDotAnimation();
 
       let enrichedText = await this.enrichWithLocation(recognizedText);
@@ -3802,6 +4031,9 @@ Adjust your tone accordingly:
 
       this.scrollToEnd();
       this.saveHistory();
+
+      // Process queued messages before continuing talk mode
+      await this.processQueue();
 
       if (!this.talkModeActive) break;
 

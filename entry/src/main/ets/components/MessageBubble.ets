@@ -20,6 +20,7 @@ export struct MessageBubble {
   onCanvasReady: (ctrl: webview.WebviewController) => void = () => {};
   onCanvasAction: (json: string) => void = () => {};
   onReply: (message: ChatMessage) => void = () => {};
+  onNewSession: (message: ChatMessage) => void = () => {};
   onQuoteClick: (replyToId: string) => void = () => {};
   @State audioPlaying: boolean = false;
   @State showMenu: boolean = false;
@@ -220,10 +221,22 @@ export struct MessageBubble {
       Text(I18n.t('chat.reply'))
         .fontSize(14)
         .fontColor('#007AFF')
-        .padding({ left: 16, right: 20, top: 10, bottom: 10 })
+        .padding({ left: 16, right: 16, top: 10, bottom: 10 })
         .onClick(() => {
           this.showMenu = false;
           this.onReply(this.message);
+        })
+      Divider()
+        .vertical(true)
+        .height(16)
+        .color('#E0E0E0')
+      Text(I18n.t('chat.newSession'))
+        .fontSize(14)
+        .fontColor('#34C759')
+        .padding({ left: 16, right: 20, top: 10, bottom: 10 })
+        .onClick(() => {
+          this.showMenu = false;
+          this.onNewSession(this.message);
         })
     }
   }

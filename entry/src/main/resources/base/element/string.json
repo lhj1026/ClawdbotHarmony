@@ -8,6 +8,7 @@
     { "name": "microphone_reason", "value": "Node Mode needs microphone access to record audio during video capture and screen recording." },
     { "name": "sms_reason", "value": "Node Mode needs SMS access to send text messages when requested by the OpenClaw Gateway." },
     { "name": "file_reason", "value": "AI assistant needs file access to read and write documents when requested." },
-    { "name": "calendar_reason", "value": "AI assistant needs calendar access to create events and reminders when requested." }
+    { "name": "calendar_reason", "value": "AI assistant needs calendar access to create events and reminders when requested." },
+    { "name": "notification_reason", "value": "AI assistant needs notification access to alert you when new messages arrive while the app is in the background." }
   ]
 }

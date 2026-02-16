@@ -9,6 +9,7 @@ import { I18n, LangCode } from '../common/I18n';
 import { SettingsProfile } from '../model/Models';
 import { ImapService } from '../service/ImapService';
 import { FeishuBotService } from '../service/FeishuBotService';
+// import { VoiceprintManager } from '../components/VoiceprintManager'; // Disabled
 import socket from '@ohos.net.socket';
 
 @Component
@@ -1151,12 +1152,39 @@ export struct SettingsPage {
 
         // =============== Bottom (always visible) ===============
 
+        // ---- Voiceprint ----
+        this.SectionTitle(I18n.t('settings.voiceprint'))
+        Column() {
+          Row() {
+            Column({ space: 2 }) {
+              Text(I18n.t('settings.voiceprint'))
+                .fontSize(14)
+                .fontColor('#1A1A1A')
+              Text(I18n.t('settings.voiceprintDesc'))
+                .fontSize(11)
+                .fontColor('#999999')
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
+          }
+          .width('100%')
+
+          Divider().margin({ top: 14, bottom: 14 }).color('#F0F0F0')
+
+          // VoiceprintManager() // Disabled
+        }
+        .width('100%')
+        .padding(16)
+        .margin({ left: 16, right: 16 })
+        .backgroundColor(Color.White)
+        .borderRadius(12)
+
         // ---- About ----
         this.SectionTitle(I18n.t('settings.about'))
         Column() {
           this.InfoRow(I18n.t('settings.app'), I18n.t('settings.appValue'))
           Divider().color('#F0F0F0')
-          this.InfoRow(I18n.t('settings.version'), '2.12.0')
+          this.InfoRow(I18n.t('settings.version'), '2.18.0')
           Divider().color('#F0F0F0')
           this.InfoRow(I18n.t('settings.basedOn'), 'OpenClaw / ClawdBot')
           Divider().color('#F0F0F0')

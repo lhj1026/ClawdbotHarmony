@@ -6,5 +6,6 @@
   "author": "",
   "license": "Apache-2.0",
   "dependencies": {
+    "sherpa_onnx": "file:../libs/sherpa_onnx.har"
   }
 }

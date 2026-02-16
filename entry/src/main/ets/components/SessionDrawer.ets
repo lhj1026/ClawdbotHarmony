@@ -13,13 +13,30 @@ export struct SessionDrawer {
   @State renameText: string = '';
   onSessionSelect: (sessionId: string) => void = () => {};
   onSessionCreate: () => void = () => {};
-  onSessionDelete: (sessionId: string) => void = () => {};
+  onSessionClose: (sessionId: string) => void = () => {};
   onSessionRename: (sessionId: string, newName: string) => void = () => {};
   onSessionPin: (sessionId: string) => void = () => {};
   onSessionClear: (sessionId: string) => void = () => {};
   onOpenSettings: () => void = () => {};
   onOpenLogs: () => void = () => {};
   onClose: () => void = () => {};
+
+  @Builder
+  SwipeCloseButton(session: ChatSession) {
+    Row() {
+      Text(t('session.close'))
+        .fontSize(14)
+        .fontColor('#FFFFFF')
+        .fontWeight(FontWeight.Medium)
+    }
+    .width(72)
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor('#FF9500')
+    .onClick(() => {
+      this.confirmClose(session);
+    })
+  }
 
   @Builder
   SessionItem(session: ChatSession) {
@@ -30,7 +47,7 @@ export struct SessionDrawer {
           .fontSize(12)
           .margin({ right: 6 })
       }
-      
+
       Column() {
         Text(session.title)
           .fontSize(15)
@@ -38,7 +55,7 @@ export struct SessionDrawer {
           .fontWeight(session.id === this.currentSessionId ? FontWeight.Medium : FontWeight.Normal)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-        
+
         if (session.lastMessage) {
           Text(session.lastMessage)
             .fontSize(12)
@@ -50,7 +67,7 @@ export struct SessionDrawer {
       }
       .alignItems(HorizontalAlign.Start)
       .layoutWeight(1)
-      
+
       // Message count badge
       if (session.messageCount > 0) {
         Text(`${session.messageCount}`)
@@ -83,7 +100,7 @@ export struct SessionDrawer {
         { text: t('session.rename'), color: '#007AFF' },
         { text: session.isPinned ? t('session.unpin') : t('session.pin'), color: '#007AFF' },
         { text: t('session.clear'), color: '#FF9500' },
-        { text: t('session.delete'), color: '#FF3B30' }
+        { text: t('session.close'), color: '#FF9500' }
       ]
     }).then((result) => {
       switch (result.index) {
@@ -96,8 +113,8 @@ export struct SessionDrawer {
         case 2: // Clear
           this.confirmClear(session);
           break;
-        case 3: // Delete
-          this.confirmDelete(session);
+        case 3: // Close
+          this.confirmClose(session);
           break;
       }
     }).catch(() => {
@@ -142,17 +159,17 @@ export struct SessionDrawer {
     });
   }
 
-  private confirmDelete(session: ChatSession): void {
+  private confirmClose(session: ChatSession): void {
     promptAction.showDialog({
-      title: t('session.delete'),
-      message: t('session.deleteConfirm'),
+      title: t('session.close'),
+      message: t('session.closeConfirm'),
       buttons: [
         { text: t('memory.cancel'), color: '#999999' },
-        { text: t('session.delete'), color: '#FF3B30' }
+        { text: t('session.close'), color: '#FF9500' }
       ]
     }).then((result) => {
       if (result.index === 1) {
-        this.onSessionDelete(session.id);
+        this.onSessionClose(session.id);
       }
     });
   }
@@ -207,6 +224,7 @@ export struct SessionDrawer {
               ListItem() {
                 this.SessionItem(session)
               }
+              .swipeAction({ end: this.SwipeCloseButton(session) })
             }, (session: ChatSession) => session.id)
           }
           .width('100%')

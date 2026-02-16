@@ -207,6 +207,7 @@ export class ChatSession {
   messageCount: number; // number of messages
   lastMessage: string;  // last message preview
   isPinned: boolean;    // whether pinned to top
+  isClosed: boolean;    // whether closed (hidden from drawer but history preserved)
 
   constructor(title: string = '') {
     this.id = `session_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
@@ -216,6 +217,7 @@ export class ChatSession {
     this.messageCount = 0;
     this.lastMessage = '';
     this.isPinned = false;
+    this.isClosed = false;
   }
 }
 
@@ -228,4 +230,14 @@ export interface ChatSessionData {
   messageCount: number;
   lastMessage: string;
   isPinned: boolean;
+  isClosed: boolean;
+}
+
+// Queued message waiting to be sent to AI
+export interface QueuedMessage {
+  id: string;
+  text: string;
+  status: string;  // 'pending' | 'sending' | 'failed'
+  timestamp: number;
+  sessionId: string;
 }

@@ -41,9 +41,10 @@ import { http } from '@kit.NetworkKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { LogService } from '../../common/LogService';
 import { Constants } from '../../common/Constants';
+import { NotificationHelper } from '../NotificationHelper';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.12.0';
+const APP_VERSION = '2.18.0';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -95,6 +96,9 @@ export class NodeRuntime {
   // Dedup: track runId+seq processed by 'agent' events to skip duplicate 'chat' events
   private _agentProcessedSeqs: Set<string> = new Set<string>();
   private _agentActiveRunId: string = '';
+
+  // Multi-session routing: map runId → chatSessionId
+  private _runSessionMap: Map<string, string> = new Map<string, string>();
 
   // Current endpoint (for media URL building)
   private _endpoint: GatewayEndpoint | undefined = undefined;
@@ -213,6 +217,10 @@ export class NodeRuntime {
   setForegroundState(inForeground: boolean): void {
     this._isInForeground = inForeground;
     this.log.info(TAG, `Foreground state: ${inForeground}`);
+    // Clear message notifications when user returns to the app
+    if (inForeground) {
+      NotificationHelper.getInstance().cancelAll();
+    }
   }
 
   /** Called by ChatPage when it appears/disappears */
@@ -259,8 +267,9 @@ export class NodeRuntime {
    * Send a chat message through the gateway operator session.
    * Returns the runId for tracking the response.
    * Responses come back as 'chat' events (delta/final/error) via chat listeners.
+   * @param chatSessionId optional client-side session ID for multi-session routing
    */
-  async sendChatMessage(text: string): Promise<string> {
+  async sendChatMessage(text: string, chatSessionId?: string): Promise<string> {
     if (!this.operatorSession) {
       throw new Error('Gateway not connected');
     }
@@ -273,7 +282,12 @@ export class NodeRuntime {
     let sessionKey = 'agent:main:main';
 
     let params = `{"sessionKey":${JSON.stringify(sessionKey)},"message":${JSON.stringify(text)},"idempotencyKey":${JSON.stringify(idempotencyKey)}}`;
-    this.log.info(TAG, `sendChatMessage: key=${idempotencyKey} text=${text.substring(0, 100)}`);
+    this.log.info(TAG, `sendChatMessage: key=${idempotencyKey} chatSession=${chatSessionId ?? 'none'} text=${text.substring(0, 100)}`);
+
+    // Register idempotencyKey → chatSessionId before RPC (events may arrive before response)
+    if (chatSessionId) {
+      this._runSessionMap.set(idempotencyKey, chatSessionId);
+    }
 
     let resJson = await this.operatorSession.request('chat.send', params, 30000);
     this.log.info(TAG, `chat.send response: ${resJson.substring(0, 200)}`);
@@ -288,11 +302,45 @@ export class NodeRuntime {
         }
       } catch { /* use fallback */ }
     }
+
+    // Also map the actual runId to the chatSessionId
+    if (chatSessionId && runId !== idempotencyKey) {
+      this._runSessionMap.set(runId, chatSessionId);
+    }
+
     return runId;
   }
 
+  /** Register a runId → chatSessionId mapping (for adopted runIds). */
+  registerRunSession(runId: string, chatSessionId: string): void {
+    this._runSessionMap.set(runId, chatSessionId);
+  }
+
+  /** Look up which chatSessionId a runId belongs to. */
+  getSessionForRun(runId: string): string | undefined {
+    return this._runSessionMap.get(runId);
+  }
+
+  /** Remove a runId → chatSessionId mapping. */
+  clearRunSession(runId: string): void {
+    this._runSessionMap.delete(runId);
+  }
+
   private dispatchChatEvent(event: GatewayChatEvent): void {
-    this.log.info(TAG, `chatEvent: state=${event.state} runId=${event.runId} seq=${event.seq}`);
+    // Attach chatSessionId from runId mapping (multi-session routing)
+    if (!event.chatSessionId && event.runId.length > 0) {
+      let sid = this._runSessionMap.get(event.runId);
+      if (sid) {
+        event.chatSessionId = sid;
+      }
+    }
+    // Clean up mapping when run completes
+    if (event.state === 'final' || event.state === 'error' || event.state === 'aborted') {
+      if (event.runId.length > 0) {
+        this._runSessionMap.delete(event.runId);
+      }
+    }
+    this.log.info(TAG, `chatEvent: state=${event.state} runId=${event.runId} seq=${event.seq} chatSession=${event.chatSessionId ?? 'none'}`);
     for (let listener of this._chatListeners) {
       try {
         listener(event);
@@ -339,13 +387,8 @@ export class NodeRuntime {
 
     this.log.info(TAG, `Sending message notification: title="${title}" text="${notifText.substring(0, 50)}..."`);
 
-    // Use NotificationCapability to publish notification
-    let params = JSON.stringify({
-      title: title,
-      body: notifText,
-      sender: 'assistant'
-    });
-    this.notificationCapability.execute(params).catch((err: Error) => {
+    // Use NotificationHelper (local notification) for background message alerts
+    NotificationHelper.getInstance().send(title, notifText).catch((err: Error) => {
       this.log.warn(TAG, `Failed to send message notification: ${err.message ?? ''}`);
     });
   }
@@ -995,6 +1038,11 @@ export class NodeRuntime {
       // Load small icon for status bar display (fire-and-forget)
       this.loadNotificationIcon(context);
     }
+
+    // Initialize NotificationHelper for background message alerts (click-to-open)
+    let notifHelper = NotificationHelper.getInstance();
+    notifHelper.init(context.abilityInfo.bundleName);
+    notifHelper.requestPermission();
 
     // Wire up A2UI action callback
     this.canvasCapability.onA2UIAction = (actionJson: string) => {

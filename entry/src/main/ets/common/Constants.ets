@@ -9,6 +9,15 @@ export class Constants {
   static readonly PREFS_EMAIL: string = 'clawdbot_email';
   static readonly PREFS_FEISHU: string = 'clawdbot_feishu';
   static readonly PREFS_CUSTOM_SKILLS: string = 'clawdbot_custom_skills';
+
+  // Session persistence
+  static readonly PREFS_SESSIONS: string = 'chat_sessions';
+  static readonly SESSIONS_KEY: string = 'session_list';
+  static readonly MESSAGES_PREFIX: string = 'session_messages_';
+  static readonly CURRENT_SESSION_KEY: string = 'current_session_id';
+  static readonly QUEUE_PREFIX: string = 'session_queue_';
+  static readonly DEFAULT_SESSION_ID: string = 'default';
+
   static readonly CRON_POLL_INTERVAL_MS: number = 30000;
 
   // Settings mode configuration
