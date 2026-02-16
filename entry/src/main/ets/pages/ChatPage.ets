@@ -1288,6 +1288,7 @@ Keep it short but preserve all important information. Use the same language as t
     try {
       this.messages = await this.sessionSvc.loadMessages(this.currentSessionId);
       this.log.info('ChatPage', `Loaded ${this.messages.length} messages for session ${this.currentSessionId}`);
+      this.scrollToEnd();
     } catch (err) {
       this.log.error('ChatPage', `Failed to load session messages: ${err}`);
       this.messages = [];
