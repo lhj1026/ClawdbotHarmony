@@ -298,7 +298,7 @@ export struct MarkdownText {
   baseFontSize: number = 15;
 
   build() {
-    Column({ space: 6 }) {
+    Column({ space: 4 }) {
       ForEach(parseMarkdown(this.content), (block: MdBlock) => {
         if (block.type === 'code') {
           Scroll() {
