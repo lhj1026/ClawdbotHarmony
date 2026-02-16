@@ -12,13 +12,15 @@ interface MdSpan {
 }
 
 interface MdBlock {
-  type: string; // 'paragraph' | 'header' | 'code' | 'list_item' | 'hr'
+  type: string; // 'paragraph' | 'header' | 'code' | 'list_item' | 'hr' | 'table'
   level: number;
   content: string;
   spans: MdSpan[];
   ordered: boolean;
   index: number;
   key: string;
+  tableHeaders: string[];
+  tableRows: string[][];
 }
 
 // ---------- Inline parser ----------
@@ -96,6 +98,46 @@ function parseInline(text: string): MdSpan[] {
   return spans;
 }
 
+// ---------- Table helpers ----------
+
+function splitTableCells(line: string): string[] {
+  let s = line.trim();
+  if (s.startsWith('|')) s = s.substring(1);
+  if (s.endsWith('|')) s = s.substring(0, s.length - 1);
+  return s.split('|');
+}
+
+function isTableSeparator(line: string): boolean {
+  let trimmed = line.trim();
+  if (!trimmed.startsWith('|')) return false;
+  let cells = splitTableCells(trimmed);
+  if (cells.length === 0) return false;
+  for (let i = 0; i < cells.length; i++) {
+    let cell = cells[i].trim();
+    if (cell.length === 0) return false;
+    let hasDash = false;
+    for (let j = 0; j < cell.length; j++) {
+      let c = cell.charAt(j);
+      if (c === '-') {
+        hasDash = true;
+      } else if (c !== ':' && c !== ' ') {
+        return false;
+      }
+    }
+    if (!hasDash) return false;
+  }
+  return true;
+}
+
+function parseTableRow(line: string): string[] {
+  let cells = splitTableCells(line);
+  let result: string[] = [];
+  for (let i = 0; i < cells.length; i++) {
+    result.push(cells[i].trim());
+  }
+  return result;
+}
+
 // ---------- Block parser ----------
 
 function parseMarkdown(text: string): MdBlock[] {
@@ -114,7 +156,8 @@ function parseMarkdown(text: string): MdBlock[] {
       if (inCode) {
         let b: MdBlock = {
           type: 'code', level: 0, content: codeBuf,
-          spans: [], ordered: false, index: 0, key: '' + bIdx++
+          spans: [], ordered: false, index: 0, key: '' + bIdx++,
+          tableHeaders: [], tableRows: []
         };
         blocks.push(b);
         codeBuf = '';
@@ -135,11 +178,35 @@ function parseMarkdown(text: string): MdBlock[] {
     // empty line
     if (trimmed.length === 0) continue;
 
+    // table
+    if (trimmed.startsWith('|') && li + 1 < lines.length && isTableSeparator(lines[li + 1])) {
+      let headers = parseTableRow(trimmed);
+      li++; // skip separator line
+      let rows: string[][] = [];
+      while (li + 1 < lines.length) {
+        let nextLine = lines[li + 1].trim();
+        if (nextLine.startsWith('|') && nextLine.indexOf('|', 1) >= 0) {
+          rows.push(parseTableRow(nextLine));
+          li++;
+        } else {
+          break;
+        }
+      }
+      let b: MdBlock = {
+        type: 'table', level: 0, content: '',
+        spans: [], ordered: false, index: 0, key: '' + bIdx++,
+        tableHeaders: headers, tableRows: rows
+      };
+      blocks.push(b);
+      continue;
+    }
+
     // HR
     if (trimmed === '---' || trimmed === '***' || trimmed === '___') {
       let b: MdBlock = {
         type: 'hr', level: 0, content: '',
-        spans: [], ordered: false, index: 0, key: '' + bIdx++
+        spans: [], ordered: false, index: 0, key: '' + bIdx++,
+        tableHeaders: [], tableRows: []
       };
       blocks.push(b);
       continue;
@@ -153,7 +220,8 @@ function parseMarkdown(text: string): MdBlock[] {
         let hText = trimmed.substring(lvl + 1);
         let b: MdBlock = {
           type: 'header', level: lvl, content: hText,
-          spans: parseInline(hText), ordered: false, index: 0, key: '' + bIdx++
+          spans: parseInline(hText), ordered: false, index: 0, key: '' + bIdx++,
+          tableHeaders: [], tableRows: []
         };
         blocks.push(b);
         continue;
@@ -165,7 +233,8 @@ function parseMarkdown(text: string): MdBlock[] {
       let content = trimmed.substring(2);
       let b: MdBlock = {
         type: 'list_item', level: 0, content: content,
-        spans: parseInline(content), ordered: false, index: 0, key: '' + bIdx++
+        spans: parseInline(content), ordered: false, index: 0, key: '' + bIdx++,
+        tableHeaders: [], tableRows: []
       };
       blocks.push(b);
       continue;
@@ -188,7 +257,8 @@ function parseMarkdown(text: string): MdBlock[] {
         let content = trimmed.substring(dotIdx + 2);
         let b: MdBlock = {
           type: 'list_item', level: 0, content: content,
-          spans: parseInline(content), ordered: true, index: num, key: '' + bIdx++
+          spans: parseInline(content), ordered: true, index: num, key: '' + bIdx++,
+          tableHeaders: [], tableRows: []
         };
         blocks.push(b);
         continue;
@@ -198,7 +268,8 @@ function parseMarkdown(text: string): MdBlock[] {
     // paragraph
     let b: MdBlock = {
       type: 'paragraph', level: 0, content: trimmed,
-      spans: parseInline(trimmed), ordered: false, index: 0, key: '' + bIdx++
+      spans: parseInline(trimmed), ordered: false, index: 0, key: '' + bIdx++,
+      tableHeaders: [], tableRows: []
     };
     blocks.push(b);
   }
@@ -207,7 +278,8 @@ function parseMarkdown(text: string): MdBlock[] {
   if (inCode && codeBuf.length > 0) {
     let b: MdBlock = {
       type: 'code', level: 0, content: codeBuf,
-      spans: [], ordered: false, index: 0, key: '' + bIdx++
+      spans: [], ordered: false, index: 0, key: '' + bIdx++,
+      tableHeaders: [], tableRows: []
     };
     blocks.push(b);
   }
@@ -257,7 +329,36 @@ export struct MarkdownText {
           .width('100%')
           .textAlign(TextAlign.Start)
           .wordBreak(WordBreak.BREAK_ALL)
-                  } else if (block.type === 'hr') {
+        } else if (block.type === 'table') {
+          // Table rendering: convert to formatted text with bullet points
+          Column({ space: 2 }) {
+            // Headers as bold text
+            if (block.tableHeaders.length > 0) {
+              Text(block.tableHeaders.join(' | '))
+                .fontSize(this.baseFontSize)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(this.textColor)
+                .lineHeight(22)
+                .width('100%')
+                .wordBreak(WordBreak.BREAK_ALL)
+              Divider().color('#D0D0D0').strokeWidth(1)
+            }
+            // Rows as bullet points
+            ForEach(block.tableRows, (row: string[], rowIdx: number) => {
+              Text('\u2022 ' + row.join(' | '))
+                .fontSize(this.baseFontSize)
+                .fontColor(this.textColor)
+                .lineHeight(22)
+                .width('100%')
+                .wordBreak(WordBreak.BREAK_ALL)
+            }, (row: string[], idx: number): string => '' + idx)
+          }
+          .width('100%')
+          .padding({ left: 4, right: 4 })
+          .backgroundColor('#F5F5F5')
+          .borderRadius(6)
+          .margin({ top: 4, bottom: 4 })
+        } else if (block.type === 'hr') {
           Divider().color('#D0D0D0').margin({ top: 6, bottom: 6 })
         } else if (block.type === 'list_item') {
           Row() {
