@@ -511,7 +511,6 @@ export struct ChatPage {
                 assistantAvatar: this.getEffectiveAvatar(),
                 assistantName: this.getAssistantDisplayName(),
                 onImageClick: (path: string): void => { this.previewImagePath = path; },
-                onFeedback: (_msgId: string, _type: string): void => { this.saveHistory(); },
                 onButtonClick: (action: string): void => { this.handleButtonAction(action); },
                 onA2UIReady: (inject: (content: string) => void): void => { this.a2uiInjectFn = inject; },
                 onA2UIAction: (json: string): void => { NodeRuntime.getInstance().sendA2UIAction(json); },

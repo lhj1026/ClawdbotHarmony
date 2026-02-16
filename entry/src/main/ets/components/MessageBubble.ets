@@ -14,7 +14,6 @@ export struct MessageBubble {
   @Prop assistantAvatar: string = '';
   @Prop assistantName: string = '';
   onImageClick: (path: string) => void = () => {};
-  onFeedback: (msgId: string, type: string) => void = () => {};
   onButtonClick: (action: string) => void = () => {};
   onA2UIReady: (inject: (content: string) => void) => void = () => {};
   onA2UIAction: (json: string) => void = () => {};
@@ -324,28 +323,6 @@ export struct MessageBubble {
             .margin({ top: 8 })
           }
 
-          // Feedback row (thumbs up/down)
-          Row({ space: 16 }) {
-            Text('\uD83D\uDC4D')
-              .fontSize(16)
-              .opacity(this.message.feedback === 'up' ? 1.0 : 0.3)
-              .onClick(() => {
-                let newFb = this.message.feedback === 'up' ? '' : 'up';
-                this.message.feedback = newFb;
-                this.onFeedback(this.message.id, newFb);
-              })
-            Text('\uD83D\uDC4E')
-              .fontSize(16)
-              .opacity(this.message.feedback === 'down' ? 1.0 : 0.3)
-              .onClick(() => {
-                let newFb = this.message.feedback === 'down' ? '' : 'down';
-                this.message.feedback = newFb;
-                this.onFeedback(this.message.id, newFb);
-              })
-          }
-          .margin({ top: 4 })
-          .justifyContent(FlexAlign.End)
-          .width('100%')
         }
         .alignItems(HorizontalAlign.Start)
         .padding({ left: 14, right: 14, top: 12, bottom: 8 })
