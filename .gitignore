@@ -46,5 +46,8 @@ fix_cwd_build.js
 # Windows reserved names
 nul
 
+# ONNX model binaries (large, downloaded via scripts/download_sherpa_onnx.sh)
+*.onnx
+
 # Claude Code local settings
 /.claude/settings.local.json
