@@ -343,7 +343,7 @@ export struct MarkdownText {
                       .fontSize(this.baseFontSize - 1)
                       .fontWeight(FontWeight.Bold)
                       .fontColor('#333333')
-                      .textAlign(TextAlign.Center)
+                      .textAlign(TextAlign.Start)
                       .padding({ left: 10, right: 10, top: 6, bottom: 6 })
                       .backgroundColor('#E8E8E8')
                       .borderWidth({ right: colIdx < block.tableHeaders.length - 1 ? 1 : 0 })
