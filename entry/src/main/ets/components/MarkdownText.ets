@@ -142,7 +142,9 @@ function parseTableRow(line: string): string[] {
 
 function parseMarkdown(text: string): MdBlock[] {
   let blocks: MdBlock[] = [];
-  let lines = text.split('\n');
+  // Normalize line endings: \r\n → \n, \r → \n
+  let normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  let lines = normalized.split('\n');
   let inCode = false;
   let codeBuf = '';
   let bIdx = 0;
