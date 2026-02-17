@@ -1,5 +1,49 @@
 [
   {
+    "version": "2.21.8",
+    "date": "2026-02-17",
+    "features": [
+      "消息自动滚动优化：使用scrollEdge确保滚到底部",
+      "流式回复节流滚动（200ms），避免卡顿"
+    ],
+    "fixes": []
+  },
+  {
+    "version": "2.21.7",
+    "date": "2026-02-17",
+    "features": [
+      "A2UI action事件发送完整实现",
+      "A2UI支持简化格式自动转换",
+      "CanvasView添加onConsole处理器"
+    ],
+    "fixes": [
+      "新会话使用standalone配置的bot name"
+    ]
+  },
+  {
+    "version": "2.21.2",
+    "date": "2026-02-17",
+    "features": [
+      "后台WebSocket保活",
+      "后台缓存聊天事件"
+    ],
+    "fixes": [
+      "修复重复memory注入",
+      "修复说话人名称编辑后UI不刷新"
+    ]
+  },
+  {
+    "version": "2.21.1",
+    "date": "2026-02-16",
+    "features": [
+      "环境感知服务基础架构",
+      "习惯链服务和视觉分析服务"
+    ],
+    "fixes": [
+      "降低功耗优化 - 减少定时器刷新频率"
+    ]
+  },
+  {
     "version": "2.21.0",
     "date": "2026-02-16",
     "features": [
