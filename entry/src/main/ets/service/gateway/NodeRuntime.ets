@@ -44,7 +44,7 @@ import { Constants } from '../../common/Constants';
 import { NotificationHelper } from '../NotificationHelper';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.18.3';
+const APP_VERSION = '2.18.4';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -315,6 +315,42 @@ export class NodeRuntime {
   /** Register a runId → chatSessionId mapping (for adopted runIds). */
   registerRunSession(runId: string, chatSessionId: string): void {
     this._runSessionMap.set(runId, chatSessionId);
+  }
+
+  /**
+   * Get gateway config via config.get RPC.
+   * Returns the raw JSON config string, or empty string on failure.
+   */
+  async configGet(): Promise<string> {
+    if (!this.operatorSession || this._operatorState !== ConnectionState.Connected) {
+      return '';
+    }
+    try {
+      let resJson = await this.operatorSession.request('config.get', '{}', 10000);
+      if (resJson.length > 0) {
+        let resObj = JSON.parse(resJson) as Record<string, Object>;
+        if (resObj['raw'] && typeof resObj['raw'] === 'string') {
+          return resObj['raw'] as string;
+        }
+      }
+      return resJson;
+    } catch (err) {
+      this.log.error(TAG, `configGet failed: ${(err as Error).message ?? ''}`);
+      return '';
+    }
+  }
+
+  /**
+   * Patch gateway config via config.patch RPC.
+   * @param patchJson JSON string with partial config to merge
+   */
+  async configPatch(patchJson: string): Promise<void> {
+    if (!this.operatorSession || this._operatorState !== ConnectionState.Connected) {
+      throw new Error('Gateway not connected');
+    }
+    let params = `{"raw":${patchJson}}`;
+    let resJson = await this.operatorSession.request('config.patch', params, 15000);
+    this.log.info(TAG, `config.patch response: ${resJson.substring(0, 200)}`);
   }
 
   /** Look up which chatSessionId a runId belongs to. */

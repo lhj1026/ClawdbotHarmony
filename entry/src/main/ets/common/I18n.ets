@@ -198,6 +198,8 @@ function buildZh(): Map<string, string> {
   m.set('settings.status', '状态');
   m.set('settings.connect', '连接');
   m.set('settings.disconnect', '断开');
+  m.set('settings.parallelSessions', '并行会话数');
+  m.set('settings.parallelSessionsDesc', '⚠️ 增大此值会加快 Token 消耗速度');
   m.set('settings.caps', '本机能力');
   m.set('settings.capLocation', '定位 (GPS)');
   m.set('settings.capCamera', '相机 (拍照/录像)');
@@ -581,6 +583,8 @@ function buildEn(): Map<string, string> {
   m.set('settings.status', 'Status');
   m.set('settings.connect', 'Connect');
   m.set('settings.disconnect', 'Disconnect');
+  m.set('settings.parallelSessions', 'Parallel Sessions');
+  m.set('settings.parallelSessionsDesc', '⚠️ Higher values increase token consumption rate');
   m.set('settings.caps', 'Node Capabilities');
   m.set('settings.capLocation', 'Location (GPS)');
   m.set('settings.capCamera', 'Camera (Photo/Video)');

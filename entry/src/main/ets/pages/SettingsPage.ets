@@ -109,6 +109,8 @@ export struct SettingsPage {
   @State gwAgentAvatar: string = '';
   @State gwAgentEmoji: string = '';
   @State gwAgentSoul: string = '';
+  // Gateway parallel sessions setting
+  @State gwMaxConcurrent: number = 4;
 
   private gwListener: ((state: ConnectionState, text: string) => void) | undefined = undefined;
   private langListener: (() => void) | undefined = undefined;
@@ -124,8 +126,13 @@ export struct SettingsPage {
     this.langListener = () => { this.lang = I18n.lang; };
     I18n.addListener(this.langListener);
     this.gwListener = (state: ConnectionState, text: string) => {
+      let wasConnected = this.gwState === ConnectionState.Connected;
       this.gwState = state;
       this.gwStatusText = text;
+      // Load maxConcurrent when newly connected
+      if (!wasConnected && state === ConnectionState.Connected) {
+        this.loadMaxConcurrent();
+      }
     };
     NodeRuntime.getInstance().addStateListener(this.gwListener);
     // Identity listener for gateway agent info
@@ -154,6 +161,10 @@ export struct SettingsPage {
       this.gwAgentEmoji = currentIdentity.emoji;
       let avatarUrl = NodeRuntime.getInstance().resolveAgentAvatarUrl();
       this.gwAgentAvatar = avatarUrl ?? '';
+    }
+    // Load maxConcurrent if already connected
+    if (this.gwState === ConnectionState.Connected) {
+      this.loadMaxConcurrent();
     }
   }
 
@@ -307,6 +318,46 @@ export struct SettingsPage {
               .borderRadius(10)
               .margin({ top: 8 })
               .onClick(() => { this.toggleGateway(); })
+
+            // Parallel sessions setting (only show when connected)
+            if (this.gwIsConnected()) {
+              Divider().margin({ top: 16, bottom: 12 }).color('#E0E0E0')
+
+              Column({ space: 4 }) {
+                Row() {
+                  Text(I18n.t('settings.parallelSessions'))
+                    .fontSize(14)
+                    .fontColor('#1A1A1A')
+                    .layoutWeight(1)
+                  Text(`${this.gwMaxConcurrent}`)
+                    .fontSize(14)
+                    .fontColor('#D2691E')
+                    .fontWeight(FontWeight.Medium)
+                }
+                .width('100%')
+
+                Text(I18n.t('settings.parallelSessionsDesc'))
+                  .fontSize(11)
+                  .fontColor('#FF6B00')
+                  .width('100%')
+
+                Slider({
+                  value: this.gwMaxConcurrent,
+                  min: 1,
+                  max: 16,
+                  step: 1
+                })
+                  .width('100%')
+                  .blockColor('#D2691E')
+                  .trackColor('#E0E0E0')
+                  .selectedColor('#D2691E')
+                  .onChange((value: number) => {
+                    this.gwMaxConcurrent = Math.round(value);
+                    this.saveMaxConcurrent();
+                  })
+              }
+              .width('100%')
+            }
           }
           .width('100%')
           .padding(16)
@@ -1184,7 +1235,7 @@ export struct SettingsPage {
         Column() {
           this.InfoRow(I18n.t('settings.app'), I18n.t('settings.appValue'))
           Divider().color('#F0F0F0')
-          this.InfoRow(I18n.t('settings.version'), '2.18.3')
+          this.InfoRow(I18n.t('settings.version'), '2.18.4')
           Divider().color('#F0F0F0')
           this.InfoRow(I18n.t('settings.basedOn'), 'OpenClaw / ClawdBot')
           Divider().color('#F0F0F0')
@@ -1633,6 +1684,37 @@ export struct SettingsPage {
     );
     await runtime.loadDisplayName(ctx);
     runtime.connect(ctx, endpoint, token, password);
+  }
+
+  private saveMaxConcurrent(): void {
+    if (!this.gwIsConnected()) return;
+    // Send config patch to gateway - build JSON manually to avoid ArkTS typing issues
+    let paramsJson = `{"agents":{"defaults":{"maxConcurrent":${this.gwMaxConcurrent}}}}`;
+    NodeRuntime.getInstance().configPatch(paramsJson).then(() => {
+      console.info(`[SettingsPage] maxConcurrent updated to ${this.gwMaxConcurrent}`);
+    }).catch((err: Error) => {
+      console.error(`[SettingsPage] Failed to update maxConcurrent: ${err.message ?? ''}`);
+    });
+  }
+
+  private async loadMaxConcurrent(): Promise<void> {
+    if (!this.gwIsConnected()) return;
+    try {
+      let configJson = await NodeRuntime.getInstance().configGet();
+      if (configJson && configJson.length > 0) {
+        let config = JSON.parse(configJson) as Record<string, Object>;
+        let agents = config['agents'] as Record<string, Object> | undefined;
+        if (agents) {
+          let defaults = agents['defaults'] as Record<string, Object> | undefined;
+          if (defaults && typeof defaults['maxConcurrent'] === 'number') {
+            this.gwMaxConcurrent = defaults['maxConcurrent'] as number;
+            console.info(`[SettingsPage] Loaded maxConcurrent: ${this.gwMaxConcurrent}`);
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`[SettingsPage] Failed to load maxConcurrent: ${(err as Error).message ?? ''}`);
+    }
   }
 
   private async load(): Promise<void> {
