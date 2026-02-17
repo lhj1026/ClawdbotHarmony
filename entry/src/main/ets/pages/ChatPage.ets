@@ -2017,7 +2017,8 @@ Respond ONLY with the JSON array.`;
           this.log.info('ChatPage', 'Timeout waiting for agent events after empty final');
           let idx = this.findGwAssistantIndex();
           if (idx >= 0 && (this.messages[idx].content.length === 0 || this.messages[idx].content.length === 0)) {
-            this.messages[idx].content = '网关正在加紧处理中...';
+            let busyPhrases = ['我有点忙不过来了，稍等...', '我忙晕了，马上好...', '我在努力思考中...', '有点跟不上了，请稍候...', '脑子转不过来了，等我一下...'];
+            this.messages[idx].content = busyPhrases[Math.floor(Math.random() * busyPhrases.length)];
           }
           this.doCleanupGatewayChat();
         }

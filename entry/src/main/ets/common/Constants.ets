@@ -18,7 +18,7 @@ export class Constants {
   static readonly QUEUE_PREFIX: string = 'session_queue_';
   static readonly DEFAULT_SESSION_ID: string = 'default';
 
-  static readonly CRON_POLL_INTERVAL_MS: number = 30000;
+  static readonly CRON_POLL_INTERVAL_MS: number = 60000;  // Power optimization: was 30s
 
   // Settings mode configuration
   // To enable all modes, change to: ['standalone', 'node', 'service']

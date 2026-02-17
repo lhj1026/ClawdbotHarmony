@@ -31,9 +31,10 @@ export struct SessionDrawer {
 
   aboutToAppear(): void {
     this.refreshSystemStatus();
+    // Refresh every 5 seconds (power optimization - was 2s)
     this.refreshTimer = setInterval(() => {
       this.refreshSystemStatus();
-    }, 2000);
+    }, 5000);
   }
 
   aboutToDisappear(): void {

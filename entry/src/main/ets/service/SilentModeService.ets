@@ -1,6 +1,7 @@
 // Silent mode service: continuous background recording with VAD, speaker identification, and ASR
 import { audio } from '@kit.AudioKit';
-import { abilityAccessCtrl, common } from '@kit.AbilityKit';
+import { abilityAccessCtrl, common, wantAgent } from '@kit.AbilityKit';
+import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { preferences } from '@kit.ArkData';
 import { SilentConversationRecord, SilentConversationEntry, SettingsData } from '../model/Models';
 import { Constants } from '../common/Constants';
@@ -123,6 +124,9 @@ export class SilentModeService {
     // Save initial record
     await ConversationStore.getInstance().saveRecord(this.currentRecord);
 
+    // Start background task FIRST to keep running when app goes to background
+    await this.startBackgroundTask(context);
+
     // Create audio capturer (same config as ChatPage)
     try {
       let capturerOptions: audio.AudioCapturerOptions = {
@@ -133,7 +137,7 @@ export class SilentModeService {
           encodingType: audio.AudioEncodingType.ENCODING_TYPE_RAW
         },
         capturerInfo: {
-          source: audio.SourceType.SOURCE_TYPE_VOICE_RECOGNITION,
+          source: audio.SourceType.SOURCE_TYPE_MIC,  // Use MIC instead of VOICE_RECOGNITION for background
           capturerFlags: 0
         }
       };
@@ -141,6 +145,7 @@ export class SilentModeService {
       await this.audioCapturer.start();
     } catch (err) {
       this.log.error(this.TAG, `AudioCapturer create failed: ${(err as Error).message ?? ''}`);
+      await this.stopBackgroundTask(context);  // Clean up background task
       this.currentRecord = undefined;
       return false;
     }
@@ -161,17 +166,55 @@ export class SilentModeService {
     return true;
   }
 
+  private async startBackgroundTask(context: common.UIAbilityContext): Promise<void> {
+    try {
+      this.log.info(this.TAG, 'Starting background task...');
+      
+      // Create wantAgent for notification tap action
+      let wantAgentInfo: wantAgent.WantAgentInfo = {
+        wants: [
+          {
+            bundleName: context.abilityInfo.bundleName,
+            abilityName: context.abilityInfo.name
+          }
+        ],
+        actionType: wantAgent.OperationType.START_ABILITY,
+        requestCode: 0,
+        actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
+      };
+      let agent = await wantAgent.getWantAgent(wantAgentInfo);
+      this.log.info(this.TAG, 'WantAgent created');
+
+      // Start continuous task
+      await backgroundTaskManager.startBackgroundRunning(context, backgroundTaskManager.BackgroundMode.AUDIO_RECORDING, agent);
+      this.log.info(this.TAG, 'Background task started successfully');
+    } catch (err) {
+      let error = err as Error;
+      this.log.error(this.TAG, `Failed to start background task: code=${(err as Record<string, number>).code ?? 'N/A'} msg=${error.message ?? ''}`);
+    }
+  }
+
+  private async stopBackgroundTask(context: common.UIAbilityContext): Promise<void> {
+    try {
+      await backgroundTaskManager.stopBackgroundRunning(context);
+      this.log.info(this.TAG, 'Background task stopped');
+    } catch (err) {
+      this.log.warn(this.TAG, `Failed to stop background task: ${(err as Error).message ?? ''}`);
+    }
+  }
+
   async stop(): Promise<void> {
     if (this.state === 'idle') return;
 
     this.reading = false;
+    this.log.info(this.TAG, 'Stopping...');
 
-    // Process remaining segment if any
-    if (this.speechDetected && this.segmentBuffers.length > 0) {
-      await this.processSegment();
+    // Stop background task
+    if (this.context) {
+      await this.stopBackgroundTask(this.context);
     }
 
-    // Stop capturer
+    // Stop capturer immediately (responsive UI)
     try {
       if (this.audioCapturer) {
         await this.audioCapturer.stop();
@@ -182,11 +225,31 @@ export class SilentModeService {
       this.log.warn(this.TAG, `Capturer cleanup: ${(err as Error).message ?? ''}`);
     }
 
-    // End conversation
-    await this.endConversation();
-
+    // Set state to idle immediately for responsive UI
     this.setState('idle');
-    this.log.info(this.TAG, 'Stopped');
+    this.log.info(this.TAG, 'Stopped (processing in background)');
+
+    // Process remaining work in background (don't block UI)
+    this.finishRecordingInBackground();
+  }
+
+  private finishRecordingInBackground(): void {
+    // Use setTimeout to run async work without blocking
+    setTimeout(async () => {
+      try {
+        // Process remaining segment if any
+        if (this.speechDetected && this.segmentBuffers.length > 0) {
+          await this.processSegment();
+        }
+
+        // End conversation (generate summary)
+        await this.endConversation();
+
+        this.log.info(this.TAG, 'Background processing complete');
+      } catch (err) {
+        this.log.error(this.TAG, `Background processing error: ${(err as Error).message ?? ''}`);
+      }
+    }, 0);
   }
 
   private async audioReadLoop(): Promise<void> {

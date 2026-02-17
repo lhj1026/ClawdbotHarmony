@@ -23,10 +23,10 @@ struct AboutRoutePage {
 
   aboutToAppear(): void {
     this.refreshStatus();
-    // Refresh every 3 seconds
+    // Refresh every 10 seconds (power optimization - was 3s)
     this.refreshTimer = setInterval(() => {
       this.refreshStatus();
-    }, 3000);
+    }, 10000);
   }
 
   aboutToDisappear(): void {
