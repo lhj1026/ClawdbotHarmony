@@ -46,7 +46,7 @@ import { Constants } from '../../common/Constants';
 import { NotificationHelper } from '../NotificationHelper';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.21.4';
+const APP_VERSION = '2.21.5';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -94,6 +94,10 @@ export class NodeRuntime {
   // Chat via gateway
   private _chatListeners: Array<(event: GatewayChatEvent) => void> = [];
   private _chatIdCounter: number = 0;
+
+  // Buffer for messages received while no listeners are registered (e.g., app in background)
+  private _pendingChatEvents: GatewayChatEvent[] = [];
+  private readonly MAX_PENDING_EVENTS: number = 50;
 
   // Dedup: track runId+seq processed by 'agent' events to skip duplicate 'chat' events
   private _agentProcessedSeqs: Set<string> = new Set<string>();
@@ -312,6 +316,19 @@ export class NodeRuntime {
 
   addChatListener(listener: (event: GatewayChatEvent) => void): void {
     this._chatListeners.push(listener);
+    // Deliver any buffered events from when app was in background
+    if (this._pendingChatEvents.length > 0) {
+      this.log.info(TAG, `📬 Delivering ${this._pendingChatEvents.length} buffered chat events`);
+      let pending = this._pendingChatEvents.slice();
+      this._pendingChatEvents = [];
+      for (let event of pending) {
+        try {
+          listener(event);
+        } catch {
+          // ignore
+        }
+      }
+    }
   }
 
   removeChatListener(listener: (event: GatewayChatEvent) => void): void {
@@ -482,12 +499,23 @@ export class NodeRuntime {
         this._runSessionMap.delete(event.runId);
       }
     }
-    this.log.info(TAG, `chatEvent: state=${event.state} runId=${event.runId} seq=${event.seq} chatSession=${event.chatSessionId ?? 'none'}`);
-    for (let listener of this._chatListeners) {
-      try {
-        listener(event);
-      } catch {
-        // ignore
+    this.log.info(TAG, `chatEvent: state=${event.state} runId=${event.runId} seq=${event.seq} chatSession=${event.chatSessionId ?? 'none'} listeners=${this._chatListeners.length}`);
+
+    // If no listeners (ChatPage not visible), buffer events for later delivery
+    if (this._chatListeners.length === 0) {
+      this.log.info(TAG, `📦 Buffering chat event (no listeners): state=${event.state}`);
+      this._pendingChatEvents.push(event);
+      // Keep buffer bounded
+      if (this._pendingChatEvents.length > this.MAX_PENDING_EVENTS) {
+        this._pendingChatEvents.shift();
+      }
+    } else {
+      for (let listener of this._chatListeners) {
+        try {
+          listener(event);
+        } catch {
+          // ignore
+        }
       }
     }
 
