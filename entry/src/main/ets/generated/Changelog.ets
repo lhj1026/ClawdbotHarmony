@@ -8,9 +8,19 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.19.6';
+export const APP_VERSION: string = '2.20.0';
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '2.20.0',
+    date: '2026-02-16',
+    features: [
+      '声纹识别集成 sherpa-onnx（替换 stub 实现）',
+    ],
+    fixes: [
+
+    ],
+  },
   {
     version: '2.19.6',
     date: '2026-02-16',
@@ -128,4 +138,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.19.6';
+export const LATEST_VERSION: string = '2.20.0';

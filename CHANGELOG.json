@@ -1,5 +1,13 @@
 [
   {
+    "version": "2.20.0",
+    "date": "2026-02-16",
+    "features": [
+      "声纹识别集成 sherpa-onnx（替换 stub 实现）"
+    ],
+    "fixes": []
+  },
+  {
     "version": "2.19.6",
     "date": "2026-02-16",
     "features": [],
