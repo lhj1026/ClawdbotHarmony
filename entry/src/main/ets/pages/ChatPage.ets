@@ -1277,20 +1277,30 @@ Respond ONLY with the JSON array.`;
       let ctx = getContext(this) as common.UIAbilityContext;
       let settings = await this.loadSettings(ctx);
 
-      // Build conversation summary from RECENT messages (last 6 messages, prioritize latest)
-      let recentMessages = messages.slice(-6);
+      // Build conversation summary from RECENT messages (last 4 messages only)
+      let recentMessages = messages.slice(-4);
       let summary = '';
       for (let msg of recentMessages) {
-        let role = msg.role === 'user' ? '用户' : '助手';
-        let content = msg.content.substring(0, 150);
+        let role = msg.role === 'user' ? 'Q' : 'A';
+        // Clean content: remove markdown, code blocks, file prefixes
+        let content = msg.content
+          .replace(/```[\s\S]*?```/g, '[代码]')
+          .replace(/\[File:.*?\]/g, '')
+          .replace(/\n+/g, ' ')
+          .trim()
+          .substring(0, 100);
         summary += `${role}: ${content}\n`;
       }
 
       // Only attempt AI title generation when we have a valid API key
       if (settings.apiKey && settings.apiKey.length > 0) {
-        const systemPrompt = '根据以下对话生成一个简洁准确的标题（8-15字），要能概括对话的核心主题。只输出标题，不加引号或符号。';
+        const systemPrompt = '为这段对话生成一个简短标题（5-12字）。要求：1.概括最新讨论的具体内容 2.使用关键词而非泛泛描述 3.只输出标题文字';
         const title = await this.ai.simpleChat(systemPrompt, summary, settings);
-        const trimmedTitle = title.trim().substring(0, 20);
+        // Clean up: remove quotes, punctuation, extra spaces
+        const trimmedTitle = title.trim()
+          .replace(/^["'「『《]|["'」』》]$/g, '')
+          .replace(/[。！？，、；：]/g, '')
+          .substring(0, 15);
         if (trimmedTitle.length > 0) {
           await this.sessionSvc.renameSession(sessionId, trimmedTitle);
           this.sessions = this.sessionSvc.getSessions();

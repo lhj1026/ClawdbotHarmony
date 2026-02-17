@@ -1235,7 +1235,7 @@ export struct SettingsPage {
         Column() {
           this.InfoRow(I18n.t('settings.app'), I18n.t('settings.appValue'))
           Divider().color('#F0F0F0')
-          this.InfoRow(I18n.t('settings.version'), '2.18.9')
+          this.InfoRow(I18n.t('settings.version'), '2.18.10')
           Divider().color('#F0F0F0')
           this.InfoRow(I18n.t('settings.basedOn'), 'OpenClaw / ClawdBot')
           Divider().color('#F0F0F0')
@@ -1437,48 +1437,46 @@ export struct SettingsPage {
             .onChange((v: string) => { this.asrModel = v; })
         }
 
-        // --- Embedding (standalone mode only - node mode uses gateway embedding) ---
-        if (this.settingsTab !== 'node') {
-          Divider().margin({ top: 14, bottom: 14 }).color('#E8E8E8')
+        // --- Embedding ---
+        Divider().margin({ top: 14, bottom: 14 }).color('#E8E8E8')
 
+        Row() {
+          Text(I18n.t('settings.embeddingMode'))
+            .fontSize(14).fontColor('#1A1A1A').fontWeight(FontWeight.Medium)
+          Text(I18n.t('settings.embeddingModeDesc'))
+            .fontSize(11).fontColor('#999999').margin({ left: 8 })
+        }.width('100%')
+
+        Row({ space: 0 }) {
+          ForEach(['auto', 'local', 'cloud'], (mode: string) => {
+            Text(mode === 'auto' ? I18n.t('settings.embeddingModeAuto') :
+              mode === 'local' ? I18n.t('settings.embeddingModeLocal') : I18n.t('settings.embeddingModeCloud'))
+              .fontSize(12)
+              .fontColor(this.embeddingMode === mode ? Color.White : '#666666')
+              .backgroundColor(this.embeddingMode === mode ? '#D2691E' : '#F0F0F0')
+              .borderRadius(8)
+              .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+              .layoutWeight(1).textAlign(TextAlign.Center)
+              .onClick(() => { this.embeddingMode = mode; })
+          })
+        }.width('100%').margin({ top: 8 })
+
+        Text(this.embeddingMode === 'auto' ? I18n.t('settings.embeddingModeAutoDesc') :
+          this.embeddingMode === 'local' ? I18n.t('settings.embeddingModeLocalDesc') : I18n.t('settings.embeddingModeCloudDesc'))
+          .fontSize(11).fontColor('#999999').margin({ top: 4 }).width('100%')
+
+        // Embedding cloud API key (standalone mode only - node mode uses gateway for cloud embedding)
+        if (this.settingsTab !== 'node' && (this.embeddingMode === 'auto' || this.embeddingMode === 'cloud')) {
           Row() {
-            Text(I18n.t('settings.embeddingMode'))
-              .fontSize(14).fontColor('#1A1A1A').fontWeight(FontWeight.Medium)
-            Text(I18n.t('settings.embeddingModeDesc'))
-              .fontSize(11).fontColor('#999999').margin({ left: 8 })
-          }.width('100%')
-
-          Row({ space: 0 }) {
-            ForEach(['auto', 'local', 'cloud'], (mode: string) => {
-              Text(mode === 'auto' ? I18n.t('settings.embeddingModeAuto') :
-                mode === 'local' ? I18n.t('settings.embeddingModeLocal') : I18n.t('settings.embeddingModeCloud'))
-                .fontSize(12)
-                .fontColor(this.embeddingMode === mode ? Color.White : '#666666')
-                .backgroundColor(this.embeddingMode === mode ? '#D2691E' : '#F0F0F0')
-                .borderRadius(8)
-                .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-                .layoutWeight(1).textAlign(TextAlign.Center)
-                .onClick(() => { this.embeddingMode = mode; })
-            })
-          }.width('100%').margin({ top: 8 })
-
-          Text(this.embeddingMode === 'auto' ? I18n.t('settings.embeddingModeAutoDesc') :
-            this.embeddingMode === 'local' ? I18n.t('settings.embeddingModeLocalDesc') : I18n.t('settings.embeddingModeCloudDesc'))
-            .fontSize(11).fontColor('#999999').margin({ top: 4 }).width('100%')
-
-          // Embedding cloud API key
-          if (this.embeddingMode === 'auto' || this.embeddingMode === 'cloud') {
-            Row() {
-              TextInput({ text: this.embeddingApiKey, placeholder: 'API Key' })
-                .layoutWeight(1).height(36).fontSize(13).backgroundColor('#F5F5F5').borderRadius(8)
-                .type(this.showEmbeddingKey ? InputType.Normal : InputType.Password)
-                .onChange((v: string) => { this.embeddingApiKey = v; })
-              Button(this.showEmbeddingKey ? I18n.t('settings.hide') : I18n.t('settings.show'))
-                .fontSize(11).height(30).backgroundColor('#F0F0F0').fontColor('#666666')
-                .borderRadius(8).margin({ left: 6 })
-                .onClick(() => { this.showEmbeddingKey = !this.showEmbeddingKey; })
-            }.margin({ top: 8 }).width('100%')
-          }
+            TextInput({ text: this.embeddingApiKey, placeholder: 'API Key' })
+              .layoutWeight(1).height(36).fontSize(13).backgroundColor('#F5F5F5').borderRadius(8)
+              .type(this.showEmbeddingKey ? InputType.Normal : InputType.Password)
+              .onChange((v: string) => { this.embeddingApiKey = v; })
+            Button(this.showEmbeddingKey ? I18n.t('settings.hide') : I18n.t('settings.show'))
+              .fontSize(11).height(30).backgroundColor('#F0F0F0').fontColor('#666666')
+              .borderRadius(8).margin({ left: 6 })
+              .onClick(() => { this.showEmbeddingKey = !this.showEmbeddingKey; })
+          }.margin({ top: 8 }).width('100%')
         }
 
         Divider().margin({ top: 14, bottom: 14 }).color('#E8E8E8')
