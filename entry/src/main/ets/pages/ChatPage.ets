@@ -333,8 +333,8 @@ export struct ChatPage {
               .margin({ right: 10 })
           }
           Column() {
-            Text(this.getAssistantDisplayName())
-              .fontSize(18)
+            Text(this.getCurrentSessionTitle())
+              .fontSize(16)
               .fontWeight(FontWeight.Bold)
               .fontColor('#1A1A1A')
               .maxLines(1)
@@ -344,18 +344,12 @@ export struct ChatPage {
                 Text(I18n.t('chat.thinking'))
                   .fontSize(12)
                   .fontColor('#FF9800')
-              } else if (this.gwConnected && this.gwAgentTheme.length > 0) {
-                Text(this.gwAgentTheme)
+              } else {
+                Text(this.getAssistantDisplayName())
                   .fontSize(12)
                   .fontColor('#888888')
-                  .fontStyle(FontStyle.Italic)
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
-                  .layoutWeight(1)
-              } else {
-                Text(I18n.t('chat.online'))
-                  .fontSize(12)
-                  .fontColor('#4CAF50')
               }
               if (this.gwConnected) {
                 Row({ space: 3 }) {
