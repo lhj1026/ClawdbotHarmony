@@ -304,6 +304,7 @@ export interface SilentConversationRecord {
   summary: string;         // AI-generated summary
   status: string;          // 'recording' | 'summarizing' | 'completed' | 'error'
   participants: string[];  // unique speaker names
+  speakerAliases: Record<string, string>;  // map original speaker ID to display name
 }
 
 // Lightweight observable item for UI list display

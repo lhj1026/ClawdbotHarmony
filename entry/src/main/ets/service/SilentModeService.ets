@@ -27,6 +27,7 @@ export class SilentModeService {
 
   // Current recording
   private currentRecord: SilentConversationRecord | undefined;
+  private unknownSpeakerCount: number = 0;  // Counter for unknown speakers
   private segmentBuffers: ArrayBuffer[] = [];
   private segmentStartTime: number = 0;
   private speechDetected: boolean = false;
@@ -103,6 +104,7 @@ export class SilentModeService {
 
     // Create conversation record
     let recordId = `silent_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+    this.unknownSpeakerCount = 0;  // Reset counter for new recording
     this.currentRecord = {
       id: recordId,
       startTime: Date.now(),
@@ -110,7 +112,8 @@ export class SilentModeService {
       entries: [],
       summary: '',
       status: 'recording',
-      participants: []
+      participants: [],
+      speakerAliases: {}
     };
 
     // Save initial record
@@ -296,17 +299,29 @@ export class SilentModeService {
       let float32 = this.chunksToFloat32(bufs);
 
       // Speaker identification
-      let speaker = 'Unknown';
+      let speakerId = '';
       let confidence = 0;
       try {
         let vpService = VoiceprintService.getInstance();
         let result = vpService.identify(float32, 16000);
         if (result.speaker && result.speaker !== 'unknown') {
-          speaker = result.speaker;
+          speakerId = result.speaker;
           confidence = result.score;
         }
       } catch (err) {
         this.log.warn(this.TAG, `Speaker ID error: ${err}`);
+      }
+
+      // Assign display name for unknown speakers
+      let speaker = speakerId;
+      if (!speakerId && this.currentRecord) {
+        // Check if we've seen this voice pattern before (by checking existing unknowns)
+        // For now, assign a new number for each segment without voiceprint match
+        this.unknownSpeakerCount++;
+        speakerId = `unknown_${this.unknownSpeakerCount}`;
+        let displayName = `说话人${this.unknownSpeakerCount}`;
+        this.currentRecord.speakerAliases[speakerId] = displayName;
+        speaker = speakerId;
       }
 
       // Speech-to-text via LocalAsrService
@@ -318,22 +333,23 @@ export class SilentModeService {
         this.log.warn(this.TAG, `ASR error: ${err}`);
       }
 
-      if (text.trim().length > 0 && this.currentRecord) {
+      let record = this.currentRecord;
+      if (text.trim().length > 0 && record) {
         let entry: SilentConversationEntry = {
           timestamp: Date.now(),
           speaker: speaker,
           text: text.trim(),
           confidence: confidence
         };
-        this.currentRecord.entries.push(entry);
+        record.entries.push(entry);
 
         // Update participants
-        if (!this.currentRecord.participants.includes(speaker)) {
-          this.currentRecord.participants.push(speaker);
+        if (!record.participants.includes(speaker)) {
+          record.participants.push(speaker);
         }
 
         // Persist
-        await ConversationStore.getInstance().saveRecord(this.currentRecord);
+        await ConversationStore.getInstance().saveRecord(record);
         this.log.info(this.TAG, `Entry: [${speaker}] ${text.trim().substring(0, 50)}`);
       }
     } catch (err) {
@@ -346,35 +362,36 @@ export class SilentModeService {
   }
 
   private async endConversation(): Promise<void> {
-    if (!this.currentRecord) return;
+    let record = this.currentRecord;
+    if (!record) return;
 
-    this.currentRecord.endTime = Date.now();
+    record.endTime = Date.now();
 
-    if (this.currentRecord.entries.length === 0) {
+    if (record.entries.length === 0) {
       // No entries - just mark completed
-      this.currentRecord.status = 'completed';
-      await ConversationStore.getInstance().saveRecord(this.currentRecord);
+      record.status = 'completed';
+      await ConversationStore.getInstance().saveRecord(record);
       return;
     }
 
     // Generate summary via AI
-    this.currentRecord.status = 'summarizing';
-    await ConversationStore.getInstance().saveRecord(this.currentRecord);
+    record.status = 'summarizing';
+    await ConversationStore.getInstance().saveRecord(record);
 
     try {
-      let summary = await this.generateSummary(this.currentRecord);
-      this.currentRecord.summary = summary;
-      this.currentRecord.status = 'completed';
+      let summary = await this.generateSummary(record);
+      record.summary = summary;
+      record.status = 'completed';
     } catch (err) {
       this.log.error(this.TAG, `Summary generation failed: ${err}`);
-      this.currentRecord.status = this.currentRecord.entries.length > 0 ? 'completed' : 'error';
+      record.status = record.entries.length > 0 ? 'completed' : 'error';
     }
 
-    await ConversationStore.getInstance().saveRecord(this.currentRecord);
+    await ConversationStore.getInstance().saveRecord(record);
 
     // Export markdown
     if (this.context) {
-      await ConversationStore.getInstance().saveAsMarkdown(this.context, this.currentRecord);
+      await ConversationStore.getInstance().saveAsMarkdown(this.context, record);
     }
   }
 
@@ -434,6 +451,7 @@ export class SilentModeService {
 
   private async startNewRecord(): Promise<void> {
     let recordId = `silent_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+    this.unknownSpeakerCount = 0;
     this.currentRecord = {
       id: recordId,
       startTime: Date.now(),
@@ -441,7 +459,8 @@ export class SilentModeService {
       entries: [],
       summary: '',
       status: 'recording',
-      participants: []
+      participants: [],
+      speakerAliases: {}
     };
     await ConversationStore.getInstance().saveRecord(this.currentRecord);
   }

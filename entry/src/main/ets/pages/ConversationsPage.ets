@@ -15,6 +15,9 @@ export struct ConversationsPage {
   @State viewMode: string = 'list';  // 'list' | 'detail'
   @State detailRecord: SilentConversationRecord | undefined = undefined;
   @State lang: string = I18n.lang;
+  @State editingSpeakerId: string = '';
+  @State editingSpeakerName: string = '';
+  @State showEditDialog: boolean = false;
   private langListener: () => void = () => { this.lang = I18n.lang; };
   private stateListener: (state: string) => void = (state: string) => {
     this.isRecording = state !== 'idle';
@@ -121,6 +124,57 @@ export struct ConversationsPage {
     let hr = Math.floor(min / 60);
     min = min % 60;
     return `${hr}h ${min}m`;
+  }
+
+  private getSpeakerDisplayName(speakerId: string): string {
+    if (!this.detailRecord || !this.detailRecord.speakerAliases) {
+      return speakerId;
+    }
+    return this.detailRecord.speakerAliases[speakerId] || speakerId;
+  }
+
+  private editSpeakerName(speakerId: string): void {
+    if (!this.detailRecord) return;
+    this.editingSpeakerId = speakerId;
+    this.editingSpeakerName = this.getSpeakerDisplayName(speakerId);
+    this.showEditDialog = true;
+  }
+
+  private async confirmEditSpeaker(): Promise<void> {
+    if (this.editingSpeakerId && this.editingSpeakerName.trim()) {
+      await this.updateSpeakerAlias(this.editingSpeakerId, this.editingSpeakerName.trim());
+      promptAction.showToast({ message: '已更新说话人名称' });
+    }
+    this.showEditDialog = false;
+    this.editingSpeakerId = '';
+    this.editingSpeakerName = '';
+  }
+
+  private cancelEditSpeaker(): void {
+    this.showEditDialog = false;
+    this.editingSpeakerId = '';
+    this.editingSpeakerName = '';
+  }
+
+  private async updateSpeakerAlias(speakerId: string, newName: string): Promise<void> {
+    if (!this.detailRecord) return;
+    
+    if (!this.detailRecord.speakerAliases) {
+      this.detailRecord.speakerAliases = {};
+    }
+    this.detailRecord.speakerAliases[speakerId] = newName;
+    
+    // Also update participants display
+    let idx = this.detailRecord.participants.indexOf(speakerId);
+    if (idx >= 0) {
+      this.detailRecord.participants[idx] = newName;
+    }
+    
+    // Save to store
+    await ConversationStore.getInstance().saveRecord(this.detailRecord);
+    
+    // Refresh view
+    this.detailRecord = await ConversationStore.getInstance().getRecord(this.detailRecord.id);
   }
 
   build() {
@@ -315,10 +369,14 @@ export struct ConversationsPage {
 
                 // Content
                 Column() {
-                  Text(entry.speaker)
+                  Text(this.getSpeakerDisplayName(entry.speaker))
                     .fontSize(13)
                     .fontWeight(FontWeight.Medium)
                     .fontColor('#007AFF')
+                    .onClick(() => {
+                      this.editSpeakerName(entry.speaker);
+                    })
+                    .decoration({ type: TextDecorationType.Underline })
                   Text(entry.text)
                     .fontSize(14)
                     .fontColor('#333333')
@@ -344,5 +402,60 @@ export struct ConversationsPage {
     }
     .width('100%')
     .height('100%')
+
+    // Edit speaker name dialog
+    if (this.showEditDialog) {
+      Column() {
+        Column() {
+          Text('编辑说话人名称')
+            .fontSize(18)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#333333')
+            .margin({ bottom: 16 })
+
+          TextInput({ text: this.editingSpeakerName, placeholder: '请输入名称' })
+            .width('100%')
+            .height(44)
+            .fontSize(16)
+            .onChange((value: string) => {
+              this.editingSpeakerName = value;
+            })
+            .margin({ bottom: 20 })
+
+          Row() {
+            Button('取消')
+              .fontSize(16)
+              .fontColor('#666666')
+              .backgroundColor('#F0F0F0')
+              .width('45%')
+              .height(44)
+              .onClick(() => {
+                this.cancelEditSpeaker();
+              })
+
+            Button('确定')
+              .fontSize(16)
+              .fontColor(Color.White)
+              .backgroundColor('#007AFF')
+              .width('45%')
+              .height(44)
+              .onClick(() => {
+                this.confirmEditSpeaker();
+              })
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.SpaceBetween)
+        }
+        .width('85%')
+        .padding(20)
+        .backgroundColor(Color.White)
+        .borderRadius(12)
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor('rgba(0,0,0,0.5)')
+      .justifyContent(FlexAlign.Center)
+      .position({ x: 0, y: 0 })
+    }
   }
 }
