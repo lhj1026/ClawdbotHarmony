@@ -1363,7 +1363,7 @@ export struct SettingsPage {
         Column() {
           this.InfoRow(I18n.t('settings.appName'), 'ClawdBot')
           Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
-          this.InfoRow(I18n.t('settings.version'), '2.21.13')
+          this.InfoRow(I18n.t('settings.version'), '2.21.14')
           Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
           this.InfoRow(I18n.t('settings.developer'), 'OpenClaw')
           Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
@@ -2469,8 +2469,9 @@ export struct SettingsPage {
 
     try {
       let ctx = getContext(this) as common.UIAbilityContext;
-      let filesDir = ctx.filesDir;
-      let hapPath = `${filesDir}/ClawdBot-${this.latestVersion}.hap`;
+      // Use cacheDir for temporary downloads
+      let cacheDir = ctx.cacheDir;
+      let hapPath = `${cacheDir}/ClawdBot-${this.latestVersion}.hap`;
 
       // Get download URL from GitHub release
       let httpRequest = http.createHttp();
@@ -2496,32 +2497,73 @@ export struct SettingsPage {
         return;
       }
 
-      // Download HAP file
+      // Download HAP file with redirect support
       promptAction.showToast({ message: '开始下载...', duration: 1500 });
+      console.info(`[SettingsPage] Downloading from: ${downloadUrl}`);
 
-      let downloadRequest = http.createHttp();
-      let downloadResponse = await downloadRequest.request(downloadUrl, {
-        method: http.RequestMethod.GET,
-        expectDataType: http.HttpDataType.ARRAY_BUFFER
-      });
+      // Follow redirects manually for GitHub releases
+      let finalUrl = downloadUrl;
+      let redirectCount = 0;
+      while (redirectCount < 5) {
+        let checkRequest = http.createHttp();
+        let checkResponse = await checkRequest.request(finalUrl, {
+          method: http.RequestMethod.GET,
+          header: { 'Accept': 'application/octet-stream' },
+          expectDataType: http.HttpDataType.ARRAY_BUFFER
+        });
 
-      if (downloadResponse.responseCode === 200 && downloadResponse.result) {
-        let fileData = downloadResponse.result as ArrayBuffer;
-        let file = fileIo.openSync(hapPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
-        fileIo.writeSync(file.fd, fileData);
-        fileIo.closeSync(file);
+        // Check for redirect (302, 301)
+        if (checkResponse.responseCode === 302 || checkResponse.responseCode === 301) {
+          let headers = checkResponse.header as Record<string, string>;
+          let location = headers['location'] || headers['Location'];
+          if (location) {
+            finalUrl = location;
+            console.info(`[SettingsPage] Redirect to: ${finalUrl}`);
+            redirectCount++;
+            checkRequest.destroy();
+            continue;
+          }
+        }
 
-        this.updateProgress = 100;
-        promptAction.showToast({ message: '下载完成，正在安装...', duration: 2000 });
+        // Got actual content
+        if (checkResponse.responseCode === 200 && checkResponse.result) {
+          let fileData = checkResponse.result as ArrayBuffer;
+          console.info(`[SettingsPage] Downloaded ${fileData.byteLength} bytes`);
 
-        // Trigger system installer
-        setTimeout(() => {
-          this.installHap(hapPath);
-        }, 500);
-      } else {
-        promptAction.showToast({ message: `下载失败: HTTP ${downloadResponse.responseCode}`, duration: 2000 });
+          if (fileData.byteLength < 1000) {
+            promptAction.showToast({ message: '下载的文件太小，可能是错误', duration: 2000 });
+            checkRequest.destroy();
+            this.updateDownloading = false;
+            return;
+          }
+
+          // Write to file
+          try {
+            // Delete old file if exists
+            try { fileIo.unlinkSync(hapPath); } catch { /* ignore */ }
+
+            let file = fileIo.openSync(hapPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+            let written = fileIo.writeSync(file.fd, fileData);
+            fileIo.closeSync(file);
+            console.info(`[SettingsPage] Written ${written} bytes to ${hapPath}`);
+
+            this.updateProgress = 100;
+            promptAction.showToast({ message: '下载完成，正在安装...', duration: 2000 });
+
+            // Trigger system installer
+            setTimeout(() => {
+              this.installHap(hapPath);
+            }, 500);
+          } catch (writeErr) {
+            console.error(`[SettingsPage] Write error: ${(writeErr as Error).message ?? ''}`);
+            promptAction.showToast({ message: `写入失败: ${(writeErr as Error).message ?? ''}`, duration: 2000 });
+          }
+        } else {
+          promptAction.showToast({ message: `下载失败: HTTP ${checkResponse.responseCode}`, duration: 2000 });
+        }
+        checkRequest.destroy();
+        break;
       }
-      downloadRequest.destroy();
     } catch (e) {
       console.error(`[SettingsPage] Download update failed: ${(e as Error).message ?? ''}`);
       promptAction.showToast({ message: `下载失败: ${(e as Error).message ?? ''}`, duration: 2000 });
