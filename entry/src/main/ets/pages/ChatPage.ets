@@ -83,6 +83,7 @@ export struct ChatPage {
   private ttsPlaying: boolean = false;
 
   private scroller: Scroller = new Scroller();
+  private lastScrollTime: number = 0;
   private ai: AIService = AIService.getInstance();
   private memSvc: MemoryService = MemoryService.getInstance();
   private lastSearchResults: import('../model/Models').MemorySearchResult[] = []; // hybrid search results for source citation
@@ -2549,7 +2550,7 @@ Respond ONLY with the JSON array.`;
       let onDelta = (deltaText: string): void => {
         if (streamIdx >= 0 && streamIdx < this.messages.length) {
           this.messages[streamIdx].content += deltaText;
-          this.scrollToEnd();
+          this.scrollToEndThrottled();
         }
       };
 
@@ -3648,8 +3649,17 @@ Adjust your tone accordingly:
 
   private scrollToEnd(): void {
     setTimeout(() => {
-      this.scroller.scrollToIndex(Math.max(0, this.messages.length - 1));
+      this.scroller.scrollEdge(Edge.Bottom);
     }, 100);
+  }
+
+  // Throttled scroll for streaming - max once per 200ms
+  private scrollToEndThrottled(): void {
+    let now = Date.now();
+    if (now - this.lastScrollTime > 200) {
+      this.lastScrollTime = now;
+      this.scrollToEnd();
+    }
   }
 
   private scrollToMessage(messageId: string): void {
