@@ -4,6 +4,7 @@
  * Ported from Android NodeRuntime.kt.
  */
 import { common, wantAgent } from '@kit.AbilityKit';
+import { promptAction } from '@kit.ArkUI';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { GatewaySession } from './GatewaySession';
 import { DeviceIdentityStore } from './DeviceIdentityStore';
@@ -46,7 +47,7 @@ import { Constants } from '../../common/Constants';
 import { NotificationHelper } from '../NotificationHelper';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.21.5';
+const APP_VERSION = '2.21.7';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -689,7 +690,8 @@ export class NodeRuntime {
 
   /** Send A2UI action (user interaction) back to gateway. */
   sendA2UIAction(actionJson: string): void {
-    this.log.info(TAG, `sendA2UIAction: ${actionJson.substring(0, 200)}`);
+    let hasSession = this.nodeSession !== null && this.nodeSession !== undefined;
+    try { promptAction.showToast({ message: `sendA2UI: session=${hasSession}` }); } catch { /* ignore */ }
     if (this.nodeSession) {
       this.nodeSession.sendNodeEvent('canvas.a2ui.action', actionJson);
     }
@@ -1220,9 +1222,12 @@ export class NodeRuntime {
 
     // Wire up A2UI action callback
     this.canvasCapability.onA2UIAction = (actionJson: string) => {
+      this.log.info(TAG, `A2UI callback invoked, nodeSession=${this.nodeSession ? 'exists' : 'NULL'}`);
       if (this.nodeSession) {
         this.log.info(TAG, `A2UI action → node event: ${actionJson.substring(0, 200)}`);
         this.nodeSession.sendNodeEvent('canvas.a2ui.action', actionJson);
+      } else {
+        this.log.error(TAG, `A2UI action DROPPED - nodeSession is null!`);
       }
     };
 

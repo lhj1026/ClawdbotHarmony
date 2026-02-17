@@ -395,9 +395,12 @@ export class CanvasCapability {
 
   /** Called by CanvasPage when A2UI action event is received from WebView */
   handleA2UIAction(actionJson: string): void {
-    this.log.info(TAG, `A2UI action: ${actionJson.substring(0, 200)}`);
+    this.log.info(TAG, `A2UI action received: ${actionJson.substring(0, 200)}`);
     if (this.onA2UIAction) {
+      this.log.info(TAG, `Calling onA2UIAction callback...`);
       this.onA2UIAction(actionJson);
+    } else {
+      this.log.warn(TAG, `A2UI action DROPPED - no callback registered!`);
     }
   }
 

@@ -14,6 +14,7 @@
 import { webSocket } from '@kit.NetworkKit';
 import { common } from '@kit.AbilityKit';
 import { util } from '@kit.ArkTS';
+import { promptAction } from '@kit.ArkUI';
 import { Constants } from '../../common/Constants';
 import { LogService } from '../../common/LogService';
 import { GatewayProtocol } from './GatewayProtocol';
@@ -194,9 +195,13 @@ export class GatewaySession {
   }
 
   async sendNodeEvent(event: string, payloadJson?: string): Promise<void> {
+    // Debug toast
+    try { promptAction.showToast({ message: `sendNodeEvent: ws=${this.ws ? 'OK' : 'NULL'}` }); } catch { /* ignore */ }
     if (!this.ws) {
+      this.log.warn(this.logTag, `sendNodeEvent DROPPED - no WebSocket! event=${event}`);
       return;
     }
+    this.log.info(this.logTag, `sendNodeEvent: ${event}`);
     let paramsInner: string = `"event":${JSON.stringify(event)}`;
     if (payloadJson && payloadJson.length > 0) {
       try {
@@ -208,8 +213,10 @@ export class GatewaySession {
     }
     let paramsStr = `{${paramsInner}}`;
     try {
-      await this.request('node.event', paramsStr, 8000);
+      let result = await this.request('node.event', paramsStr, 8000);
+      try { promptAction.showToast({ message: `OK: ${JSON.stringify(result).substring(0, 40)}` }); } catch { /* ignore */ }
     } catch (err) {
+      try { promptAction.showToast({ message: `FAIL: ${(err as Error).message?.substring(0, 30) ?? 'unknown'}` }); } catch { /* ignore */ }
       this.log.warn(this.logTag, `node.event failed: ${(err as Error).message ?? ''}`);
     }
   }

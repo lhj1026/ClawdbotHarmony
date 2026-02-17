@@ -489,7 +489,11 @@ export struct ChatPage {
                 onImageClick: (path: string): void => { this.previewImagePath = path; },
                 onButtonClick: (action: string): void => { this.handleButtonAction(action); },
                 onA2UIReady: (inject: (content: string) => void): void => { this.a2uiInjectFn = inject; },
-                onA2UIAction: (json: string): void => { NodeRuntime.getInstance().sendA2UIAction(json); },
+                onA2UIAction: (json: string): void => { 
+                  console.info('[ChatPage] onA2UIAction callback invoked'); 
+                  try { promptAction.showToast({ message: 'ChatPage→sendA2UI' }); } catch { /* ignore */ }
+                  NodeRuntime.getInstance().sendA2UIAction(json); 
+                },
                 onCanvasReady: (ctrl: webview.WebviewController): void => { NodeRuntime.getInstance().setInlineCanvasController(ctrl); },
                 onCanvasAction: (_json: string): void => { /* future use */ },
                 onReply: (message: ChatMessage): void => {
