@@ -54,6 +54,7 @@ ClawdBot 是一款运行在 HarmonyOS NEXT 上的全功能个人 AI 助手应用
 | **通知** | `notification.show`, `system.notify` | 系统通知推送 |
 | **TTS/音频** | `speaker.speak`, `speaker.play`, `speaker.stop` | 文字转语音、播放音频 |
 | **麦克风** | `mic.record` | 静默录音（后台录制环境音，无需用户操作） |
+| **声纹识别** | 内置 | 本地说话人识别/验证（sherpa-onnx，离线） |
 | **短信** | `sms.send` | 发送短信 |
 | **邮件** | `email.send` | 发送邮件（SMTP） |
 | **日历** | `calendar.add` | 创建日历事件、设置提醒 |
@@ -244,6 +245,7 @@ ClawdBot is a full-featured personal AI assistant for HarmonyOS NEXT. It support
 | **Notification** | `notification.show`, `system.notify` | System push notifications |
 | **TTS/Audio** | `speaker.speak`, `speaker.play`, `speaker.stop` | Text-to-speech, audio playback |
 | **Microphone** | `mic.record` | Silent recording (background ambient audio capture, no user interaction) |
+| **Voiceprint** | Built-in | Local speaker identification/verification (sherpa-onnx, offline) |
 | **SMS** | `sms.send` | Send text messages |
 | **Email** | `email.send` | Send emails (SMTP) |
 | **Calendar** | `calendar.add` | Create calendar events, set reminders |
