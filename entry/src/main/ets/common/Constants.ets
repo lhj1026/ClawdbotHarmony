@@ -87,6 +87,12 @@ export class Constants {
   static readonly GATEWAY_CONNECT_TIMEOUT_MS: number = 8000;
 
   // Session idle timeout - auto-close sessions inactive for 30 minutes
-  static readonly SESSION_IDLE_TIMEOUT_MS: number = 30 * 60 * 1000;  // 30 minutes
+  static readonly SESSION_IDLE_TIMEOUT_MS: number = 30 * 60 * 1000;  // 30 minutes (default)
   static readonly SESSION_IDLE_CHECK_INTERVAL_MS: number = 5 * 60 * 1000;  // check every 5 minutes
+
+  // Session settings keys
+  static readonly KEY_PARALLEL_SESSIONS: string = 'parallel_sessions_enabled';
+  static readonly KEY_IDLE_TIMEOUT_MINUTES: string = 'idle_timeout_minutes';
+  static readonly DEFAULT_PARALLEL_SESSIONS: boolean = true;
+  static readonly DEFAULT_IDLE_TIMEOUT_MINUTES: number = 30;
 }

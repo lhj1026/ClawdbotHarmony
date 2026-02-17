@@ -98,6 +98,9 @@ export struct SettingsPage {
   @State capEmail: boolean = true;
   @State unreadNotification: boolean = true;
   @State ttsAutoRead: boolean = false;
+  // Session management
+  @State parallelSessions: boolean = true;
+  @State idleTimeoutMinutes: number = 30;
 
   // Profiles
   @State profiles: SettingsProfile[] = [];
@@ -1203,6 +1206,73 @@ export struct SettingsPage {
 
         // =============== Bottom (always visible) ===============
 
+        // ---- Session Management ----
+        this.SectionTitle(I18n.t('settings.sessionManagement'))
+        Column() {
+          // Parallel Sessions Toggle
+          Row() {
+            Column({ space: 2 }) {
+              Text(I18n.t('settings.parallelSessions'))
+                .fontSize(14)
+                .fontColor('#1A1A1A')
+              Text(I18n.t('settings.parallelSessionsDesc'))
+                .fontSize(11)
+                .fontColor('#999999')
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
+
+            Toggle({ type: ToggleType.Switch, isOn: this.parallelSessions })
+              .selectedColor('#D2691E')
+              .onChange((v: boolean) => {
+                this.parallelSessions = v;
+                this.saveSessionSettings();
+              })
+          }
+          .width('100%')
+
+          Divider().margin({ top: 14, bottom: 14 }).color('#F0F0F0')
+
+          // Idle Timeout Slider
+          Column({ space: 8 }) {
+            Row() {
+              Text(I18n.t('settings.idleTimeout'))
+                .fontSize(14)
+                .fontColor('#1A1A1A')
+              Blank()
+              Text(`${this.idleTimeoutMinutes} ${I18n.t('settings.minutes')}`)
+                .fontSize(14)
+                .fontColor('#D2691E')
+            }
+            .width('100%')
+
+            Text(I18n.t('settings.idleTimeoutDesc'))
+              .fontSize(11)
+              .fontColor('#999999')
+              .width('100%')
+
+            Slider({
+              value: this.idleTimeoutMinutes,
+              min: 5,
+              max: 120,
+              step: 5
+            })
+              .blockColor('#D2691E')
+              .trackColor('#E0E0E0')
+              .selectedColor('#D2691E')
+              .onChange((value: number) => {
+                this.idleTimeoutMinutes = value;
+                this.saveSessionSettings();
+              })
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .padding(16)
+        .margin({ left: 16, right: 16 })
+        .backgroundColor(Color.White)
+        .borderRadius(12)
+
         // ---- Voiceprint ----
         this.SectionTitle(I18n.t('settings.voiceprint'))
         Column() {
@@ -1225,22 +1295,6 @@ export struct SettingsPage {
           VoiceprintManager()
         }
         .width('100%')
-        .padding(16)
-        .margin({ left: 16, right: 16 })
-        .backgroundColor(Color.White)
-        .borderRadius(12)
-
-        // ---- About ----
-        this.SectionTitle(I18n.t('settings.about'))
-        Column() {
-          this.InfoRow(I18n.t('settings.app'), I18n.t('settings.appValue'))
-          Divider().color('#F0F0F0')
-          this.InfoRow(I18n.t('settings.version'), '2.18.10')
-          Divider().color('#F0F0F0')
-          this.InfoRow(I18n.t('settings.basedOn'), 'OpenClaw / ClawdBot')
-          Divider().color('#F0F0F0')
-          this.InfoRow(I18n.t('settings.platform'), 'HarmonyOS NEXT')
-        }
         .padding(16)
         .margin({ left: 16, right: 16 })
         .backgroundColor(Color.White)
@@ -1801,7 +1855,20 @@ export struct SettingsPage {
       this.unreadNotification = (await store.get('unreadNotification', true)) as boolean;
       NodeRuntime.getInstance().setUnreadNotificationEnabled(this.unreadNotification);
       this.ttsAutoRead = (await store.get('ttsAutoRead', false)) as boolean;
+      // Session management settings
+      this.parallelSessions = (await store.get(Constants.KEY_PARALLEL_SESSIONS, Constants.DEFAULT_PARALLEL_SESSIONS)) as boolean;
+      this.idleTimeoutMinutes = (await store.get(Constants.KEY_IDLE_TIMEOUT_MINUTES, Constants.DEFAULT_IDLE_TIMEOUT_MINUTES)) as number;
     } catch { /* first launch defaults */ }
+  }
+
+  private async saveSessionSettings(): Promise<void> {
+    try {
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let store = await preferences.getPreferences(ctx, Constants.PREFS_GATEWAY);
+      await store.put(Constants.KEY_PARALLEL_SESSIONS, this.parallelSessions);
+      await store.put(Constants.KEY_IDLE_TIMEOUT_MINUTES, this.idleTimeoutMinutes);
+      await store.flush();
+    } catch { /* ignore */ }
   }
 
   private async loadEmail(): Promise<void> {

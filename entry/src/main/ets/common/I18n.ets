@@ -359,6 +359,14 @@ function buildZh(): Map<string, string> {
   m.set('queue.clearAll', '全部清除');
   m.set('queue.banner', '有 {0} 条排队消息');
 
+  // Session Management
+  m.set('settings.sessionManagement', '会话管理');
+  m.set('settings.parallelSessions', '并行会话');
+  m.set('settings.parallelSessionsDesc', '允许多个会话同时与 AI 对话');
+  m.set('settings.idleTimeout', '闲置关闭');
+  m.set('settings.idleTimeoutDesc', '超过此时间未活动的会话将自动关闭');
+  m.set('settings.minutes', '分钟');
+
   // Voiceprint
   m.set('voiceprint.title', '声纹管理');
   m.set('voiceprint.speakerCount', '位说话人');
@@ -743,6 +751,14 @@ function buildEn(): Map<string, string> {
   m.set('queue.resendAll', 'Resend All');
   m.set('queue.clearAll', 'Clear All');
   m.set('queue.banner', '{0} queued message(s)');
+
+  // Session Management
+  m.set('settings.sessionManagement', 'SESSION');
+  m.set('settings.parallelSessions', 'Parallel Sessions');
+  m.set('settings.parallelSessionsDesc', 'Allow multiple sessions to chat with AI simultaneously');
+  m.set('settings.idleTimeout', 'Idle Timeout');
+  m.set('settings.idleTimeoutDesc', 'Sessions inactive for this duration will auto-close');
+  m.set('settings.minutes', 'min');
 
   // Voiceprint
   m.set('voiceprint.title', 'Voiceprint');

@@ -21,6 +21,7 @@ export struct SessionDrawer {
   onOpenMemory: () => void = () => {};
   onOpenSettings: () => void = () => {};
   onOpenLogs: () => void = () => {};
+  onOpenAbout: () => void = () => {};
   onClose: () => void = () => {};
 
   @Builder
@@ -290,9 +291,23 @@ export struct SessionDrawer {
             .fontColor('#666666')
         }
         .width('100%')
-        .padding({ left: 16, right: 16, top: 6, bottom: 12 })
+        .padding({ left: 16, right: 16, top: 6, bottom: 6 })
         .onClick(() => {
           this.onOpenLogs();
+        })
+
+        Row() {
+          Text('ℹ️')
+            .fontSize(16)
+            .margin({ right: 8 })
+          Text(t('settings.about'))
+            .fontSize(14)
+            .fontColor('#666666')
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 6, bottom: 12 })
+        .onClick(() => {
+          this.onOpenAbout();
         })
       }
       .width('100%')
