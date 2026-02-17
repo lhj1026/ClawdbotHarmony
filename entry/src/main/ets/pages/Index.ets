@@ -1,6 +1,4 @@
 import { ChatPage } from './ChatPage';
-import { SkillsPage } from './SkillsPage';
-import { MemoryPage } from './MemoryPage';
 import { I18n, LangCode } from '../common/I18n';
 import { LogService } from '../common/LogService';
 import { Constants } from '../common/Constants';
@@ -12,10 +10,8 @@ import { common } from '@kit.AbilityKit';
 @Entry
 @Component
 struct Index {
-  @State currentTab: number = 0;
   @State @Watch('onLangChange') lang: string = 'zh';
-  @StorageLink('share_timestamp') @Watch('onShareArrived') shareTs: number = 0;
-  private controller: TabsController = new TabsController();
+  @StorageLink('share_timestamp') shareTs: number = 0;
   private langListener: (() => void) | undefined = undefined;
 
   aboutToAppear(): void {
@@ -37,14 +33,6 @@ struct Index {
 
   onLangChange(): void {
     // triggers UI re-render
-  }
-
-  /** Switch to chat tab when share data arrives */
-  onShareArrived(): void {
-    if (this.shareTs > 0 && this.currentTab !== 0) {
-      this.controller.changeIndex(0);
-      this.currentTab = 0;
-    }
   }
 
   /** Auto-connect to Gateway if Node Mode is enabled in settings */
@@ -103,62 +91,10 @@ struct Index {
 
   build() {
     Column() {
-      Row() {
-        Text('OpenClaw')
-          .fontSize(16)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#D2691E')
-        Text('v2.18.4')
-          .fontSize(11)
-          .fontColor('#999999')
-          .margin({ left: 6, top: 3 })
-      }
-      .justifyContent(FlexAlign.Center)
-      .width('100%')
-      .height(36)
-      .backgroundColor(Color.White)
-
-      Tabs({ barPosition: BarPosition.End, controller: this.controller }) {
-        TabContent() {
-          ChatPage()
-        }
-        .tabBar(this.TabItem(0, '\uD83D\uDCAC', 'tab.chat'))
-
-        TabContent() {
-          SkillsPage()
-        }
-        .tabBar(this.TabItem(1, '\uD83D\uDD27', 'tab.skills'))
-
-        TabContent() {
-          MemoryPage({ isActive: this.currentTab === 2 })
-        }
-        .tabBar(this.TabItem(2, '\uD83E\uDDE0', 'tab.memory'))
-
-      }
-      .layoutWeight(1)
-      .scrollable(false)
-      .barHeight(56)
-      .barBackgroundColor(Color.White)
-      .animationDuration(200)
-      .onChange((index: number) => { this.currentTab = index; })
+      ChatPage()
     }
     .width('100%')
     .height('100%')
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
-  }
-
-  @Builder
-  TabItem(index: number, icon: string, labelKey: string) {
-    Column({ space: 3 }) {
-      Text(icon)
-        .fontSize(20)
-      Text(this.lang.length > 0 ? I18n.t(labelKey) : '')
-        .fontSize(11)
-        .fontColor(this.currentTab === index ? '#D2691E' : '#999999')
-        .fontWeight(this.currentTab === index ? FontWeight.Medium : FontWeight.Normal)
-    }
-    .justifyContent(FlexAlign.Center)
-    .width('100%')
-    .height('100%')
   }
 }

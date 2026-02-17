@@ -17,6 +17,8 @@ export struct SessionDrawer {
   onSessionRename: (sessionId: string, newName: string) => void = () => {};
   onSessionPin: (sessionId: string) => void = () => {};
   onSessionClear: (sessionId: string) => void = () => {};
+  onOpenSkills: () => void = () => {};
+  onOpenMemory: () => void = () => {};
   onOpenSettings: () => void = () => {};
   onOpenLogs: () => void = () => {};
   onClose: () => void = () => {};
@@ -238,6 +240,34 @@ export struct SessionDrawer {
           .width('100%')
 
         Row() {
+          Text('\uD83D\uDD27')
+            .fontSize(16)
+            .margin({ right: 8 })
+          Text(t('tab.skills'))
+            .fontSize(14)
+            .fontColor('#666666')
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 12, bottom: 6 })
+        .onClick(() => {
+          this.onOpenSkills();
+        })
+
+        Row() {
+          Text('\uD83E\uDDE0')
+            .fontSize(16)
+            .margin({ right: 8 })
+          Text(t('tab.memory'))
+            .fontSize(14)
+            .fontColor('#666666')
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 6, bottom: 6 })
+        .onClick(() => {
+          this.onOpenMemory();
+        })
+
+        Row() {
           Text('\u2699\uFE0F')
             .fontSize(16)
             .margin({ right: 8 })
@@ -246,7 +276,7 @@ export struct SessionDrawer {
             .fontColor('#666666')
         }
         .width('100%')
-        .padding({ left: 16, right: 16, top: 12, bottom: 6 })
+        .padding({ left: 16, right: 16, top: 6, bottom: 6 })
         .onClick(() => {
           this.onOpenSettings();
         })

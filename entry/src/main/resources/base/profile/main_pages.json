@@ -4,6 +4,8 @@
     "pages/CanvasPage",
     "pages/LogViewerPage",
     "pages/LogRoutePage",
-    "pages/SettingsRoutePage"
+    "pages/SettingsRoutePage",
+    "pages/SkillsRoutePage",
+    "pages/MemoryRoutePage"
   ]
 }

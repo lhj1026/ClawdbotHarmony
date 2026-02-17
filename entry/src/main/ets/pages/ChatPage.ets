@@ -848,6 +848,14 @@ export struct ChatPage {
           onSessionClear: (sessionId: string) => {
             this.clearSessionMessages(sessionId);
           },
+          onOpenSkills: () => {
+            this.showSessionDrawer = false;
+            router.pushUrl({ url: 'pages/SkillsRoutePage' });
+          },
+          onOpenMemory: () => {
+            this.showSessionDrawer = false;
+            router.pushUrl({ url: 'pages/MemoryRoutePage' });
+          },
           onOpenSettings: () => {
             this.showSessionDrawer = false;
             router.pushUrl({ url: 'pages/SettingsRoutePage' });
