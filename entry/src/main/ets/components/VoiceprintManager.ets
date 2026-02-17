@@ -8,6 +8,7 @@
  */
 import { promptAction } from '@kit.ArkUI';
 import { audio } from '@kit.AudioKit';
+import { common } from '@kit.AbilityKit';
 import { I18n } from '../common/I18n';
 import { VoiceprintService, VoiceprintProfile } from '../service/VoiceprintService';
 
@@ -51,6 +52,17 @@ export struct VoiceprintManager {
     this.lang = I18n.lang;
     this.langListener = () => { this.lang = I18n.lang; };
     I18n.addListener(this.langListener);
+    this.initService();
+  }
+
+  async initService(): Promise<void> {
+    if (!this.vpService.isInitialized()) {
+      const ctx = getContext(this) as common.UIAbilityContext;
+      const ok = await this.vpService.init(ctx);
+      if (!ok) {
+        console.error('[VoiceprintManager]', 'Failed to initialize voiceprint service');
+      }
+    }
     this.loadSpeakers();
   }
 
