@@ -3,6 +3,7 @@ import { SilentConversationItem, SilentConversationRecord, SilentConversationEnt
 import { I18n, t } from '../common/I18n';
 import { ConversationStore } from '../service/ConversationStore';
 import { SilentModeService } from '../service/SilentModeService';
+import { VoiceprintService } from '../service/VoiceprintService';
 import { ConversationCard } from '../components/ConversationCard';
 import { MarkdownText } from '../components/MarkdownText';
 import { common } from '@kit.AbilityKit';
@@ -141,8 +142,31 @@ export struct ConversationsPage {
   }
 
   private async confirmEditSpeaker(): Promise<void> {
-    if (this.editingSpeakerId && this.editingSpeakerName.trim()) {
-      await this.updateSpeakerAlias(this.editingSpeakerId, this.editingSpeakerName.trim());
+    if (this.editingSpeakerId && this.editingSpeakerName.trim() && this.detailRecord) {
+      let newName = this.editingSpeakerName.trim();
+      
+      // Find entries with this speaker to get embeddings
+      let embeddings: Float32Array[] = [];
+      for (let entry of this.detailRecord.entries) {
+        if (entry.speaker === this.editingSpeakerId && entry.embedding && entry.embedding.length > 0) {
+          embeddings.push(new Float32Array(entry.embedding));
+        }
+      }
+      
+      // Register voiceprint with the new name if we have embeddings
+      if (embeddings.length > 0) {
+        try {
+          let vpService = VoiceprintService.getInstance();
+          let success = await vpService.enrollSpeaker(newName, embeddings, 16000);
+          if (success) {
+            promptAction.showToast({ message: `已注册声纹: ${newName}` });
+          }
+        } catch (err) {
+          console.warn('Voiceprint enrollment failed:', err);
+        }
+      }
+      
+      await this.updateSpeakerAlias(this.editingSpeakerId, newName);
       promptAction.showToast({ message: '已更新说话人名称' });
     }
     this.showEditDialog = false;

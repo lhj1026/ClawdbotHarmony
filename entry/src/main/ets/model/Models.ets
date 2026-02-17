@@ -293,6 +293,7 @@ export interface SilentConversationEntry {
   speaker: string;         // identified speaker name or 'Unknown'
   text: string;            // transcribed text
   confidence: number;      // speaker identification confidence (0-1)
+  embedding?: number[];    // voiceprint embedding for later enrollment
 }
 
 // Full silent conversation record (persisted)

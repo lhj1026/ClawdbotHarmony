@@ -301,8 +301,15 @@ export class SilentModeService {
       // Speaker identification
       let speakerId = '';
       let confidence = 0;
+      let embeddingArray: number[] = [];
       try {
         let vpService = VoiceprintService.getInstance();
+        // Extract embedding for storage
+        let emb = vpService.extractEmbedding(float32, 16000);
+        if (emb) {
+          embeddingArray = Array.from(emb);
+        }
+        // Try to identify speaker
         let result = vpService.identify(float32, 16000);
         if (result.speaker && result.speaker !== 'unknown') {
           speakerId = result.speaker;
@@ -339,7 +346,8 @@ export class SilentModeService {
           timestamp: Date.now(),
           speaker: speaker,
           text: text.trim(),
-          confidence: confidence
+          confidence: confidence,
+          embedding: embeddingArray.length > 0 ? embeddingArray : undefined
         };
         record.entries.push(entry);
 
