@@ -473,12 +473,14 @@ export struct MessageBubble {
       .onConsole((event) => {
         if (event && event.message) {
           let msg: string = event.message.getMessage();
+          console.info('[A2UI-Console] ' + msg.substring(0, 200));
           if (msg.startsWith('A2UI_HEIGHT:')) {
             let h: number = parseInt(msg.substring(12));
             if (h > 0) {
               this.a2uiHeight = Math.min(h + 24, 600);
             }
           } else if (msg.startsWith('A2UI_ACTION:')) {
+            console.info('[A2UI-Console] Detected action, calling callback...');
             this.onA2UIAction(msg.substring(12));
           }
         }
