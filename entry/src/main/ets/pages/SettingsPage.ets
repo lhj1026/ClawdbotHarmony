@@ -1300,6 +1300,21 @@ export struct SettingsPage {
         .backgroundColor(Color.White)
         .borderRadius(12)
 
+        // =============== About ===============
+        this.SectionTitle(I18n.t('settings.about'))
+        Column() {
+          this.InfoRow(I18n.t('settings.appName'), 'ClawdBot')
+          Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
+          this.InfoRow(I18n.t('settings.version'), '2.18.13')
+          Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
+          this.InfoRow(I18n.t('settings.developer'), 'OpenClaw')
+        }
+        .width('100%')
+        .padding(16)
+        .margin({ left: 16, right: 16 })
+        .backgroundColor(Color.White)
+        .borderRadius(12)
+
         // =============== Profiles ===============
         this.SectionTitle(I18n.t('settings.profiles'))
         Column() {

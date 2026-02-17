@@ -212,7 +212,9 @@ function buildZh(): Map<string, string> {
   m.set('settings.about', '关于');
   m.set('settings.app', '应用');
   m.set('settings.appValue', 'ClawdBot for HarmonyOS');
+  m.set('settings.appName', '应用名称');
   m.set('settings.version', '版本');
+  m.set('settings.developer', '开发者');
   m.set('settings.basedOn', '基于');
   m.set('settings.platform', '平台');
   m.set('settings.systemStatus', '系统状态');
@@ -610,7 +612,9 @@ function buildEn(): Map<string, string> {
   m.set('settings.about', 'ABOUT');
   m.set('settings.app', 'App');
   m.set('settings.appValue', 'ClawdBot for HarmonyOS');
+  m.set('settings.appName', 'App Name');
   m.set('settings.version', 'Version');
+  m.set('settings.developer', 'Developer');
   m.set('settings.basedOn', 'Based on');
   m.set('settings.platform', 'Platform');
   m.set('settings.systemStatus', 'System Status');
