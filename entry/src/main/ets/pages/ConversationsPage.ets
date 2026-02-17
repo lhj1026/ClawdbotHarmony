@@ -19,6 +19,7 @@ export struct ConversationsPage {
   @State editingSpeakerId: string = '';
   @State editingSpeakerName: string = '';
   @State showEditDialog: boolean = false;
+  @State refreshCounter: number = 0;  // Force UI refresh
   private langListener: () => void = () => { this.lang = I18n.lang; };
   private stateListener: (state: string) => void = (state: string) => {
     this.isRecording = state !== 'idle';
@@ -208,10 +209,11 @@ export struct ConversationsPage {
     let recordId = this.detailRecord.id;
     let refreshed = await ConversationStore.getInstance().getRecord(recordId);
     if (refreshed) {
-      // Force re-assignment to trigger @State update
-      this.detailRecord = undefined;
       this.detailRecord = refreshed;
     }
+    
+    // Increment counter to force ForEach re-render
+    this.refreshCounter++;
   }
 
   build() {
@@ -426,7 +428,7 @@ export struct ConversationsPage {
               .width('100%')
               .padding({ left: 16, right: 16, top: 8, bottom: 8 })
               .alignItems(VerticalAlign.Top)
-            }, (entry: SilentConversationEntry, index: number) => `${index}_${entry.timestamp}`)
+            }, (entry: SilentConversationEntry, index: number) => `${index}_${entry.timestamp}_${this.refreshCounter}`)
           }
           .width('100%')
         }
