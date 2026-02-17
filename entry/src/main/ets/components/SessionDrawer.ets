@@ -210,18 +210,8 @@ export struct SessionDrawer {
   }
 
   private confirmClose(session: ChatSession): void {
-    promptAction.showDialog({
-      title: t('session.close'),
-      message: t('session.closeConfirm'),
-      buttons: [
-        { text: t('memory.cancel'), color: '#999999' },
-        { text: t('session.close'), color: '#FF9500' }
-      ]
-    }).then((result) => {
-      if (result.index === 1) {
-        this.onSessionClose(session.id);
-      }
-    });
+    // Direct close without confirmation
+    this.onSessionClose(session.id);
   }
 
   build() {

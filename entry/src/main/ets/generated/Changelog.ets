@@ -8,9 +8,19 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.19.0';
+export const APP_VERSION: string = '2.19.1';
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '2.19.1',
+    date: '2026-02-16',
+    features: [
+
+    ],
+    fixes: [
+      '关闭会话不再需要确认',
+    ],
+  },
   {
     version: '2.19.0',
     date: '2026-02-16',
@@ -68,4 +78,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.19.0';
+export const LATEST_VERSION: string = '2.19.1';
