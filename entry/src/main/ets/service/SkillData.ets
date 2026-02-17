@@ -322,7 +322,7 @@ function buildMemoryToolSchemas(): ToolSchema[] {
       'Save important information to persistent memory. Use this when the user shares personal facts, preferences, or instructions they want you to remember across conversations.',
       makeSchema(saveProps, ['mem_type', 'content'])),
     makeTool('search_memory',
-      'Search saved memories using semantic similarity. Can find related memories even when exact keywords don\'t match. For example, searching "drink preference" can find "I like coffee".',
+      'Search saved memories using hybrid semantic + keyword search. Combines vector similarity with keyword matching for best recall. Returns results with relevance scores and source citations. For example, searching "drink preference" can find "I like coffee".',
       makeSchema(searchProps, ['query'])),
   ];
 }

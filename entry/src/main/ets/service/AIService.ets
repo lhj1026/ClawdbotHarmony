@@ -1555,22 +1555,35 @@ export class AIService {
           try {
             let memSvc = MemoryService.getInstance();
             let filterType = input['mem_type'] ?? '';
-            // Try vector search first, fallback to keyword search
+            // Use hybrid search (vector + keyword fusion, OpenClaw-inspired)
             let apiKey = await memSvc.getEmbeddingApiKey(context);
-            let results = await memSvc.vectorSearch(context, query, apiKey, 5, filterType);
-            let searchMethod = 'vector';
-            if (results.length === 0) {
-              results = await memSvc.search(context, query, filterType);
+            let hybridResults = await memSvc.hybridSearch(context, query, apiKey, 5, filterType);
+            let searchMethod = 'hybrid';
+            let items: Record<string, string | number>[];
+            if (hybridResults.length > 0) {
+              items = hybridResults.map((r): Record<string, string | number> => {
+                let obj: Record<string, string | number> = {};
+                obj['type'] = r.item.memType;
+                obj['content'] = r.item.content;
+                obj['score'] = Math.round(r.score * 100);
+                obj['method'] = r.method;
+                obj['source'] = r.citation;
+                obj['created'] = new Date(r.item.createdAt).toLocaleDateString();
+                return obj;
+              });
+            } else {
+              // Fallback to keyword search
+              let kwResults = await memSvc.search(context, query, filterType);
               searchMethod = 'keyword';
+              items = kwResults.map((m): Record<string, string | number> => {
+                let obj: Record<string, string | number> = {};
+                obj['type'] = m.memType;
+                obj['content'] = m.content;
+                obj['created'] = new Date(m.createdAt).toLocaleDateString();
+                return obj;
+              });
             }
-            let items = results.map((m): Record<string, string | number> => {
-              let obj: Record<string, string | number> = {};
-              obj['type'] = m.memType;
-              obj['content'] = m.content;
-              obj['created'] = new Date(m.createdAt).toLocaleDateString();
-              return obj;
-            });
-            return JSON.stringify({ query: query, found: results.length, method: searchMethod, items: items });
+            return JSON.stringify({ query: query, found: items.length, method: searchMethod, items: items });
           } catch (e) {
             let r: ToolResultObj = { error: 'Search memory failed: ' + (e as Error).message };
             return JSON.stringify(r);

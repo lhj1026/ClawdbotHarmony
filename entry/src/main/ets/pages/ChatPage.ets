@@ -85,6 +85,7 @@ export struct ChatPage {
   private scroller: Scroller = new Scroller();
   private ai: AIService = AIService.getInstance();
   private memSvc: MemoryService = MemoryService.getInstance();
+  private lastSearchResults: import('../model/Models').MemorySearchResult[] = []; // hybrid search results for source citation
   private log: LogService = LogService.getInstance();
   private gwListener: ((state: ConnectionState, text: string) => void) | undefined = undefined;
   private chatListener: ((event: GatewayChatEvent) => void) | undefined = undefined;
@@ -1077,6 +1078,12 @@ Respond ONLY with the JSON array.`;
               message: I18n.t('chat.memoryExtracted').replace('{0}', addedCount.toString()),
               duration: 2000
             });
+          }
+          // Append conversation summary to daily diary (OpenClaw-inspired)
+          if (memories.length > 0) {
+            let summaryParts = memories.map((m): string => `[${m.type ?? 'fact'}] ${m.content}`);
+            let summary = summaryParts.join('; ');
+            this.memSvc.appendConversationDiary(ctx, summary).catch(() => { /* ignore */ });
           }
         });
       }).catch((e: Error) => {
@@ -3415,6 +3422,12 @@ You have persistent memory that survives across conversations. Use it proactivel
 - When the user references something from a past conversation
 - When you need to recall user preferences or facts
 
+### Memory Sources & Citations:
+- Search results include relevance scores and source citations
+- <relevant-memories> block contains auto-retrieved memories relevant to the current query
+- <memory> block contains all stored memories for reference
+- When using recalled memories, you may reference the source naturally (e.g. "Based on what you told me earlier...")
+
 ### Guidelines:
 - Be proactive: if the user says "我叫小明" or "I live in Shanghai", save it without being asked
 - Don't save trivial or temporary information (weather queries, one-time calculations)
@@ -3434,8 +3447,10 @@ Adjust your tone accordingly:
 `;
     }
     let memBlock = this.memSvc.buildPromptBlock(memItems);
+    // Add hybrid search results with scores and citations (OpenClaw-inspired)
+    let searchBlock = this.memSvc.buildSearchResultsBlock(this.lastSearchResults);
     let skillBlock = getSkillSystemPrompt(skills, customSkills);
-    return base + (memBlock ? '\n' + memBlock + '\n' : '') + (skillBlock ? '\n' + skillBlock : '');
+    return base + (memBlock ? '\n' + memBlock + '\n' : '') + (searchBlock ? '\n' + searchBlock + '\n' : '') + (skillBlock ? '\n' + skillBlock : '');
   }
 
   private buildSystemPromptFiltered(memItems: MemoryItem[], skills: import('../model/Models').SkillItem[], modelName?: string, skillIds?: string[], customSkills?: CustomSkillDef[]): string {
@@ -3740,22 +3755,28 @@ Adjust your tone accordingly:
   }
 
   /**
-   * Search for relevant memories using vector search with keyword fallback.
+   * Search for relevant memories using hybrid search (OpenClaw-inspired).
+   * Combines vector + keyword scores for better recall.
    * Returns relevant memories for the given query, or all memories as final fallback.
    */
   private async searchRelevantMemories(ctx: common.UIAbilityContext, query: string): Promise<MemoryItem[]> {
     try {
       let apiKey = await this.memSvc.getEmbeddingApiKey(ctx);
-      let results = await this.memSvc.vectorSearch(ctx, query, apiKey);
-      if (results.length > 0) {
-        this.log.info('ChatPage', `Auto-memory: vector search found ${results.length} relevant memories`);
-        return results;
+      // Use hybrid search (vector + keyword fusion) for better results
+      let hybridResults = await this.memSvc.hybridSearch(ctx, query, apiKey);
+      if (hybridResults.length > 0) {
+        // Store search results for source citation in prompt
+        this.lastSearchResults = hybridResults;
+        let methods = hybridResults.map((r: import('../model/Models').MemorySearchResult): string => r.method);
+        this.log.info('ChatPage', `Auto-memory: hybrid search found ${hybridResults.length} results [${methods.join(',')}]`);
+        return hybridResults.map((r: import('../model/Models').MemorySearchResult): MemoryItem => r.item);
       }
       // Fallback to keyword search
       let kwResults = await this.memSvc.search(ctx, query);
       if (kwResults.length > 0) {
         let sliced = kwResults.slice(0, Constants.VECTOR_SEARCH_TOP_K);
         this.log.info('ChatPage', `Auto-memory: keyword fallback found ${sliced.length} relevant memories`);
+        this.lastSearchResults = [];
         return sliced;
       }
     } catch (e) {
@@ -3763,6 +3784,7 @@ Adjust your tone accordingly:
     }
     // Final fallback: all memories
     this.log.info('ChatPage', 'Auto-memory: falling back to all memories');
+    this.lastSearchResults = [];
     return await this.memSvc.loadAll(ctx);
   }
 

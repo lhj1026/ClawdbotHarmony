@@ -2,7 +2,7 @@ import { preferences } from '@kit.ArkData';
 import { fileIo } from '@kit.CoreFileKit';
 import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
-import { MemoryItem, MemoryData, VectorData, VectorStore } from '../model/Models';
+import { MemoryItem, MemoryData, VectorData, VectorStore, MemorySearchResult, DiaryEntry } from '../model/Models';
 import { Constants } from '../common/Constants';
 import { LogService } from '../common/LogService';
 import { LocalEmbedding } from './embedding/LocalEmbedding';
@@ -21,10 +21,14 @@ interface EmbeddingDataItem {
 }
 
 /**
- * Persistent memory service with vector embedding support.
- * Stores facts, preferences, and instructions across sessions.
- * Memory is injected into the system prompt for personalisation.
- * Supports semantic search via local embedding (MiniLM-L6) with cloud API fallback.
+ * Persistent memory service with hybrid search, daily diary, and source citations.
+ *
+ * Inspired by OpenClaw's memory architecture:
+ * - Hybrid BM25 + vector search (weighted score fusion)
+ * - Daily diary files (memory/YYYY-MM-DD.md)
+ * - Source citations on search results
+ * - Semantic deduplication
+ * - Human-readable MEMORY.md summary
  */
 export class MemoryService {
   private static instance: MemoryService | undefined = undefined;
@@ -33,6 +37,14 @@ export class MemoryService {
   private localEmb: LocalEmbedding = LocalEmbedding.getInstance();
   private migrationDone: boolean = false;
   private _nodeMode: boolean = false;
+
+  // Hybrid search weights (OpenClaw default: 0.7 vector, 0.3 keyword)
+  private readonly VECTOR_WEIGHT: number = 0.7;
+  private readonly KEYWORD_WEIGHT: number = 0.3;
+  private readonly CANDIDATE_MULTIPLIER: number = 4;
+
+  // Semantic dedup threshold — skip if cosine sim > this
+  private readonly SEMANTIC_DEDUP_THRESHOLD: number = 0.92;
 
   /** Set node mode flag. In node mode, cloud embedding API is not called
    *  because cloud processing is handled by the gateway server. */
@@ -48,7 +60,7 @@ export class MemoryService {
     return MemoryService.instance;
   }
 
-  // ---------- public API ----------
+  // ==================== Public API ====================
 
   async loadAll(context: Context): Promise<MemoryItem[]> {
     let store = await preferences.getPreferences(context, Constants.PREFS_MEMORY);
@@ -83,9 +95,10 @@ export class MemoryService {
     let item = new MemoryItem(memType, content, importance);
     items.push(item);
     await this.save(context, items);
-    // Async: embed vector + regenerate memory.md (fire-and-forget)
+    // Async: embed vector + regenerate memory.md + append diary (fire-and-forget)
     this.embedAndStore(context, item).catch(() => { /* ignore */ });
     this.generateMemoryMd(context).catch(() => { /* ignore */ });
+    this.appendDiaryEntry(context, { time: this.nowTimeStr(), memType: memType, content: content, memoryId: item.id }).catch(() => { /* ignore */ });
     return item;
   }
 
@@ -147,16 +160,27 @@ export class MemoryService {
   }
 
   /**
-   * Add memory only if it doesn't already exist (dedup).
+   * Add memory only if it doesn't already exist.
+   * Uses both exact match and semantic similarity dedup (OpenClaw-inspired).
    */
   async addIfNew(context: Context, memType: string, content: string, importance: number = 0.5): Promise<MemoryItem | null> {
+    // Exact match dedup
     let isDup = await this.exists(context, content);
     if (isDup) return null;
+
+    // Semantic dedup: check if very similar memory exists via vector similarity
+    let semanticDup = await this.isSemanticDuplicate(context, content);
+    if (semanticDup) {
+      this.log.info(this.TAG, `Semantic dedup: skipping "${content.substring(0, 60)}"`);
+      return null;
+    }
+
     return await this.add(context, memType, content, importance);
   }
 
   /**
-   * Build the memory block that gets injected into the system prompt.
+   * Build the memory block injected into the system prompt.
+   * Includes source citations for traceability (OpenClaw-inspired).
    */
   buildPromptBlock(items: MemoryItem[]): string {
     if (items.length === 0) return '';
@@ -165,19 +189,34 @@ export class MemoryService {
     let instr = items.filter((m): boolean => m.memType === 'instruction');
     let parts: string[] = [];
     if (facts.length > 0) {
-      parts.push('## Facts\n' + facts.map((f): string => '- ' + f.content).join('\n'));
+      parts.push('## Facts\n' + facts.map((f): string => `- ${f.content} [${f.id}]`).join('\n'));
     }
     if (prefs.length > 0) {
-      parts.push('## Preferences\n' + prefs.map((p): string => '- ' + p.content).join('\n'));
+      parts.push('## Preferences\n' + prefs.map((p): string => `- ${p.content} [${p.id}]`).join('\n'));
     }
     if (instr.length > 0) {
-      parts.push('## Instructions\n' + instr.map((i): string => '- ' + i.content).join('\n'));
+      parts.push('## Instructions\n' + instr.map((i): string => `- ${i.content} [${i.id}]`).join('\n'));
     }
     return '<memory>\n' + parts.join('\n\n') + '\n</memory>';
   }
 
   /**
-   * Auto-detect memorable info from user text.
+   * Build prompt block for hybrid search results with relevance scores and citations.
+   * Used when auto-memory inject retrieves specific relevant memories.
+   */
+  buildSearchResultsBlock(results: MemorySearchResult[]): string {
+    if (results.length === 0) return '';
+    let lines: string[] = ['<relevant-memories>'];
+    for (let r of results) {
+      let scoreStr = (r.score * 100).toFixed(0);
+      lines.push(`- [${r.item.memType}] ${r.item.content} (relevance: ${scoreStr}%, source: ${r.citation})`);
+    }
+    lines.push('</relevant-memories>');
+    return lines.join('\n');
+  }
+
+  /**
+   * Auto-detect memorable info from user text via regex patterns.
    */
   async autoExtract(context: Context, userText: string): Promise<void> {
     let lower = userText.toLowerCase();
@@ -205,6 +244,284 @@ export class MemoryService {
         this.log.info(this.TAG, `autoExtract: type=${type} content="${match[1].trim().substring(0, 80)}"`);
         await this.addIfNew(context, type, match[1].trim(), 0.8);
       }
+    }
+  }
+
+  // ==================== Hybrid Search (OpenClaw-inspired) ====================
+
+  /**
+   * Hybrid search combining BM25 keyword scores with vector cosine similarity.
+   *
+   * Algorithm (from OpenClaw):
+   * 1. Get vector candidates (topK × candidateMultiplier)
+   * 2. Get keyword candidates (topK × candidateMultiplier)
+   * 3. Union by ID, compute: finalScore = vectorWeight × vecScore + keywordWeight × kwScore
+   * 4. Sort by finalScore, return topK with citations
+   */
+  async hybridSearch(context: Context, query: string, apiKey: string,
+    topK: number = Constants.VECTOR_SEARCH_TOP_K,
+    filterType: string = ''): Promise<MemorySearchResult[]> {
+    let items = await this.loadAll(context);
+    if (filterType.length > 0) {
+      items = items.filter((m): boolean => m.memType === filterType);
+    }
+    if (items.length === 0) return [];
+
+    let candidateK = topK * this.CANDIDATE_MULTIPLIER;
+
+    // --- Vector scores ---
+    let vectorScores = new Map<string, number>();
+    let mode = await this.getEmbeddingMode(context);
+    // Lazy-init local model
+    if (!this.localEmb.isReady()) {
+      await this.localEmb.init(context);
+    }
+    let queryVec = await this.embed(query, apiKey, mode);
+    if (queryVec.length > 0) {
+      let vecStore = await this.loadVectors(context);
+      let vecScored: ScoredMemory[] = [];
+      for (let vd of vecStore.vectors) {
+        let sim = this.cosineSimilarity(queryVec, vd.vector);
+        if (sim > 0) {
+          vecScored.push({ item: new MemoryItem('', ''), score: sim });
+          // Store using id as key
+          vectorScores.set(vd.id, sim);
+        }
+      }
+    }
+
+    // --- Keyword scores (BM25-like) ---
+    let keywordScores = new Map<string, number>();
+    let keywords = query.toLowerCase().split(/\s+/).filter((k): boolean => k.length > 0);
+    if (keywords.length > 0) {
+      for (let item of items) {
+        let lower = item.content.toLowerCase();
+        let hits = 0;
+        for (let kw of keywords) {
+          if (lower.includes(kw)) hits++;
+        }
+        if (hits > 0) {
+          // Normalize: hits/totalKeywords gives 0-1 range
+          let kwScore = hits / keywords.length;
+          keywordScores.set(item.id, kwScore);
+        }
+      }
+    }
+
+    // --- Merge scores ---
+    let itemMap = new Map<string, MemoryItem>();
+    for (let item of items) {
+      itemMap.set(item.id, item);
+    }
+
+    let merged: MemorySearchResult[] = [];
+    let seenIds = new Set<string>();
+
+    // Collect all candidate IDs from both signals
+    for (let item of items) {
+      let id = item.id;
+      if (seenIds.has(id)) continue;
+      seenIds.add(id);
+
+      let vecScore = vectorScores.get(id) ?? 0;
+      let kwScore = keywordScores.get(id) ?? 0;
+
+      // Skip if no signal from either side
+      if (vecScore === 0 && kwScore === 0) continue;
+
+      let finalScore = this.VECTOR_WEIGHT * vecScore + this.KEYWORD_WEIGHT * kwScore;
+      let method: string;
+      if (vecScore > 0 && kwScore > 0) {
+        method = 'hybrid';
+      } else if (vecScore > 0) {
+        method = 'vector';
+      } else {
+        method = 'keyword';
+      }
+
+      let citation = `memory:${id}`;
+      let created = new Date(item.createdAt);
+      let dateStr = `${created.getFullYear()}-${(created.getMonth()+1).toString().padStart(2,'0')}-${created.getDate().toString().padStart(2,'0')}`;
+      citation = `memory:${item.memType}:${dateStr}`;
+
+      merged.push({
+        item: item,
+        score: finalScore,
+        method: method,
+        vectorScore: vecScore,
+        keywordScore: kwScore,
+        citation: citation,
+      });
+    }
+
+    // Sort by final score descending
+    merged.sort((a: MemorySearchResult, b: MemorySearchResult): number => b.score - a.score);
+    let results = merged.slice(0, topK);
+    this.log.info(this.TAG, `hybridSearch: query="${query.substring(0, 50)}" candidates=${merged.length} returned=${results.length}`);
+    return results;
+  }
+
+  /**
+   * Semantic vector search across memories (legacy API, kept for backward compat).
+   * Now delegates to hybridSearch internally and extracts items.
+   */
+  async vectorSearch(context: Context, query: string, apiKey: string,
+    topK: number = Constants.VECTOR_SEARCH_TOP_K,
+    filterType: string = ''): Promise<MemoryItem[]> {
+    let results = await this.hybridSearch(context, query, apiKey, topK, filterType);
+    if (results.length > 0) {
+      return results.map((r: MemorySearchResult): MemoryItem => r.item);
+    }
+    // If hybrid search returned nothing, fall back to plain keyword search
+    this.log.info(this.TAG, 'vectorSearch: hybrid returned 0 results, falling back to keyword');
+    return [];
+  }
+
+  // ==================== Semantic Deduplication ====================
+
+  /**
+   * Check if a semantically similar memory already exists.
+   * Uses vector cosine similarity with a high threshold (0.92).
+   */
+  private async isSemanticDuplicate(context: Context, content: string): Promise<boolean> {
+    try {
+      let apiKey = await this.getEmbeddingApiKey(context);
+      let mode = await this.getEmbeddingMode(context);
+      let queryVec = await this.embed(content, apiKey, mode);
+      if (queryVec.length === 0) return false;
+
+      let store = await this.loadVectors(context);
+      for (let vd of store.vectors) {
+        let sim = this.cosineSimilarity(queryVec, vd.vector);
+        if (sim >= this.SEMANTIC_DEDUP_THRESHOLD) {
+          this.log.info(this.TAG, `Semantic duplicate found: sim=${sim.toFixed(3)} id=${vd.id}`);
+          return true;
+        }
+      }
+      return false;
+    } catch {
+      return false; // On error, allow adding
+    }
+  }
+
+  // ==================== Daily Diary (OpenClaw-inspired) ====================
+
+  /**
+   * Append an entry to today's diary file: memory/YYYY-MM-DD.md
+   * Modeled after OpenClaw's daily journal pattern.
+   */
+  async appendDiaryEntry(context: Context, entry: DiaryEntry): Promise<void> {
+    let now = new Date();
+    let dateStr = `${now.getFullYear()}-${(now.getMonth()+1).toString().padStart(2,'0')}-${now.getDate().toString().padStart(2,'0')}`;
+    let dirPath = context.filesDir + '/memory';
+    let filePath = dirPath + '/' + dateStr + '.md';
+
+    // Ensure directory exists
+    try {
+      fileIo.mkdirSync(dirPath);
+    } catch {
+      // Directory may already exist
+    }
+
+    let typeIcon = entry.memType === 'fact' ? 'fact' : entry.memType === 'preference' ? 'pref' : entry.memType === 'instruction' ? 'inst' : entry.memType;
+    let line = `- ${entry.time} [${typeIcon}] ${entry.content}`;
+    if (entry.memoryId) {
+      line += ` (${entry.memoryId})`;
+    }
+    line += '\n';
+
+    // Check if file exists, if not create with header
+    let needsHeader = false;
+    try {
+      fileIo.statSync(filePath);
+    } catch {
+      needsHeader = true;
+    }
+
+    let encoder = new util.TextEncoder();
+    if (needsHeader) {
+      let header = `# ${dateStr}\n\n`;
+      let content = header + line;
+      let encoded = encoder.encodeInto(content);
+      let file = fileIo.openSync(filePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
+      fileIo.writeSync(file.fd, encoded.buffer);
+      fileIo.closeSync(file);
+    } else {
+      let encoded = encoder.encodeInto(line);
+      let file = fileIo.openSync(filePath, fileIo.OpenMode.APPEND | fileIo.OpenMode.WRITE_ONLY);
+      fileIo.writeSync(file.fd, encoded.buffer);
+      fileIo.closeSync(file);
+    }
+    this.log.info(this.TAG, `Diary entry appended to ${dateStr}.md`);
+  }
+
+  /**
+   * Append a conversation summary to today's diary.
+   * Called after significant conversations are saved.
+   */
+  async appendConversationDiary(context: Context, summary: string): Promise<void> {
+    let entry: DiaryEntry = {
+      time: this.nowTimeStr(),
+      memType: 'conversation',
+      content: summary,
+    };
+    await this.appendDiaryEntry(context, entry);
+  }
+
+  /**
+   * Read today's diary file content (if exists).
+   */
+  async readTodayDiary(context: Context): Promise<string> {
+    let now = new Date();
+    let dateStr = `${now.getFullYear()}-${(now.getMonth()+1).toString().padStart(2,'0')}-${now.getDate().toString().padStart(2,'0')}`;
+    return await this.readDiaryFile(context, dateStr);
+  }
+
+  /**
+   * Read yesterday's diary file content (if exists).
+   */
+  async readYesterdayDiary(context: Context): Promise<string> {
+    let yesterday = new Date(Date.now() - 86400000);
+    let dateStr = `${yesterday.getFullYear()}-${(yesterday.getMonth()+1).toString().padStart(2,'0')}-${yesterday.getDate().toString().padStart(2,'0')}`;
+    return await this.readDiaryFile(context, dateStr);
+  }
+
+  /**
+   * Read a diary file by date string YYYY-MM-DD.
+   */
+  private async readDiaryFile(context: Context, dateStr: string): Promise<string> {
+    let filePath = context.filesDir + '/memory/' + dateStr + '.md';
+    try {
+      let stat = fileIo.statSync(filePath);
+      if (!stat.isFile()) return '';
+      let file = fileIo.openSync(filePath, fileIo.OpenMode.READ_ONLY);
+      let buf = new ArrayBuffer(stat.size);
+      fileIo.readSync(file.fd, buf);
+      fileIo.closeSync(file);
+      let decoder = util.TextDecoder.create('utf-8');
+      return decoder.decodeWithStream(new Uint8Array(buf));
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * List available diary files (dates).
+   */
+  async listDiaryDates(context: Context): Promise<string[]> {
+    let dirPath = context.filesDir + '/memory';
+    try {
+      let entries = fileIo.listFileSync(dirPath);
+      let dates: string[] = [];
+      for (let name of entries) {
+        if (name.endsWith('.md')) {
+          dates.push(name.replace('.md', ''));
+        }
+      }
+      dates.sort();
+      return dates;
+    } catch {
+      return [];
     }
   }
 
@@ -365,58 +682,6 @@ export class MemoryService {
   }
 
   /**
-   * Semantic vector search across memories.
-   * Falls back to keyword search if embedding fails.
-   */
-  async vectorSearch(context: Context, query: string, apiKey: string,
-    topK: number = Constants.VECTOR_SEARCH_TOP_K,
-    filterType: string = ''): Promise<MemoryItem[]> {
-    // Lazy-init local model
-    if (!this.localEmb.isReady()) {
-      await this.localEmb.init(context);
-    }
-    // Get query embedding (respect mode setting)
-    let mode = await this.getEmbeddingMode(context);
-    let queryVec = await this.embed(query, apiKey, mode);
-    if (queryVec.length === 0) {
-      this.log.info(this.TAG, 'vectorSearch: embed failed, falling back to keyword search');
-      return [];
-    }
-
-    let store = await this.loadVectors(context);
-    if (store.vectors.length === 0) {
-      this.log.info(this.TAG, 'vectorSearch: no vectors stored');
-      return [];
-    }
-
-    let items = await this.loadAll(context);
-    // Build id -> item map
-    let itemMap = new Map<string, MemoryItem>();
-    for (let item of items) {
-      if (filterType.length === 0 || item.memType === filterType) {
-        itemMap.set(item.id, item);
-      }
-    }
-
-    // Score each vector
-    let scored: ScoredMemory[] = [];
-    for (let vd of store.vectors) {
-      let item = itemMap.get(vd.id);
-      if (!item) continue;
-      let sim = this.cosineSimilarity(queryVec, vd.vector);
-      let threshold = this.localEmb.isReady() ? Constants.LOCAL_VECTOR_SEARCH_THRESHOLD : Constants.VECTOR_SEARCH_THRESHOLD;
-      if (sim >= threshold) {
-        scored.push({ item: item, score: sim });
-      }
-    }
-
-    scored.sort((a: ScoredMemory, b: ScoredMemory): number => b.score - a.score);
-    let results = scored.slice(0, topK).map((s: ScoredMemory): MemoryItem => s.item);
-    this.log.info(this.TAG, `vectorSearch: query="${query.substring(0, 50)}" found=${scored.length} returned=${results.length}`);
-    return results;
-  }
-
-  /**
    * Get the embedding API key from settings.
    * Reuses the ASR key (both are SiliconFlow).
    */
@@ -484,7 +749,7 @@ export class MemoryService {
   // ==================== memory.md generation ====================
 
   /**
-   * Generate a human-readable memory.md summary file.
+   * Generate a human-readable memory.md summary file (OpenClaw MEMORY.md style).
    * Called automatically after memory changes.
    */
   async generateMemoryMd(context: Context): Promise<string> {
@@ -509,22 +774,36 @@ export class MemoryService {
     if (facts.length > 0) {
       lines.push('## Facts');
       for (let f of facts) {
-        lines.push(`- ${f.content} (importance: ${f.importance})`);
+        let created = new Date(f.createdAt);
+        let cDate = `${created.getFullYear()}-${(created.getMonth()+1).toString().padStart(2,'0')}-${created.getDate().toString().padStart(2,'0')}`;
+        lines.push(`- ${f.content} (added: ${cDate})`);
       }
       lines.push('');
     }
     if (prefs.length > 0) {
       lines.push('## Preferences');
       for (let p of prefs) {
-        lines.push(`- ${p.content} (importance: ${p.importance})`);
+        let created = new Date(p.createdAt);
+        let cDate = `${created.getFullYear()}-${(created.getMonth()+1).toString().padStart(2,'0')}-${created.getDate().toString().padStart(2,'0')}`;
+        lines.push(`- ${p.content} (added: ${cDate})`);
       }
       lines.push('');
     }
     if (instr.length > 0) {
       lines.push('## Instructions');
       for (let ins of instr) {
-        lines.push(`- ${ins.content} (importance: ${ins.importance})`);
+        let created = new Date(ins.createdAt);
+        let cDate = `${created.getFullYear()}-${(created.getMonth()+1).toString().padStart(2,'0')}-${created.getDate().toString().padStart(2,'0')}`;
+        lines.push(`- ${ins.content} (added: ${cDate})`);
       }
+      lines.push('');
+    }
+
+    // Add diary summary section
+    let todayDiary = await this.readTodayDiary(context);
+    if (todayDiary.length > 0) {
+      lines.push('## Today\'s Diary');
+      lines.push(todayDiary);
       lines.push('');
     }
 
@@ -537,5 +816,12 @@ export class MemoryService {
     fileIo.closeSync(file);
     this.log.info(this.TAG, `memory.md generated: ${items.length} items, ${content.length} bytes`);
     return filePath;
+  }
+
+  // ==================== Helpers ====================
+
+  private nowTimeStr(): string {
+    let now = new Date();
+    return `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}`;
   }
 }

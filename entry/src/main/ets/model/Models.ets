@@ -145,6 +145,32 @@ export interface MemoryData {
   content: string;
   importance: number;
   createdAt: number;
+  source?: string;       // origin: 'user' | 'auto' | 'ai_tool' | 'diary'
+  lastAccessed?: number; // last time this memory was retrieved
+}
+
+/**
+ * Memory search result with scoring and source attribution.
+ * Inspired by OpenClaw's MemorySearchResult design.
+ */
+export interface MemorySearchResult {
+  item: MemoryItem;
+  score: number;             // 0-1 relevance score
+  method: string;            // 'hybrid' | 'vector' | 'keyword'
+  vectorScore: number;       // vector component score (0 if N/A)
+  keywordScore: number;      // keyword component score (0 if N/A)
+  citation: string;          // source citation e.g. "memory:mem_xxx" or "diary:2026-02-16"
+}
+
+/**
+ * Daily diary entry appended to memory/YYYY-MM-DD.md files.
+ * Modeled after OpenClaw's daily journal approach.
+ */
+export interface DiaryEntry {
+  time: string;       // HH:mm
+  memType: string;    // 'fact' | 'preference' | 'instruction' | 'conversation'
+  content: string;
+  memoryId?: string;  // linked MemoryItem id if applicable
 }
 
 export interface SettingsData {
