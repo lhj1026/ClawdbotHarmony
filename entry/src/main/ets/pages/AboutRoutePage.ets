@@ -236,15 +236,12 @@ struct AboutRoutePage {
           .backgroundColor(Color.White)
           .borderRadius(12)
 
-          // ========== Changelog Section ==========
-          this.SectionTitle(this.lang === 'zh' ? '更新日志' : 'Changelog')
+          // ========== Changelog Section (current version only) ==========
+          this.SectionTitle(this.lang === 'zh' ? '本次更新' : 'What\'s New')
           Column() {
-            ForEach(CHANGELOG, (entry: ChangelogEntry, index: number) => {
-              this.ChangelogItem(entry)
-              if (index < CHANGELOG.length - 1) {
-                Divider().color('#F0F0F0')
-              }
-            })
+            if (CHANGELOG.length > 0) {
+              this.ChangelogItem(CHANGELOG[0])
+            }
           }
           .padding(16)
           .backgroundColor(Color.White)
