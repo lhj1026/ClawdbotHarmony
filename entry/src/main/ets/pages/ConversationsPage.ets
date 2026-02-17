@@ -1,0 +1,346 @@
+// Silent mode conversations page: list + detail view
+import { SilentConversationItem, SilentConversationRecord, SilentConversationEntry } from '../model/Models';
+import { I18n, t } from '../common/I18n';
+import { ConversationStore } from '../service/ConversationStore';
+import { SilentModeService } from '../service/SilentModeService';
+import { ConversationCard } from '../components/ConversationCard';
+import { common } from '@kit.AbilityKit';
+import { promptAction } from '@kit.ArkUI';
+
+@Component
+export struct ConversationsPage {
+  @State conversations: SilentConversationItem[] = [];
+  @State isRecording: boolean = false;
+  @State viewMode: string = 'list';  // 'list' | 'detail'
+  @State detailRecord: SilentConversationRecord | undefined = undefined;
+  @State lang: string = I18n.lang;
+  private langListener: () => void = () => { this.lang = I18n.lang; };
+  private stateListener: (state: string) => void = (state: string) => {
+    this.isRecording = state !== 'idle';
+  };
+  private refreshTimer: number = -1;
+
+  aboutToAppear(): void {
+    I18n.addListener(this.langListener);
+    SilentModeService.getInstance().addStateListener(this.stateListener);
+    this.isRecording = SilentModeService.getInstance().isActive();
+    this.loadConversations();
+
+    // Auto-refresh while recording
+    this.refreshTimer = setInterval(() => {
+      if (this.isRecording) {
+        this.loadConversations();
+      }
+    }, 5000);
+  }
+
+  aboutToDisappear(): void {
+    I18n.removeListener(this.langListener);
+    SilentModeService.getInstance().removeStateListener(this.stateListener);
+    if (this.refreshTimer >= 0) {
+      clearInterval(this.refreshTimer);
+      this.refreshTimer = -1;
+    }
+  }
+
+  private async loadConversations(): Promise<void> {
+    try {
+      let ctx = getContext(this) as common.UIAbilityContext;
+      await ConversationStore.getInstance().init(ctx);
+      let records = await ConversationStore.getInstance().listRecords();
+      this.conversations = records.map((r: SilentConversationRecord) => new SilentConversationItem(r));
+    } catch (err) {
+      // ignore
+    }
+  }
+
+  private async toggleRecording(): Promise<void> {
+    let ctx = getContext(this) as common.UIAbilityContext;
+    let service = SilentModeService.getInstance();
+    if (service.isActive()) {
+      await service.stop();
+      this.isRecording = false;
+      this.loadConversations();
+    } else {
+      let ok = await service.start(ctx);
+      this.isRecording = ok;
+    }
+  }
+
+  private async openDetail(id: string): Promise<void> {
+    try {
+      let ctx = getContext(this) as common.UIAbilityContext;
+      await ConversationStore.getInstance().init(ctx);
+      let record = await ConversationStore.getInstance().getRecord(id);
+      if (record) {
+        this.detailRecord = record;
+        this.viewMode = 'detail';
+      }
+    } catch { /* ignore */ }
+  }
+
+  private async deleteConversation(id: string): Promise<void> {
+    promptAction.showDialog({
+      title: '',
+      message: t('silent.deleteConfirm'),
+      buttons: [
+        { text: t('memory.cancel'), color: '#999999' },
+        { text: t('session.delete'), color: '#FF3B30' }
+      ]
+    }).then(async (result) => {
+      if (result.index === 1) {
+        await ConversationStore.getInstance().deleteRecord(id);
+        promptAction.showToast({ message: t('silent.deleted') });
+        this.loadConversations();
+        if (this.detailRecord && this.detailRecord.id === id) {
+          this.viewMode = 'list';
+          this.detailRecord = undefined;
+        }
+      }
+    });
+  }
+
+  private formatTime(ts: number): string {
+    let d = new Date(ts);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+  }
+
+  private formatDate(ts: number): string {
+    let d = new Date(ts);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  }
+
+  private formatDuration(startTime: number, endTime: number): string {
+    let endMs = endTime > 0 ? endTime : Date.now();
+    let sec = Math.floor((endMs - startTime) / 1000);
+    if (sec < 60) return `${sec}s`;
+    let min = Math.floor(sec / 60);
+    sec = sec % 60;
+    if (min < 60) return `${min}m ${sec}s`;
+    let hr = Math.floor(min / 60);
+    min = min % 60;
+    return `${hr}h ${min}m`;
+  }
+
+  build() {
+    Column() {
+      if (this.viewMode === 'list') {
+        this.ListView()
+      } else {
+        this.DetailView()
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('#F5F5F5')
+  }
+
+  @Builder
+  ListView() {
+    Column() {
+      // Title + record button
+      Row() {
+        Text(t('silent.title'))
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#1A1A1A')
+
+        Blank()
+
+        Button(this.isRecording ? t('silent.stop') : t('silent.start'))
+          .fontSize(14)
+          .fontColor(Color.White)
+          .backgroundColor(this.isRecording ? '#FF3B30' : '#34C759')
+          .borderRadius(20)
+          .height(36)
+          .padding({ left: 16, right: 16 })
+          .onClick(() => { this.toggleRecording(); })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 16, bottom: 12 })
+
+      // Recording indicator
+      if (this.isRecording) {
+        Row() {
+          Text('🔴')
+            .fontSize(12)
+            .margin({ right: 6 })
+          Text(t('silent.recording'))
+            .fontSize(13)
+            .fontColor('#FF3B30')
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, bottom: 8 })
+      }
+
+      // Conversation list
+      if (this.conversations.length === 0) {
+        Column() {
+          Text(t('silent.empty'))
+            .fontSize(15)
+            .fontColor('#999999')
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+      } else {
+        List({ space: 8 }) {
+          ForEach(this.conversations, (item: SilentConversationItem) => {
+            ListItem() {
+              ConversationCard({
+                item: item,
+                onTap: () => { this.openDetail(item.id); },
+                onDelete: () => { this.deleteConversation(item.id); }
+              })
+            }
+            .padding({ left: 16, right: 16 })
+          }, (item: SilentConversationItem) => item.id + '_' + item.entryCount + '_' + item.status)
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .padding({ bottom: 16 })
+      }
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
+  DetailView() {
+    Column() {
+      // Back button + header
+      Row() {
+        Text('\u2190')
+          .fontSize(22)
+          .fontColor('#1A1A1A')
+          .padding(8)
+          .onClick(() => {
+            this.viewMode = 'list';
+            this.detailRecord = undefined;
+            this.loadConversations();
+          })
+
+        Text(t('silent.transcript'))
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#1A1A1A')
+          .margin({ left: 8 })
+
+        Blank()
+      }
+      .width('100%')
+      .padding({ left: 8, right: 16, top: 8, bottom: 8 })
+
+      if (this.detailRecord) {
+        Scroll() {
+          Column() {
+            // Header info card
+            Column() {
+              // Date + duration
+              Row() {
+                Text(this.formatDate(this.detailRecord.startTime))
+                  .fontSize(14)
+                  .fontColor('#333333')
+
+                Blank()
+
+                Text(this.formatDuration(this.detailRecord.startTime, this.detailRecord.endTime))
+                  .fontSize(12)
+                  .fontColor('#666666')
+                  .backgroundColor('#F0F0F0')
+                  .borderRadius(8)
+                  .padding({ left: 8, right: 8, top: 2, bottom: 2 })
+              }
+              .width('100%')
+
+              // Participants
+              if (this.detailRecord.participants.length > 0) {
+                Row() {
+                  Text(`${t('silent.participants')}: `)
+                    .fontSize(13)
+                    .fontColor('#999999')
+                  Text(this.detailRecord.participants.join(', '))
+                    .fontSize(13)
+                    .fontColor('#007AFF')
+                }
+                .width('100%')
+                .margin({ top: 8 })
+              }
+
+              // Summary
+              if (this.detailRecord.summary.length > 0) {
+                Column() {
+                  Text(t('silent.summary'))
+                    .fontSize(13)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor('#333333')
+                    .margin({ bottom: 4 })
+                  Text(this.detailRecord.summary)
+                    .fontSize(13)
+                    .fontColor('#666666')
+                    .width('100%')
+                }
+                .width('100%')
+                .margin({ top: 10 })
+                .padding(10)
+                .backgroundColor('#F8F8FF')
+                .borderRadius(8)
+              }
+            }
+            .width('100%')
+            .padding(14)
+            .backgroundColor(Color.White)
+            .borderRadius(10)
+            .margin({ left: 16, right: 16, top: 8, bottom: 8 })
+
+            // Entries timeline
+            ForEach(this.detailRecord.entries, (entry: SilentConversationEntry, index: number) => {
+              Row() {
+                // Time column
+                Column() {
+                  Text(this.formatTime(entry.timestamp))
+                    .fontSize(11)
+                    .fontColor('#999999')
+                }
+                .width(60)
+                .alignItems(HorizontalAlign.End)
+                .margin({ right: 10 })
+
+                // Timeline dot
+                Column() {
+                  Circle({ width: 8, height: 8 })
+                    .fill('#007AFF')
+                }
+                .width(8)
+                .margin({ right: 10, top: 4 })
+
+                // Content
+                Column() {
+                  Text(entry.speaker)
+                    .fontSize(13)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor('#007AFF')
+                  Text(entry.text)
+                    .fontSize(14)
+                    .fontColor('#333333')
+                    .margin({ top: 4 })
+                    .width('100%')
+                }
+                .layoutWeight(1)
+                .alignItems(HorizontalAlign.Start)
+              }
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+              .alignItems(VerticalAlign.Top)
+            }, (entry: SilentConversationEntry, index: number) => `${index}_${entry.timestamp}`)
+          }
+          .width('100%')
+        }
+        .width('100%')
+        .layoutWeight(1)
+      }
+    }
+    .width('100%')
+    .height('100%')
+  }
+}

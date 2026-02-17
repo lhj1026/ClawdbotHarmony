@@ -21,4 +21,8 @@ sed -i "s/const APP_VERSION = '[0-9][0-9]*\.[0-9][0-9]*\(\.[0-9][0-9]*\)\?';/con
 sed -i "s/this\.InfoRow(I18n\.t('settings\.version'), '[0-9][0-9]*\.[0-9][0-9]*\(\.[0-9][0-9]*\)\?')/this.InfoRow(I18n.t('settings.version'), '${VERSION}')/" \
   entry/src/main/ets/pages/SettingsPage.ets
 
-echo "Version synced to $VERSION in ChatPage, NodeRuntime, SettingsPage"
+# 4. Index.ets - Text('vX.Y.Z')
+sed -i "s/Text('v[0-9][0-9]*\.[0-9][0-9]*\(\.[0-9][0-9]*\)\?')/Text('v${VERSION}')/" \
+  entry/src/main/ets/pages/Index.ets
+
+echo "Version synced to $VERSION in ChatPage, NodeRuntime, SettingsPage, Index"

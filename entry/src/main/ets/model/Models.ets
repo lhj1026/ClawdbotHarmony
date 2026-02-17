@@ -260,3 +260,44 @@ export interface QueuedMessage {
   timestamp: number;
   sessionId: string;
 }
+
+// Silent mode conversation entry (a single recognized speech segment)
+export interface SilentConversationEntry {
+  timestamp: number;       // when this segment was detected
+  speaker: string;         // identified speaker name or 'Unknown'
+  text: string;            // transcribed text
+  confidence: number;      // speaker identification confidence (0-1)
+}
+
+// Full silent conversation record (persisted)
+export interface SilentConversationRecord {
+  id: string;              // unique record ID
+  startTime: number;       // when recording started
+  endTime: number;         // when recording ended (0 if still active)
+  entries: SilentConversationEntry[];
+  summary: string;         // AI-generated summary
+  status: string;          // 'recording' | 'summarizing' | 'completed' | 'error'
+  participants: string[];  // unique speaker names
+}
+
+// Lightweight observable item for UI list display
+@Observed
+export class SilentConversationItem {
+  id: string;
+  startTime: number;
+  endTime: number;
+  summary: string;
+  status: string;
+  participants: string[];
+  entryCount: number;
+
+  constructor(record: SilentConversationRecord) {
+    this.id = record.id;
+    this.startTime = record.startTime;
+    this.endTime = record.endTime;
+    this.summary = record.summary;
+    this.status = record.status;
+    this.participants = record.participants;
+    this.entryCount = record.entries.length;
+  }
+}

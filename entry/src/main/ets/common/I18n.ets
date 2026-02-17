@@ -120,6 +120,10 @@ function buildZh(): Map<string, string> {
   m.set('settings.ttsAutoRead', '语音朗读');
   m.set('settings.ttsAutoReadDesc', '自动朗读 AI 回复（使用本地 TTS）');
 
+  // SettingsPage - Auto memory inject
+  m.set('settings.autoMemoryInject', '智能记忆注入');
+  m.set('settings.autoMemoryInjectDesc', '发消息时自动匹配相关记忆注入上下文');
+
   // SkillsPage
   m.set('skills.title', '技能');
   m.set('skills.subtitle', '开启内置技能以扩展 ClawdBot 的能力。');
@@ -403,6 +407,26 @@ function buildZh(): Map<string, string> {
   m.set('settings.voiceprint', '声纹识别');
   m.set('settings.voiceprintDesc', '本地声纹注册与识别');
 
+  // Silent Mode
+  m.set('silent.title', '静默记录');
+  m.set('silent.start', '开始记录');
+  m.set('silent.stop', '停止记录');
+  m.set('silent.recording', '正在记录中...');
+  m.set('silent.empty', '暂无对话记录');
+  m.set('silent.entries', '条语音');
+  m.set('silent.summary', '摘要');
+  m.set('silent.transcript', '对话记录');
+  m.set('silent.participants', '参与者');
+  m.set('silent.duration', '时长');
+  m.set('silent.deleteConfirm', '确定删除此对话记录？');
+  m.set('silent.deleted', '已删除');
+  m.set('silent.noSpeech', '未检测到语音');
+  m.set('silent.summarizing', '正在生成摘要...');
+  m.set('silent.completed', '已完成');
+  m.set('silent.error', '记录出错');
+  m.set('settings.silentMode', '静默记录');
+  m.set('settings.silentModeDesc', '后台录音，自动识别说话人并转写');
+
   return m;
 }
 
@@ -519,6 +543,10 @@ function buildEn(): Map<string, string> {
   // SettingsPage - TTS auto-read
   m.set('settings.ttsAutoRead', 'Auto Read Aloud');
   m.set('settings.ttsAutoReadDesc', 'Auto read AI responses aloud (local TTS)');
+
+  // SettingsPage - Auto memory inject
+  m.set('settings.autoMemoryInject', 'Smart Memory Inject');
+  m.set('settings.autoMemoryInjectDesc', 'Auto-inject relevant memories when sending messages');
 
   // SkillsPage
   m.set('skills.title', 'Skills');
@@ -803,11 +831,47 @@ function buildEn(): Map<string, string> {
   m.set('settings.voiceprint', 'VOICEPRINT');
   m.set('settings.voiceprintDesc', 'Local voiceprint enrollment & identification');
 
+  // Silent Mode
+  m.set('silent.title', 'Silent Recorder');
+  m.set('silent.start', 'Start Recording');
+  m.set('silent.stop', 'Stop Recording');
+  m.set('silent.recording', 'Recording...');
+  m.set('silent.empty', 'No conversations recorded');
+  m.set('silent.entries', 'segment(s)');
+  m.set('silent.summary', 'Summary');
+  m.set('silent.transcript', 'Transcript');
+  m.set('silent.participants', 'Participants');
+  m.set('silent.duration', 'Duration');
+  m.set('silent.deleteConfirm', 'Delete this conversation record?');
+  m.set('silent.deleted', 'Deleted');
+  m.set('silent.noSpeech', 'No speech detected');
+  m.set('silent.summarizing', 'Generating summary...');
+  m.set('silent.completed', 'Completed');
+  m.set('silent.error', 'Recording error');
+  m.set('settings.silentMode', 'SILENT RECORDER');
+  m.set('settings.silentModeDesc', 'Background recording with speaker ID and transcription');
+
   return m;
 }
 
 const zhMap: Map<string, string> = buildZh();
 const enMap: Map<string, string> = buildEn();
+
+const heartbeatGreetingsZh: string[] = [
+  '你怎么样呀？',
+  '一切都好吗？',
+  '在忙什么呢？',
+  '今天过得怎么样？',
+  '有什么需要帮忙的吗？',
+];
+
+const heartbeatGreetingsEn: string[] = [
+  "How's it going?",
+  'Everything okay?',
+  "What's up?",
+  'How are you doing?',
+  'Need any help?',
+];
 
 /**
  * Global language state singleton.
@@ -841,6 +905,17 @@ export class I18n {
     if (idx >= 0) {
       I18n.listeners.splice(idx, 1);
     }
+  }
+
+  /** Check if text is a HEARTBEAT_OK message and return a friendly greeting, or empty string if not. */
+  static getHeartbeatGreeting(text: string): string {
+    let trimmed = text.trim();
+    if (trimmed === 'HEARTBEAT_OK' || trimmed === 'heartbeat_ok') {
+      let greetings = I18n.currentLang === 'zh' ? heartbeatGreetingsZh : heartbeatGreetingsEn;
+      let idx = Math.floor(Math.random() * greetings.length);
+      return greetings[idx];
+    }
+    return '';
   }
 
   /** Get translated string by key. */

@@ -39,6 +39,7 @@ export struct ChatPage {
   @State gwConnected: boolean = false;
   @State @Watch('onLangChange') lang: string = 'zh';
   @State ttsAutoRead: boolean = false;
+  @State autoMemoryInject: boolean = Constants.DEFAULT_AUTO_MEMORY_INJECT;
   @State dotPhase: number = 0;
   @State isRecording: boolean = false;
   @State assistantName: string = '';
@@ -123,6 +124,7 @@ export struct ChatPage {
     NodeRuntime.getInstance().setChatPageVisible(true);
     this.initializeSessions();
     this.loadTtsAutoReadSetting();
+    this.loadAutoMemoryInjectSetting();
     this.loadAssistantSettings();
     this.gwConnected = NodeRuntime.getInstance().isConnected;
     this.memSvc.setNodeMode(this.gwConnected);
@@ -850,6 +852,10 @@ export struct ChatPage {
           onOpenMemory: () => {
             this.showSessionDrawer = false;
             router.pushUrl({ url: 'pages/MemoryRoutePage' });
+          },
+          onOpenConversations: () => {
+            this.showSessionDrawer = false;
+            router.pushUrl({ url: 'pages/ConversationsRoutePage' });
           },
           onOpenSettings: () => {
             this.showSessionDrawer = false;
@@ -2496,7 +2502,12 @@ Respond ONLY with the JSON array.`;
     try {
       let ctx = getContext(this) as common.UIAbilityContext;
       let settings = await this.loadSettings(ctx);
-      let memItems = await this.memSvc.loadAll(ctx);
+      let memItems: MemoryItem[];
+      if (this.autoMemoryInject) {
+        memItems = await this.searchRelevantMemoriesWithTimeout(ctx, text);
+      } else {
+        memItems = await this.memSvc.loadAll(ctx);
+      }
       let skills = getDefaultSkills();
       let customSkills = await CustomSkillService.getInstance().loadAll(ctx);
 
@@ -3713,6 +3724,77 @@ Adjust your tone accordingly:
       await store.put('ttsAutoRead', this.ttsAutoRead);
       await store.flush();
     } catch { /* ignore */ }
+  }
+
+  // ---- Auto Memory Inject ----
+
+  private async loadAutoMemoryInjectSetting(): Promise<void> {
+    try {
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let store = await preferences.getPreferences(ctx, Constants.PREFS_GATEWAY);
+      this.autoMemoryInject = (await store.get(Constants.KEY_AUTO_MEMORY_INJECT, Constants.DEFAULT_AUTO_MEMORY_INJECT)) as boolean;
+      this.log.info('ChatPage', `Auto memory inject loaded: ${this.autoMemoryInject}`);
+    } catch {
+      this.autoMemoryInject = Constants.DEFAULT_AUTO_MEMORY_INJECT;
+    }
+  }
+
+  /**
+   * Search for relevant memories using vector search with keyword fallback.
+   * Returns relevant memories for the given query, or all memories as final fallback.
+   */
+  private async searchRelevantMemories(ctx: common.UIAbilityContext, query: string): Promise<MemoryItem[]> {
+    try {
+      let apiKey = await this.memSvc.getEmbeddingApiKey(ctx);
+      let results = await this.memSvc.vectorSearch(ctx, query, apiKey);
+      if (results.length > 0) {
+        this.log.info('ChatPage', `Auto-memory: vector search found ${results.length} relevant memories`);
+        return results;
+      }
+      // Fallback to keyword search
+      let kwResults = await this.memSvc.search(ctx, query);
+      if (kwResults.length > 0) {
+        let sliced = kwResults.slice(0, Constants.VECTOR_SEARCH_TOP_K);
+        this.log.info('ChatPage', `Auto-memory: keyword fallback found ${sliced.length} relevant memories`);
+        return sliced;
+      }
+    } catch (e) {
+      this.log.warn('ChatPage', `Auto-memory search failed: ${(e as Error).message ?? String(e)}`);
+    }
+    // Final fallback: all memories
+    this.log.info('ChatPage', 'Auto-memory: falling back to all memories');
+    return await this.memSvc.loadAll(ctx);
+  }
+
+  /**
+   * Search relevant memories with a timeout.
+   * If the search takes too long, falls back to loading all memories.
+   */
+  private searchRelevantMemoriesWithTimeout(ctx: common.UIAbilityContext, query: string): Promise<MemoryItem[]> {
+    return new Promise<MemoryItem[]>((resolve) => {
+      let resolved = false;
+      let timer = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          this.log.info('ChatPage', 'Auto-memory: search timed out, using all memories');
+          this.memSvc.loadAll(ctx).then((items: MemoryItem[]) => { resolve(items); }).catch(() => { resolve([]); });
+        }
+      }, Constants.AUTO_MEMORY_SEARCH_TIMEOUT_MS);
+
+      this.searchRelevantMemories(ctx, query).then((items: MemoryItem[]) => {
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(timer);
+          resolve(items);
+        }
+      }).catch(() => {
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(timer);
+          this.memSvc.loadAll(ctx).then((items: MemoryItem[]) => { resolve(items); }).catch(() => { resolve([]); });
+        }
+      });
+    });
   }
 
   /**

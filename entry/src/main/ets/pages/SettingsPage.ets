@@ -1,6 +1,6 @@
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
-import { promptAction } from '@kit.ArkUI';
+import { promptAction, router } from '@kit.ArkUI';
 import { fileIo, picker } from '@kit.CoreFileKit';
 import { Constants } from '../common/Constants';
 import { NodeRuntime } from '../service/gateway/NodeRuntime';
@@ -98,6 +98,7 @@ export struct SettingsPage {
   @State capEmail: boolean = true;
   @State unreadNotification: boolean = true;
   @State ttsAutoRead: boolean = false;
+  @State autoMemoryInject: boolean = Constants.DEFAULT_AUTO_MEMORY_INJECT;
   // Session management
   @State parallelSessions: boolean = true;
   @State idleTimeoutMinutes: number = 30;
@@ -574,6 +575,24 @@ export struct SettingsPage {
             Toggle({ type: ToggleType.Switch, isOn: this.ttsAutoRead })
               .selectedColor('#D2691E')
               .onChange((v: boolean) => { this.ttsAutoRead = v; })
+          }
+          .width('100%')
+          .height(50)
+
+          Row() {
+            Column({ space: 2 }) {
+              Text(I18n.t('settings.autoMemoryInject'))
+                .fontSize(13)
+                .fontColor('#1A1A1A')
+              Text(I18n.t('settings.autoMemoryInjectDesc'))
+                .fontSize(11)
+                .fontColor('#999999')
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
+            Toggle({ type: ToggleType.Switch, isOn: this.autoMemoryInject })
+              .selectedColor('#D2691E')
+              .onChange((v: boolean) => { this.autoMemoryInject = v; })
           }
           .width('100%')
           .height(50)
@@ -1300,12 +1319,42 @@ export struct SettingsPage {
         .backgroundColor(Color.White)
         .borderRadius(12)
 
+        // =============== Silent Mode ===============
+        this.SectionTitle(I18n.t('settings.silentMode'))
+        Column() {
+          Row() {
+            Column({ space: 2 }) {
+              Text(I18n.t('settings.silentMode'))
+                .fontSize(14)
+                .fontColor('#1A1A1A')
+              Text(I18n.t('settings.silentModeDesc'))
+                .fontSize(11)
+                .fontColor('#999999')
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
+
+            Text('\u203A')
+              .fontSize(20)
+              .fontColor('#CCCCCC')
+          }
+          .width('100%')
+          .onClick(() => {
+            router.pushUrl({ url: 'pages/ConversationsRoutePage' });
+          })
+        }
+        .width('100%')
+        .padding(16)
+        .margin({ left: 16, right: 16 })
+        .backgroundColor(Color.White)
+        .borderRadius(12)
+
         // =============== About ===============
         this.SectionTitle(I18n.t('settings.about'))
         Column() {
           this.InfoRow(I18n.t('settings.appName'), 'ClawdBot')
           Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
-          this.InfoRow(I18n.t('settings.version'), '2.20.0')
+          this.InfoRow(I18n.t('settings.version'), '2.21.0')
           Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
           this.InfoRow(I18n.t('settings.developer'), 'OpenClaw')
         }
@@ -1870,6 +1919,7 @@ export struct SettingsPage {
       this.unreadNotification = (await store.get('unreadNotification', true)) as boolean;
       NodeRuntime.getInstance().setUnreadNotificationEnabled(this.unreadNotification);
       this.ttsAutoRead = (await store.get('ttsAutoRead', false)) as boolean;
+      this.autoMemoryInject = (await store.get(Constants.KEY_AUTO_MEMORY_INJECT, Constants.DEFAULT_AUTO_MEMORY_INJECT)) as boolean;
       // Session management settings
       this.parallelSessions = (await store.get(Constants.KEY_PARALLEL_SESSIONS, Constants.DEFAULT_PARALLEL_SESSIONS)) as boolean;
       this.idleTimeoutMinutes = (await store.get(Constants.KEY_IDLE_TIMEOUT_MINUTES, Constants.DEFAULT_IDLE_TIMEOUT_MINUTES)) as number;
@@ -2146,6 +2196,7 @@ export struct SettingsPage {
       await gwStore.put('capEmail', this.capEmail);
       await gwStore.put('unreadNotification', this.unreadNotification);
       await gwStore.put('ttsAutoRead', this.ttsAutoRead);
+      await gwStore.put(Constants.KEY_AUTO_MEMORY_INJECT, this.autoMemoryInject);
       await gwStore.flush();
 
       // Save feishu settings
@@ -2241,6 +2292,7 @@ export struct SettingsPage {
       data['capEmail'] = this.capEmail;
       data['unreadNotification'] = this.unreadNotification;
       data['ttsAutoRead'] = this.ttsAutoRead;
+      data['autoMemoryInject'] = this.autoMemoryInject;
     }
 
     let mode = (this.settingsTab === 'node' || (!this.showTabs() && this.modesInclude('node') && !this.modesInclude('standalone')))
@@ -2298,6 +2350,7 @@ export struct SettingsPage {
           NodeRuntime.getInstance().setUnreadNotificationEnabled(this.unreadNotification);
         }
         if (data['ttsAutoRead'] !== undefined) this.ttsAutoRead = data['ttsAutoRead'] as boolean;
+        if (data['autoMemoryInject'] !== undefined) this.autoMemoryInject = data['autoMemoryInject'] as boolean;
       }
       promptAction.showToast({ message: I18n.t('settings.profileLoaded'), duration: 1500 });
     } catch { /* ignore */ }

@@ -281,7 +281,7 @@ export struct MessageBubble {
 
         Column() {
           MarkdownText({
-            content: this.sLen(this.message.imagePath) > 0 ? this.stripImagePaths(this.message.content) : this.message.content,
+            content: this.getDisplayContent(),
             textColor: '#1A1A1A',
             baseFontSize: 15
           })
@@ -660,6 +660,18 @@ export struct MessageBubble {
         this.audioPlaying = false;
       }
     }
+  }
+
+  /** Get display content for assistant bubble, replacing HEARTBEAT_OK with friendly greeting. */
+  private getDisplayContent(): string {
+    let content = this.sLen(this.message.imagePath) > 0
+      ? this.stripImagePaths(this.message.content)
+      : this.message.content;
+    let greeting = I18n.getHeartbeatGreeting(content);
+    if (greeting.length > 0) {
+      return greeting;
+    }
+    return content;
   }
 
   private getAssistantInitial(): string {

@@ -8,9 +8,19 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.20.0';
+export const APP_VERSION: string = '2.21.0';
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '2.21.0',
+    date: '2026-02-16',
+    features: [
+      '静默记录模式：后台持续录音，VAD语音检测，声纹识别说话人，自动转写并生成AI摘要',
+    ],
+    fixes: [
+
+    ],
+  },
   {
     version: '2.20.0',
     date: '2026-02-16',
@@ -138,4 +148,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.20.0';
+export const LATEST_VERSION: string = '2.21.0';

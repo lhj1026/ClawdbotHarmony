@@ -95,4 +95,16 @@ export class Constants {
   static readonly KEY_IDLE_TIMEOUT_MINUTES: string = 'idle_timeout_minutes';
   static readonly DEFAULT_PARALLEL_SESSIONS: boolean = true;
   static readonly DEFAULT_IDLE_TIMEOUT_MINUTES: number = 30;
+
+  // Auto memory injection
+  static readonly KEY_AUTO_MEMORY_INJECT: string = 'auto_memory_inject';
+  static readonly DEFAULT_AUTO_MEMORY_INJECT: boolean = true;
+  static readonly AUTO_MEMORY_SEARCH_TIMEOUT_MS: number = 3000;
+
+  // Silent mode
+  static readonly PREFS_SILENT_MODE: string = 'clawdbot_silent_mode';
+  static readonly SILENT_MODE_VAD_THRESHOLD: number = 1500;
+  static readonly SILENT_MODE_SILENCE_END_MS: number = 1500;
+  static readonly SILENT_MODE_CONVERSATION_END_MS: number = 60000;
+  static readonly SILENT_MODE_MIN_SEGMENT_MS: number = 500;
 }

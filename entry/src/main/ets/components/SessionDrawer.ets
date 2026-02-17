@@ -23,6 +23,7 @@ export struct SessionDrawer {
   onSessionClear: (sessionId: string) => void = () => {};
   onOpenSkills: () => void = () => {};
   onOpenMemory: () => void = () => {};
+  onOpenConversations: () => void = () => {};
   onOpenSettings: () => void = () => {};
   onOpenLogs: () => void = () => {};
   onOpenAbout: () => void = () => {};
@@ -390,6 +391,20 @@ export struct SessionDrawer {
         .padding({ left: 16, right: 16, top: 6, bottom: 6 })
         .onClick(() => {
           this.onOpenMemory();
+        })
+
+        Row() {
+          Text('\uD83D\uDD07')
+            .fontSize(16)
+            .margin({ right: 8 })
+          Text(t('silent.title'))
+            .fontSize(14)
+            .fontColor('#666666')
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 6, bottom: 6 })
+        .onClick(() => {
+          this.onOpenConversations();
         })
 
         Row() {
