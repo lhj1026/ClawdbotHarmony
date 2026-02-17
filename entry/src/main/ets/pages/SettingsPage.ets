@@ -4,6 +4,7 @@ import { promptAction, router } from '@kit.ArkUI';
 import { fileIo, picker } from '@kit.CoreFileKit';
 import { http } from '@kit.NetworkKit';
 import { bundleManager } from '@kit.AbilityKit';
+import { request } from '@kit.BasicServicesKit';
 import { Constants } from '../common/Constants';
 import { NodeRuntime } from '../service/gateway/NodeRuntime';
 import { ConnectionState, GatewayEndpoint, AgentIdentity } from '../service/gateway/GatewayModels';
@@ -1363,7 +1364,7 @@ export struct SettingsPage {
         Column() {
           this.InfoRow(I18n.t('settings.appName'), 'ClawdBot')
           Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
-          this.InfoRow(I18n.t('settings.version'), '2.21.14')
+          this.InfoRow(I18n.t('settings.version'), '2.21.15')
           Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
           this.InfoRow(I18n.t('settings.developer'), 'OpenClaw')
           Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
@@ -2471,7 +2472,8 @@ export struct SettingsPage {
       let ctx = getContext(this) as common.UIAbilityContext;
       // Use cacheDir for temporary downloads
       let cacheDir = ctx.cacheDir;
-      let hapPath = `${cacheDir}/ClawdBot-${this.latestVersion}.hap`;
+      let fileName = `ClawdBot-${this.latestVersion}.hap`;
+      let hapPath = `${cacheDir}/${fileName}`;
 
       // Get download URL from GitHub release
       let httpRequest = http.createHttp();
@@ -2497,79 +2499,52 @@ export struct SettingsPage {
         return;
       }
 
-      // Download HAP file with redirect support
+      // Delete old file if exists
+      try { fileIo.unlinkSync(hapPath); } catch { /* ignore */ }
+
+      // Use system download API for large files
       promptAction.showToast({ message: '开始下载...', duration: 1500 });
-      console.info(`[SettingsPage] Downloading from: ${downloadUrl}`);
+      console.info(`[SettingsPage] Downloading from: ${downloadUrl} to ${hapPath}`);
 
-      // Follow redirects manually for GitHub releases
-      let finalUrl = downloadUrl;
-      let redirectCount = 0;
-      while (redirectCount < 5) {
-        let checkRequest = http.createHttp();
-        let checkResponse = await checkRequest.request(finalUrl, {
-          method: http.RequestMethod.GET,
-          header: { 'Accept': 'application/octet-stream' },
-          expectDataType: http.HttpDataType.ARRAY_BUFFER
-        });
+      let downloadConfig: request.DownloadConfig = {
+        url: downloadUrl,
+        filePath: hapPath,
+        enableMetered: true,
+        enableRoaming: true,
+        title: 'ClawdBot 更新',
+        description: `下载版本 ${this.latestVersion}`
+      };
 
-        // Check for redirect (302, 301)
-        if (checkResponse.responseCode === 302 || checkResponse.responseCode === 301) {
-          let headers = checkResponse.header as Record<string, string>;
-          let location = headers['location'] || headers['Location'];
-          if (location) {
-            finalUrl = location;
-            console.info(`[SettingsPage] Redirect to: ${finalUrl}`);
-            redirectCount++;
-            checkRequest.destroy();
-            continue;
-          }
+      let downloadTask = await request.downloadFile(ctx, downloadConfig);
+
+      downloadTask.on('progress', (receivedSize: number, totalSize: number) => {
+        if (totalSize > 0) {
+          this.updateProgress = Math.floor(receivedSize * 100 / totalSize);
         }
+        console.info(`[SettingsPage] Download progress: ${receivedSize}/${totalSize}`);
+      });
 
-        // Got actual content
-        if (checkResponse.responseCode === 200 && checkResponse.result) {
-          let fileData = checkResponse.result as ArrayBuffer;
-          console.info(`[SettingsPage] Downloaded ${fileData.byteLength} bytes`);
+      downloadTask.on('complete', () => {
+        console.info(`[SettingsPage] Download complete: ${hapPath}`);
+        this.updateProgress = 100;
+        this.updateDownloading = false;
+        promptAction.showToast({ message: '下载完成，正在安装...', duration: 2000 });
+        setTimeout(() => {
+          this.installHap(hapPath);
+        }, 500);
+      });
 
-          if (fileData.byteLength < 1000) {
-            promptAction.showToast({ message: '下载的文件太小，可能是错误', duration: 2000 });
-            checkRequest.destroy();
-            this.updateDownloading = false;
-            return;
-          }
+      downloadTask.on('fail', (err: number) => {
+        console.error(`[SettingsPage] Download failed with error code: ${err}`);
+        this.updateDownloading = false;
+        promptAction.showToast({ message: `下载失败 (错误码: ${err})`, duration: 2000 });
+      });
 
-          // Write to file
-          try {
-            // Delete old file if exists
-            try { fileIo.unlinkSync(hapPath); } catch { /* ignore */ }
-
-            let file = fileIo.openSync(hapPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-            let written = fileIo.writeSync(file.fd, fileData);
-            fileIo.closeSync(file);
-            console.info(`[SettingsPage] Written ${written} bytes to ${hapPath}`);
-
-            this.updateProgress = 100;
-            promptAction.showToast({ message: '下载完成，正在安装...', duration: 2000 });
-
-            // Trigger system installer
-            setTimeout(() => {
-              this.installHap(hapPath);
-            }, 500);
-          } catch (writeErr) {
-            console.error(`[SettingsPage] Write error: ${(writeErr as Error).message ?? ''}`);
-            promptAction.showToast({ message: `写入失败: ${(writeErr as Error).message ?? ''}`, duration: 2000 });
-          }
-        } else {
-          promptAction.showToast({ message: `下载失败: HTTP ${checkResponse.responseCode}`, duration: 2000 });
-        }
-        checkRequest.destroy();
-        break;
-      }
     } catch (e) {
       console.error(`[SettingsPage] Download update failed: ${(e as Error).message ?? ''}`);
       promptAction.showToast({ message: `下载失败: ${(e as Error).message ?? ''}`, duration: 2000 });
+      this.updateDownloading = false;
     }
-
-    this.updateDownloading = false;
   }
 
   private installHap(hapPath: string): void {
