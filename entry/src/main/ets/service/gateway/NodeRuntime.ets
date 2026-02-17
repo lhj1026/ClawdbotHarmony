@@ -3,7 +3,8 @@
  * dispatches invoke requests to capability handlers.
  * Ported from Android NodeRuntime.kt.
  */
-import { common } from '@kit.AbilityKit';
+import { common, wantAgent } from '@kit.AbilityKit';
+import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { GatewaySession } from './GatewaySession';
 import { DeviceIdentityStore } from './DeviceIdentityStore';
 import { DeviceAuthStore } from './DeviceAuthStore';
@@ -45,7 +46,7 @@ import { Constants } from '../../common/Constants';
 import { NotificationHelper } from '../NotificationHelper';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.21.3';
+const APP_VERSION = '2.21.4';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -139,6 +140,9 @@ export class NodeRuntime {
   private _isChatPageVisible: boolean = false;
   private _unreadMessageNotifEnabled: boolean = true;
 
+  // Background task for keeping WebSocket alive when app is in background
+  private _backgroundTaskRunning: boolean = false;
+
   static getInstance(): NodeRuntime {
     if (!NodeRuntime.instance) {
       NodeRuntime.instance = new NodeRuntime();
@@ -221,6 +225,59 @@ export class NodeRuntime {
     // Clear message notifications when user returns to the app
     if (inForeground) {
       NotificationHelper.getInstance().cancelAll();
+      // Stop background task when returning to foreground
+      this.stopBackgroundTask();
+    } else {
+      // Start background task to keep WebSocket alive when going to background
+      // Only start if we have an active connection
+      if (this.connectionState === ConnectionState.Connected && this._context) {
+        this.startBackgroundTask(this._context);
+      }
+    }
+  }
+
+  /** Start background task for DATA_TRANSFER to keep WebSocket alive */
+  private async startBackgroundTask(context: common.UIAbilityContext): Promise<void> {
+    if (this._backgroundTaskRunning) {
+      this.log.info(TAG, 'Background task already running');
+      return;
+    }
+    try {
+      let wantAgentInfo: wantAgent.WantAgentInfo = {
+        wants: [{
+          bundleName: context.abilityInfo.bundleName,
+          abilityName: context.abilityInfo.name
+        }],
+        actionType: wantAgent.OperationType.START_ABILITY,
+        requestCode: 0,
+        actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
+      };
+      let agent = await wantAgent.getWantAgent(wantAgentInfo);
+      await backgroundTaskManager.startBackgroundRunning(context, backgroundTaskManager.BackgroundMode.DATA_TRANSFER, agent);
+      this._backgroundTaskRunning = true;
+      this.log.info(TAG, '🌐 Background task started (DATA_TRANSFER) - WebSocket will stay alive');
+    } catch (err) {
+      let code = (err as Record<string, number>)['code'] ?? 0;
+      this.log.error(TAG, `Failed to start background task: code=${code} ${(err as Error).message ?? ''}`);
+      if (code === 9800001) {
+        this.log.error(TAG, 'Missing ohos.permission.KEEP_BACKGROUND_RUNNING permission');
+      } else if (code === 9800003) {
+        this.log.error(TAG, 'backgroundModes not configured in module.json5 (need dataTransfer)');
+      }
+    }
+  }
+
+  /** Stop background task */
+  private async stopBackgroundTask(): Promise<void> {
+    if (!this._backgroundTaskRunning || !this._context) {
+      return;
+    }
+    try {
+      await backgroundTaskManager.stopBackgroundRunning(this._context);
+      this._backgroundTaskRunning = false;
+      this.log.info(TAG, 'Background task stopped');
+    } catch (err) {
+      this.log.warn(TAG, `Failed to stop background task: ${(err as Error).message ?? ''}`);
     }
   }
 

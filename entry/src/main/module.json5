@@ -22,7 +22,8 @@
         "startWindowBackground": "$color:start_window_bg",
         "exported": true,
         "backgroundModes": [
-          "audioRecording"
+          "audioRecording",
+          "dataTransfer"
         ],
         "skills": [
           {
