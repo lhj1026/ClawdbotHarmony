@@ -115,6 +115,7 @@ export struct ChatPage {
   private gwIdleTimer: number = -1; // auto-finish after no events for N seconds
   private gwReceivedDelta: boolean = false; // whether we got at least one delta with text
   private gwAccumulatedText: string = ''; // accumulated text from delta events
+  private idleCheckTimer: number = -1; // timer for auto-closing idle sessions
 
   aboutToAppear(): void {
     // Mark chat page as visible for unread message notifications
@@ -203,6 +204,7 @@ export struct ChatPage {
     }
     this.startCronTimer();
     this.initFeishuBot();
+    this.startIdleSessionCheck();
   }
 
   aboutToDisappear(): void {
@@ -276,6 +278,10 @@ export struct ChatPage {
     if (this.cronTimer !== -1) {
       clearInterval(this.cronTimer);
       this.cronTimer = -1;
+    }
+    if (this.idleCheckTimer !== -1) {
+      clearInterval(this.idleCheckTimer);
+      this.idleCheckTimer = -1;
     }
   }
 
@@ -3903,6 +3909,28 @@ Adjust your tone accordingly:
       this.checkCronTasks();
     }, Constants.CRON_POLL_INTERVAL_MS);
     this.log.info('ChatPage', 'Cron timer started');
+  }
+
+  private startIdleSessionCheck(): void {
+    if (this.idleCheckTimer !== -1) return;
+    // Run immediately on start, then periodically
+    this.closeIdleSessions();
+    this.idleCheckTimer = setInterval(() => {
+      this.closeIdleSessions();
+    }, Constants.SESSION_IDLE_CHECK_INTERVAL_MS);
+    this.log.info('ChatPage', `Idle session check timer started (interval: ${Constants.SESSION_IDLE_CHECK_INTERVAL_MS / 60000}min)`);
+  }
+
+  private async closeIdleSessions(): Promise<void> {
+    try {
+      const closedCount = await this.sessionSvc.closeIdleSessions(this.currentSessionId);
+      if (closedCount > 0) {
+        this.sessions = this.sessionSvc.getSessions();
+        this.log.info('ChatPage', `Auto-closed ${closedCount} idle sessions`);
+      }
+    } catch (err) {
+      this.log.error('ChatPage', `Failed to close idle sessions: ${(err as Error).message ?? ''}`);
+    }
   }
 
   private async checkCronTasks(): Promise<void> {

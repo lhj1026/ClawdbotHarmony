@@ -427,4 +427,42 @@ export class SessionService {
       this.log.error('SessionService', `Clear queue failed for ${sessionId}: ${err}`);
     }
   }
+
+  // Auto-close idle sessions (not active for SESSION_IDLE_TIMEOUT_MS)
+  // Excludes: current session, pinned sessions
+  async closeIdleSessions(currentSessionId: string): Promise<number> {
+    const now = Date.now();
+    const idleThreshold = now - Constants.SESSION_IDLE_TIMEOUT_MS;
+    let closedCount = 0;
+
+    const sessionsToClose = this.sessions.filter(s => 
+      !s.isClosed && 
+      !s.isPinned && 
+      s.id !== currentSessionId && 
+      s.updatedAt < idleThreshold
+    );
+
+    for (const session of sessionsToClose) {
+      session.isClosed = true;
+      session.updatedAt = now;
+      closedCount++;
+      this.log.info('SessionService', `Auto-closed idle session: ${session.id} (idle for ${Math.round((now - session.updatedAt) / 60000)}min)`);
+    }
+
+    if (closedCount > 0) {
+      await this.saveSessions();
+      this.log.info('SessionService', `Auto-closed ${closedCount} idle sessions`);
+    }
+
+    return closedCount;
+  }
+
+  // Update session activity timestamp (call when user interacts with session)
+  async touchSession(sessionId: string): Promise<void> {
+    const session = this.sessions.find(s => s.id === sessionId);
+    if (session) {
+      session.updatedAt = Date.now();
+      await this.saveSessions();
+    }
+  }
 }

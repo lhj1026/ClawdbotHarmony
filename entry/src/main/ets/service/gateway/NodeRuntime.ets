@@ -44,7 +44,7 @@ import { Constants } from '../../common/Constants';
 import { NotificationHelper } from '../NotificationHelper';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.18.2';
+const APP_VERSION = '2.18.3';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
