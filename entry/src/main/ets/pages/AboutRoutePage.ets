@@ -103,12 +103,15 @@ struct AboutRoutePage {
   }
 
   private getSessionStatus(session: ChatSession): string {
+    const isCurrent = session.id === this.sessionSvc.getCurrentSessionId();
     if (session.isActive) {
       return this.lang === 'zh' ? '🔄 处理中' : '🔄 Processing';
+    } else if (isCurrent) {
+      return this.lang === 'zh' ? '✅ 当前' : '✅ Current';
     } else if (session.isPinned) {
       return this.lang === 'zh' ? '📌 已置顶' : '📌 Pinned';
     } else {
-      return this.lang === 'zh' ? '💬 空闲' : '💬 Idle';
+      return this.lang === 'zh' ? '💤 空闲' : '💤 Idle';
     }
   }
 
