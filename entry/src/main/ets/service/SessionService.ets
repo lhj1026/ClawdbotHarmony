@@ -428,11 +428,12 @@ export class SessionService {
     }
   }
 
-  // Auto-close idle sessions (not active for SESSION_IDLE_TIMEOUT_MS)
+  // Auto-close idle sessions (not active for idleTimeoutMs)
   // Excludes: current session, pinned sessions
-  async closeIdleSessions(currentSessionId: string): Promise<number> {
+  async closeIdleSessions(currentSessionId: string, idleTimeoutMs?: number): Promise<number> {
     const now = Date.now();
-    const idleThreshold = now - Constants.SESSION_IDLE_TIMEOUT_MS;
+    const timeout = idleTimeoutMs ?? Constants.SESSION_IDLE_TIMEOUT_MS;
+    const idleThreshold = now - timeout;
     let closedCount = 0;
 
     const sessionsToClose = this.sessions.filter(s => 

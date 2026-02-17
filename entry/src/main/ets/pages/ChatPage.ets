@@ -861,7 +861,7 @@ export struct ChatPage {
           },
           onOpenAbout: () => {
             this.showSessionDrawer = false;
-            router.pushUrl({ url: 'pages/AboutRoutePage' });
+            router.pushUrl({ url: 'pages/SettingsRoutePage' });
           },
           onClose: () => {
             this.showSessionDrawer = false;
@@ -3944,10 +3944,16 @@ Adjust your tone accordingly:
 
   private async closeIdleSessions(): Promise<void> {
     try {
-      const closedCount = await this.sessionSvc.closeIdleSessions(this.currentSessionId);
+      // Read user-configured idle timeout
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let store = await preferences.getPreferences(ctx, Constants.PREFS_GATEWAY);
+      let idleMinutes = (await store.get(Constants.KEY_IDLE_TIMEOUT_MINUTES, Constants.DEFAULT_IDLE_TIMEOUT_MINUTES)) as number;
+      let idleTimeoutMs = idleMinutes * 60 * 1000;
+
+      const closedCount = await this.sessionSvc.closeIdleSessions(this.currentSessionId, idleTimeoutMs);
       if (closedCount > 0) {
         this.sessions = this.sessionSvc.getSessions();
-        this.log.info('ChatPage', `Auto-closed ${closedCount} idle sessions`);
+        this.log.info('ChatPage', `Auto-closed ${closedCount} idle sessions (timeout: ${idleMinutes}min)`);
       }
     } catch (err) {
       this.log.error('ChatPage', `Failed to close idle sessions: ${(err as Error).message ?? ''}`);

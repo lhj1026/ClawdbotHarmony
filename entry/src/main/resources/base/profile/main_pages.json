@@ -6,7 +6,6 @@
     "pages/LogRoutePage",
     "pages/SettingsRoutePage",
     "pages/SkillsRoutePage",
-    "pages/MemoryRoutePage",
-    "pages/AboutRoutePage"
+    "pages/MemoryRoutePage"
   ]
 }
