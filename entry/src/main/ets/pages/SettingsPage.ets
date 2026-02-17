@@ -1305,7 +1305,7 @@ export struct SettingsPage {
         Column() {
           this.InfoRow(I18n.t('settings.appName'), 'ClawdBot')
           Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
-          this.InfoRow(I18n.t('settings.version'), '2.18.18')
+          this.InfoRow(I18n.t('settings.version'), '2.19.5')
           Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
           this.InfoRow(I18n.t('settings.developer'), 'OpenClaw')
         }

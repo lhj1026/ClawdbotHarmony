@@ -366,6 +366,7 @@ export class NodeRuntime {
 
   /**
    * Get session status including token usage from Gateway.
+   * Uses sessions.list RPC method and finds the matching session.
    * Returns { inputTokens, outputTokens, totalTokens } or null on failure.
    */
   async getSessionTokenUsage(chatSessionId?: string): Promise<GatewayTokenUsage | null> {
@@ -374,40 +375,38 @@ export class NodeRuntime {
     }
     try {
       let sessionKey = chatSessionId ? `agent:main:harmony:${chatSessionId}` : 'agent:main:main';
-      let params = `{"sessionKey":${JSON.stringify(sessionKey)}}`;
-      let resJson = await this.operatorSession.request('session.status', params, 10000);
-      this.log.info(TAG, `session.status response (300): ${resJson.substring(0, 300)}`);
+      // Use sessions.list to get session info including totalTokens
+      let params = `{"limit":50}`;
+      let resJson = await this.operatorSession.request('sessions.list', params, 10000);
+      this.log.info(TAG, `sessions.list response (300): ${resJson.substring(0, 300)}`);
 
       if (resJson.length > 0) {
-        let status = JSON.parse(resJson) as Record<string, Object>;
-        // Try different field names for token usage
-        let usage = status['usage'] as Record<string, number> | undefined;
-        let tokens = status['tokens'] as Record<string, number> | undefined;
+        let result = JSON.parse(resJson) as Record<string, Object>;
+        let sessions = result['sessions'] as Array<Record<string, Object>> | undefined;
 
-        let inputTokens = 0;
-        let outputTokens = 0;
-
-        if (usage) {
-          inputTokens = usage['input_tokens'] ?? usage['inputTokens'] ?? usage['input'] ?? 0;
-          outputTokens = usage['output_tokens'] ?? usage['outputTokens'] ?? usage['output'] ?? 0;
-        } else if (tokens) {
-          inputTokens = tokens['input'] ?? tokens['in'] ?? 0;
-          outputTokens = tokens['output'] ?? tokens['out'] ?? 0;
-        } else {
-          // Try top-level fields
-          inputTokens = (status['inputTokens'] as number) ?? (status['input_tokens'] as number) ?? 0;
-          outputTokens = (status['outputTokens'] as number) ?? (status['output_tokens'] as number) ?? 0;
+        if (sessions) {
+          // Find the session with matching key
+          for (let session of sessions) {
+            let key = session['key'] as string;
+            if (key === sessionKey) {
+              let totalTokens = (session['totalTokens'] as number) ?? 0;
+              let contextTokens = (session['contextTokens'] as number) ?? 200000;
+              this.log.info(TAG, `Found session ${sessionKey}: totalTokens=${totalTokens}, contextTokens=${contextTokens}`);
+              // Gateway only provides totalTokens, not split - estimate 60% output, 40% input
+              let estimatedInput = Math.floor(totalTokens * 0.4);
+              let estimatedOutput = totalTokens - estimatedInput;
+              return {
+                inputTokens: estimatedInput,
+                outputTokens: estimatedOutput,
+                totalTokens: totalTokens
+              };
+            }
+          }
+          this.log.warn(TAG, `Session ${sessionKey} not found in sessions.list (${sessions.length} sessions)`);
         }
-
-        this.log.info(TAG, `Token usage: input=${inputTokens} output=${outputTokens}`);
-        return {
-          inputTokens: inputTokens,
-          outputTokens: outputTokens,
-          totalTokens: inputTokens + outputTokens
-        };
       }
     } catch (err) {
-      this.log.warn(TAG, `session.status failed: ${(err as Error).message ?? ''}`);
+      this.log.warn(TAG, `sessions.list failed: ${(err as Error).message ?? ''}`);
     }
     return null;
   }
