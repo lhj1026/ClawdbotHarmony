@@ -5,13 +5,13 @@
         "name": "default",
         "type": "HarmonyOS",
         "material": {
-          "certpath": "signing/default_ClawdbotHarmony_z9T_7I2-zmz-PTi8NFVpSdiOMpntI_XQ0LcXqMjVPLQ=.cer",
+          "certpath": "./signing/debug.cer",
           "keyAlias": "debugKey",
-          "keyPassword": "0000001B9A84AC61F23FACA35487B95C2839E3C508B75C9FCBEEECAA31825D948EE91116A6034A65163A81",
-          "profile": "signing/default_ClawdbotHarmony_z9T_7I2-zmz-PTi8NFVpSdiOMpntI_XQ0LcXqMjVPLQ=.p7b",
+          "keyPassword": "0000001A03A75CAE32C1B1F1252BC315E54C095BE068736FB80505ED075CBF3CB54F35A4583A1A1B72E8",
+          "profile": "./signing/debug.p7b",
           "signAlg": "SHA256withECDSA",
-          "storeFile": "signing/default_ClawdbotHarmony_z9T_7I2-zmz-PTi8NFVpSdiOMpntI_XQ0LcXqMjVPLQ=.p12",
-          "storePassword": "0000001B8B12738C0DB6FF6D2ECD3C80733548A0676C6B9B7540DC124C4D49C38CDC0AB14AC22E7758F549"
+          "storeFile": "./signing/debug.p12",
+          "storePassword": "0000001A6DB8586C38C706B434D54D0CE2ABF7DB71BE9EC23ED2D7E6D8D4FF97491132BEFBB59200313B"
         }
       }
     ],
@@ -19,7 +19,7 @@
       {
         "name": "default",
         "signingConfig": "default",
-        "compatibleSdkVersion": "5.0.0(12)",
+        "compatibleSdkVersion": "6.0.2(22)",
         "runtimeOS": "HarmonyOS",
         "buildOption": {
           "strictMode": {

@@ -21,10 +21,11 @@
 .DS_Store
 Thumbs.db
 
-# Signing materials (sensitive)
+# Signing materials (ignore stray files, but allow signing/ dir)
 *.p12
 *.cer
 *.p7b
+!/signing/
 
 # Native build cache
 /entry/.cxx/
