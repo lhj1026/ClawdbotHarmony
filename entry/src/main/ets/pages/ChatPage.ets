@@ -1232,7 +1232,7 @@ Respond ONLY with the JSON array.`;
     await this.saveSessionQueue();
 
     // Create new session
-    const newSession = await this.sessionSvc.createSession();
+    const newSession = await this.sessionSvc.createSession(this.assistantName);
 
     // Switch to new session
     await this.sessionSvc.setCurrentSession(newSession.id);
