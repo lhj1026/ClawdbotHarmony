@@ -8,9 +8,20 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.21.8';
+export const APP_VERSION: string = '2.21.9';
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '2.21.9',
+    date: '2026-02-17',
+    features: [
+      '记忆页面搜索功能：根据关键词搜索记忆',
+      '记忆列表倒序显示：最新记忆在最上面',
+    ],
+    fixes: [
+
+    ],
+  },
   {
     version: '2.21.8',
     date: '2026-02-17',
@@ -194,4 +205,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.21.8';
+export const LATEST_VERSION: string = '2.21.9';

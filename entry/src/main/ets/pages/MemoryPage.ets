@@ -26,6 +26,7 @@ export struct MemoryPage {
   @State @Watch('onLangChange') lang: string = 'zh';
   @State isExtracting: boolean = false;
   @State isSyncing: boolean = false;
+  @State searchKeyword: string = '';
   // Chat history states
   @State viewMode: string = 'memory'; // 'memory' | 'history'
   @State allSessions: ChatSession[] = [];
@@ -197,6 +198,32 @@ export struct MemoryPage {
         .backgroundColor(Color.White)
         .borderRadius(12)
       }
+
+      // search
+      Row() {
+        Text('🔍')
+          .fontSize(16)
+          .margin({ left: 12 })
+        TextInput({ placeholder: I18n.t('memory.searchPlaceholder'), text: this.searchKeyword })
+          .layoutWeight(1)
+          .height(36)
+          .backgroundColor(Color.Transparent)
+          .placeholderColor('#999999')
+          .fontSize(14)
+          .onChange((value: string) => { this.searchKeyword = value; })
+        if (this.searchKeyword.length > 0) {
+          Text('✕')
+            .fontSize(16)
+            .fontColor('#999999')
+            .margin({ right: 12 })
+            .onClick(() => { this.searchKeyword = ''; })
+        }
+      }
+      .width('100%')
+      .height(40)
+      .backgroundColor(Color.White)
+      .borderRadius(20)
+      .margin({ left: 16, right: 16, bottom: 10 })
 
       // filter
       Row({ space: 8 }) {
@@ -556,8 +583,18 @@ export struct MemoryPage {
   }
 
   private filtered(): MemoryItem[] {
-    if (this.filterType === 'all') return this.entries;
-    return this.entries.filter((e): boolean => e.memType === this.filterType);
+    let result = this.entries;
+    // Filter by type
+    if (this.filterType !== 'all') {
+      result = result.filter((e): boolean => e.memType === this.filterType);
+    }
+    // Filter by search keyword
+    if (this.searchKeyword.trim().length > 0) {
+      let kw = this.searchKeyword.toLowerCase();
+      result = result.filter((e): boolean => e.content.toLowerCase().includes(kw));
+    }
+    // Reverse order: newest first (assuming entries are added chronologically)
+    return result.slice().reverse();
   }
 
   private async addEntry(): Promise<void> {

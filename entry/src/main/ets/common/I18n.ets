@@ -148,6 +148,7 @@ function buildZh(): Map<string, string> {
   m.set('memory.instruction', '指令');
   m.set('memory.entries', '条记录');
   m.set('memory.empty', '暂无记忆');
+  m.set('memory.searchPlaceholder', '搜索记忆...');
   m.set('memory.placeholder', 'ClawdBot 需要记住什么？');
   m.set('memory.clearTitle', '清除所有记忆');
   m.set('memory.clearMessage', '确定要永久删除所有存储的记忆吗？');
@@ -572,6 +573,7 @@ function buildEn(): Map<string, string> {
   m.set('memory.instruction', 'instruction');
   m.set('memory.entries', ' entries');
   m.set('memory.empty', 'No memories yet');
+  m.set('memory.searchPlaceholder', 'Search memories...');
   m.set('memory.placeholder', 'What should ClawdBot remember?');
   m.set('memory.clearTitle', 'Clear All Memory');
   m.set('memory.clearMessage', 'Permanently delete all stored memories?');
