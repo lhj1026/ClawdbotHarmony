@@ -364,6 +364,54 @@ export class NodeRuntime {
     this._runSessionMap.delete(runId);
   }
 
+  /**
+   * Get session status including token usage from Gateway.
+   * Returns { inputTokens, outputTokens, totalTokens } or null on failure.
+   */
+  async getSessionTokenUsage(chatSessionId?: string): Promise<GatewayTokenUsage | null> {
+    if (!this.operatorSession || this._operatorState !== ConnectionState.Connected) {
+      return null;
+    }
+    try {
+      let sessionKey = chatSessionId ? `agent:main:harmony:${chatSessionId}` : 'agent:main:main';
+      let params = `{"sessionKey":${JSON.stringify(sessionKey)}}`;
+      let resJson = await this.operatorSession.request('session.status', params, 10000);
+      this.log.info(TAG, `session.status response (300): ${resJson.substring(0, 300)}`);
+
+      if (resJson.length > 0) {
+        let status = JSON.parse(resJson) as Record<string, Object>;
+        // Try different field names for token usage
+        let usage = status['usage'] as Record<string, number> | undefined;
+        let tokens = status['tokens'] as Record<string, number> | undefined;
+
+        let inputTokens = 0;
+        let outputTokens = 0;
+
+        if (usage) {
+          inputTokens = usage['input_tokens'] ?? usage['inputTokens'] ?? usage['input'] ?? 0;
+          outputTokens = usage['output_tokens'] ?? usage['outputTokens'] ?? usage['output'] ?? 0;
+        } else if (tokens) {
+          inputTokens = tokens['input'] ?? tokens['in'] ?? 0;
+          outputTokens = tokens['output'] ?? tokens['out'] ?? 0;
+        } else {
+          // Try top-level fields
+          inputTokens = (status['inputTokens'] as number) ?? (status['input_tokens'] as number) ?? 0;
+          outputTokens = (status['outputTokens'] as number) ?? (status['output_tokens'] as number) ?? 0;
+        }
+
+        this.log.info(TAG, `Token usage: input=${inputTokens} output=${outputTokens}`);
+        return {
+          inputTokens: inputTokens,
+          outputTokens: outputTokens,
+          totalTokens: inputTokens + outputTokens
+        };
+      }
+    } catch (err) {
+      this.log.warn(TAG, `session.status failed: ${(err as Error).message ?? ''}`);
+    }
+    return null;
+  }
+
   private dispatchChatEvent(event: GatewayChatEvent): void {
     // Attach chatSessionId from runId mapping (multi-session routing)
     if (!event.chatSessionId && event.runId.length > 0) {

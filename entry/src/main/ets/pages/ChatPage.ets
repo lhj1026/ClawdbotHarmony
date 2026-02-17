@@ -2054,10 +2054,35 @@ Respond ONLY with the JSON array.`;
     // Auto-update session title based on recent conversation
     this.tryAutoUpdateSessionTitle();
 
+    // Fetch token usage from Gateway (async, don't block cleanup)
+    this.fetchAndUpdateTokenUsage();
+
     this.doCleanupGatewayChat();
   }
 
-  /** Update current session's token usage */
+  /** Fetch token usage from Gateway and update current session */
+  private async fetchAndUpdateTokenUsage(): Promise<void> {
+    try {
+      let runtime = NodeRuntime.getInstance();
+      let usage = await runtime.getSessionTokenUsage(this.currentSessionId);
+      if (usage && (usage.inputTokens > 0 || usage.outputTokens > 0)) {
+        // Replace (not add) because Gateway returns cumulative totals
+        let sessionIdx = this.sessions.findIndex(s => s.id === this.currentSessionId);
+        if (sessionIdx >= 0) {
+          let session = this.sessions[sessionIdx];
+          session.inputTokens = usage.inputTokens;
+          session.outputTokens = usage.outputTokens;
+          session.totalTokens = usage.totalTokens;
+          this.log.info('ChatPage', `Token usage from Gateway: session=${this.currentSessionId} input=${usage.inputTokens} output=${usage.outputTokens} total=${usage.totalTokens}`);
+          this.sessionSvc.updateSession(session);
+        }
+      }
+    } catch (err) {
+      this.log.warn('ChatPage', `Failed to fetch token usage: ${(err as Error).message ?? ''}`);
+    }
+  }
+
+  /** Update current session's token usage (called from agent event) */
   private updateSessionTokenUsage(inputTokens: number, outputTokens: number): void {
     let sessionIdx = this.sessions.findIndex(s => s.id === this.currentSessionId);
     if (sessionIdx >= 0) {
