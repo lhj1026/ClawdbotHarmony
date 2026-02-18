@@ -49,7 +49,7 @@ import { NotificationHelper } from '../NotificationHelper';
 import { ExperienceStorage } from '../ExperienceStorage';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.25.0';
+const APP_VERSION = '2.29.0';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -188,6 +188,26 @@ export class NodeRuntime {
   get isConnected(): boolean {
     return this._operatorState === ConnectionState.Connected ||
            this._nodeState === ConnectionState.Connected;
+  }
+
+  get isOperatorConnected(): boolean {
+    return this._operatorState === ConnectionState.Connected;
+  }
+
+  get isNodeConnected(): boolean {
+    return this._nodeState === ConnectionState.Connected;
+  }
+
+  get operatorConnectionState(): ConnectionState {
+    return this._operatorState;
+  }
+
+  get nodeConnectionState(): ConnectionState {
+    return this._nodeState;
+  }
+
+  get isNodePairingPending(): boolean {
+    return this._pairingPending;
   }
 
   get agentIdentity(): AgentIdentity | undefined {
@@ -1226,16 +1246,28 @@ export class NodeRuntime {
     } catch { /* ignore */ }
   }
 
-  connect(context: common.UIAbilityContext, endpoint: GatewayEndpoint, token?: string, password?: string): void {
-    // Disconnect existing sessions if any
-    this.disconnect();
+  /**
+   * Connect both operator and node sessions.
+   * Use connectOperator() or connectNode() to connect individually.
+   */
+  connect(context: common.UIAbilityContext, endpoint: GatewayEndpoint, token?: string, password?: string, connectOperatorSession: boolean = true, connectNodeSession: boolean = true): void {
+
+    // Disconnect existing sessions if connecting new ones
+    if (connectOperatorSession && this.operatorSession) {
+      this.operatorSession.disconnect();
+      this.operatorSession = undefined;
+    }
+    if (connectNodeSession && this.nodeSession) {
+      this.nodeSession.disconnect();
+      this.nodeSession = undefined;
+    }
 
     this._endpoint = endpoint;
     this._context = context;
     this._connectToken = token;
     this._connectPassword = password;
     this._pairingApproved = false;
-    this._pairingInProgress = false;
+    this._pairingNotified = false;
     this.log.info(TAG, `connect() called: ${endpoint.host}:${endpoint.port} tls=${endpoint.useTls} token=${token ? 'yes' : 'no'} password=${password ? 'yes' : 'no'} displayName="${this._displayName}"`);
     // Set context for capabilities that need file system access
     this.cameraCapability.setContext(context);
@@ -1273,217 +1305,155 @@ export class NodeRuntime {
       }
     };
 
-    // Create operator session
-    let operatorOpts = this.buildOperatorOptions();
-    this.log.info(TAG, `Creating operator session: clientId=${operatorOpts.client.id} mode=${operatorOpts.client.mode} role=${operatorOpts.role}`);
-    this.operatorSession = new GatewaySession(operatorOpts, this.identityStore, this.authStore);
-    this.operatorSession.onStateChanged = (state, message) => {
-      this._operatorState = state;
-      this.updateStatus();
-      this.log.info(TAG, `operator state: ${state} - ${message}`);
-      if (state === ConnectionState.Connected) {
-        this.fetchAgentIdentity().catch(() => { /* ignore */ });
-        this.syncExperiencePack().catch(() => { /* ignore */ });
-      }
-    };
-    this.operatorSession.onEvent = (event, payloadJson) => {
-      this.handleOperatorEvent(event, payloadJson);
-    };
+    // Create operator session (if requested)
+    if (connectOperatorSession) {
+      let operatorOpts = this.buildOperatorOptions();
+      this.log.info(TAG, `Creating operator session: clientId=${operatorOpts.client.id} mode=${operatorOpts.client.mode} role=${operatorOpts.role}`);
+      this.operatorSession = new GatewaySession(operatorOpts, this.identityStore, this.authStore);
+      this.operatorSession.onStateChanged = (state, message) => {
+        this._operatorState = state;
+        this.updateStatus();
+        this.log.info(TAG, `operator state: ${state} - ${message}`);
+        if (state === ConnectionState.Connected) {
+          this.fetchAgentIdentity().catch(() => { /* ignore */ });
+          this.syncExperiencePack().catch(() => { /* ignore */ });
+        }
+      };
+      this.operatorSession.onEvent = (event, payloadJson) => {
+        this.handleOperatorEvent(event, payloadJson);
+      };
+    }
 
-    // Create node session
-    let nodeOpts = this.buildNodeOptions();
-    this.log.info(TAG, `Creating node session: clientId=${nodeOpts.client.id} mode=${nodeOpts.client.mode} role=${nodeOpts.role} caps=[${nodeOpts.caps.join(',')}] commands=[${nodeOpts.commands.join(',')}]`);
-    this.nodeSession = new GatewaySession(nodeOpts, this.identityStore, this.authStore);
-    this.nodeSession.onStateChanged = (state, message) => {
-      this._nodeState = state;
-      // Reset pairing flags when node disconnects so re-pairing can happen on reconnect
-      if (state === ConnectionState.Reconnecting || state === ConnectionState.Disconnected) {
-        this._pairingApproved = false;
-        this._pairingInProgress = false;
-        this._pairingScopeMissing = false;
-      }
-      this.updateStatus();
-      this.log.info(TAG, `node state: ${state} - ${message}`);
-    };
-    this.nodeSession.onEvent = (event, payloadJson) => {
-      this.log.debug(TAG, `node event: ${event} payloadLen=${payloadJson ? payloadJson.length : 0}`);
-    };
-    this.nodeSession.onInvokeRequest = async (req: InvokeRequest): Promise<InvokeResult> => {
-      return await this.handleInvoke(req);
-    };
-    this.nodeSession.onPairingRequired = (requestId: string) => {
-      this.autoApproveNodePairing(requestId);
-    };
+    // Create node session (if requested)
+    if (connectNodeSession) {
+      let nodeOpts = this.buildNodeOptions();
+      this.log.info(TAG, `Creating node session: clientId=${nodeOpts.client.id} mode=${nodeOpts.client.mode} role=${nodeOpts.role} caps=[${nodeOpts.caps.join(',')}] commands=[${nodeOpts.commands.join(',')}]`);
+      this.nodeSession = new GatewaySession(nodeOpts, this.identityStore, this.authStore);
+      this.nodeSession.onStateChanged = (state, message) => {
+        this._nodeState = state;
+        // Reset pairing flags when node disconnects so re-pairing notification can happen on reconnect
+        if (state === ConnectionState.Reconnecting || state === ConnectionState.Disconnected) {
+          this._pairingApproved = false;
+          this._pairingNotified = false;
+          this._pairingPending = false;
+        }
+        // Clear pending flag when connected
+        if (state === ConnectionState.Connected) {
+          this._pairingPending = false;
+        }
+        this.updateStatus();
+        this.log.info(TAG, `node state: ${state} - ${message}`);
+      };
+      this.nodeSession.onEvent = (event, payloadJson) => {
+        this.log.debug(TAG, `node event: ${event} payloadLen=${payloadJson ? payloadJson.length : 0}`);
+      };
+      this.nodeSession.onInvokeRequest = async (req: InvokeRequest): Promise<InvokeResult> => {
+        return await this.handleInvoke(req);
+      };
+      this.nodeSession.onPairingRequired = (requestId: string) => {
+        this.autoApproveNodePairing(requestId);
+      };
+    }
 
-    // Connect both sessions (fire-and-forget, state updates via callbacks)
-    this.log.info(TAG, 'Connecting operator session...');
-    this.operatorSession.connect(context, endpoint, token, password);
-    this.log.info(TAG, 'Connecting node session...');
-    this.nodeSession.connect(context, endpoint, token, password);
+    // Connect sessions (fire-and-forget, state updates via callbacks)
+    if (connectOperatorSession && this.operatorSession) {
+      this.log.info(TAG, 'Connecting operator session...');
+      this.operatorSession.connect(context, endpoint, token, password);
+    }
+    if (connectNodeSession && this.nodeSession) {
+      this.log.info(TAG, 'Connecting node session...');
+      this.nodeSession.connect(context, endpoint, token, password);
+    }
   }
 
-  disconnect(): void {
-    this.log.info(TAG, 'disconnect() called');
-    if (this.operatorSession) {
+  /** Connect only operator session */
+  connectOperator(context: common.UIAbilityContext, endpoint: GatewayEndpoint, token?: string, password?: string): void {
+    this.connect(context, endpoint, token, password, true, false);
+  }
+
+  /** Connect only node session */
+  connectNode(context: common.UIAbilityContext, endpoint: GatewayEndpoint, token?: string, password?: string): void {
+    this.connect(context, endpoint, token, password, false, true);
+  }
+
+  disconnect(disconnectOperatorSession: boolean = true, disconnectNodeSession: boolean = true): void {
+    this.log.info(TAG, `disconnect() called: operator=${disconnectOperatorSession} node=${disconnectNodeSession}`);
+    if (disconnectOperatorSession && this.operatorSession) {
       this.log.info(TAG, 'Disconnecting operator session');
       this.operatorSession.disconnect();
       this.operatorSession = undefined;
+      this._operatorState = ConnectionState.Disconnected;
+      if (this._agentIdentity) {
+        this._agentIdentity = undefined;
+        this._cachedAvatarPath = '';
+        this.dispatchIdentity(undefined);
+      }
     }
-    if (this.nodeSession) {
+    if (disconnectNodeSession && this.nodeSession) {
       this.log.info(TAG, 'Disconnecting node session');
       this.nodeSession.disconnect();
       this.nodeSession = undefined;
+      this._nodeState = ConnectionState.Disconnected;
     }
-    this._endpoint = undefined;
-    this._operatorState = ConnectionState.Disconnected;
-    this._nodeState = ConnectionState.Disconnected;
-    if (this._agentIdentity) {
-      this._agentIdentity = undefined;
-      this._cachedAvatarPath = '';
-      this.dispatchIdentity(undefined);
+    if (disconnectOperatorSession && disconnectNodeSession) {
+      this._endpoint = undefined;
     }
     this.updateStatus();
   }
 
+  /** Disconnect only operator session */
+  disconnectOperator(): void {
+    this.disconnect(true, false);
+  }
+
+  /** Disconnect only node session */
+  disconnectNode(): void {
+    this.disconnect(false, true);
+  }
+
   private _pairingApproved: boolean = false;
-  private _pairingInProgress: boolean = false;
-  private _pairingScopeMissing: boolean = false;
+  private _pairingNotified: boolean = false;
+  private _pairingPending: boolean = false;  // true when waiting for pairing approval
 
   /**
    * Handle node pairing when Gateway returns NOT_PAIRED.
    *
-   * **Problem:** Gateway closes the WebSocket immediately after returning NOT_PAIRED,
-   * which invalidates the requestId returned in the error response. The old approach
-   * of calling `node.pair.approve` with that requestId fails with "unknown requestId".
+   * The app cannot auto-approve pairing because operator session uses password auth,
+   * which does NOT grant the required operator.pairing scope.
    *
-   * **Solution:** Use `node.pair.request` RPC to create a NEW pending pairing request,
-   * then approve that request. This creates a stable requestId that doesn't depend on
-   * the closed WebSocket connection.
-   *
-   * Flow:
-   * 1. Wait for operator session to connect
-   * 2. Call `node.pair.request` with node info (caps, commands, etc.)
-   * 3. Get the new requestId from the response
-   * 4. Call `node.pair.approve` with the new requestId
-   * 5. Node session can now reconnect successfully
+   * Instead, we notify the user to approve pairing manually via CLI or Control UI.
+   * The node session will keep reconnecting until pairing is approved.
    */
   private async autoApproveNodePairing(_oldRequestId: string): Promise<void> {
     if (this._pairingApproved) {
       if (this.nodeSession) this.nodeSession.notifyPairingDone();
       return;
     }
-    if (this._pairingInProgress) {
-      return;
-    }
-    // If we already know the operator lacks the pairing scope, don't retry
-    if (this._pairingScopeMissing) {
-      if (this.nodeSession) this.nodeSession.notifyPairingDone();
-      return;
-    }
-    this._pairingInProgress = true;
 
-    // Wait for operator session to be connected (poll every 1s, up to 15s)
-    let waitedMs = 0;
-    while ((!this.operatorSession || this._operatorState !== ConnectionState.Connected) && waitedMs < 15000) {
-      this.log.info(TAG, `Auto-pair: waiting for operator to connect... (${waitedMs}ms)`);
-      await new Promise<void>((resolve) => { setTimeout(() => { resolve(); }, 1000); });
-      waitedMs += 1000;
-    }
+    // Only notify once per connection attempt
+    if (!this._pairingNotified) {
+      this._pairingNotified = true;
+      this._pairingPending = true;
+      this.updateStatus();  // Trigger UI update
 
-    if (!this.operatorSession || this._operatorState !== ConnectionState.Connected) {
-      this.log.warn(TAG, 'Auto-pair: operator not connected after 15s, cannot approve');
-      this._pairingInProgress = false;
-      if (this.nodeSession) this.nodeSession.notifyPairingDone();
-      return;
-    }
-
-    try {
-      // Step 1: Get device identity for nodeId
+      // Get nodeId for the notification
       let nodeId = '';
       if (this._context) {
-        let identity = await this.identityStore.loadOrCreate(this._context);
-        nodeId = identity.deviceId;
-      }
-      if (nodeId.length === 0) {
-        this.log.error(TAG, 'Auto-pair: no device identity available');
-        this._pairingInProgress = false;
-        if (this.nodeSession) this.nodeSession.notifyPairingDone();
-        return;
-      }
-
-      // Step 2: Build node.pair.request params with full node info
-      let nodeOpts = this.buildNodeOptions();
-      let displayName = this._displayName.length > 0 ? this._displayName : 'ClawdBot HarmonyOS';
-      let capsJson = JSON.stringify(nodeOpts.caps);
-      let commandsJson = JSON.stringify(nodeOpts.commands);
-      let pairReqJson = `{"nodeId":${JSON.stringify(nodeId)},"displayName":${JSON.stringify(displayName)},"platform":"HarmonyOS","version":"${APP_VERSION}","deviceFamily":"HarmonyOS","caps":${capsJson},"commands":${commandsJson},"silent":true}`;
-
-      this.log.info(TAG, `Auto-pair: sending node.pair.request nodeId=${nodeId.substring(0, 12)}... caps=[${nodeOpts.caps.join(',')}]`);
-      let pairRes = await this.operatorSession.request('node.pair.request', pairReqJson, 10000);
-      this.log.info(TAG, `Auto-pair: node.pair.request response: ${pairRes.substring(0, 300)}`);
-
-      // Step 3: Parse response to get the new requestId
-      let newRequestId = '';
-      let pairingStatus = '';
-      if (pairRes.length > 0) {
-        let resObj = JSON.parse(pairRes) as Record<string, Object>;
-        pairingStatus = (resObj['status'] as string) ?? '';
-
-        // Check if already paired (status="paired")
-        if (pairingStatus === 'paired') {
-          this.log.info(TAG, 'Auto-pair: node already paired!');
-          this._pairingApproved = true;
-
-          // NOTE: Do NOT store the node token from pair.response!
-          // The 'token' in node.pair.request response is a NODE VERIFICATION TOKEN
-          // (used for node.pair.verify), NOT a DEVICE AUTH TOKEN (used for connect).
-          // Node sessions should always use password auth after pairing.
-          this.log.info(TAG, 'Auto-pair: node already paired. Will use password auth on reconnect.');
-
-          this._pairingInProgress = false;
-          if (this.nodeSession) this.nodeSession.notifyPairingDone();
-          return;
-        }
-
-        // Get requestId from pending request
-        let request = resObj['request'] as Record<string, Object> | undefined;
-        if (request && request['requestId']) {
-          newRequestId = request['requestId'] as string;
+        try {
+          let identity = await this.identityStore.loadOrCreate(this._context);
+          nodeId = identity.deviceId;
+        } catch (e) {
+          // ignore
         }
       }
 
-      if (newRequestId.length === 0) {
-        this.log.error(TAG, `Auto-pair: no requestId in response, status=${pairingStatus}`);
-        this._pairingInProgress = false;
-        if (this.nodeSession) this.nodeSession.notifyPairingDone();
-        return;
-      }
-
-      // Step 4: Approve the new request
-      this.log.info(TAG, `Auto-pair: approving new requestId=${newRequestId}`);
-      let approveParams = `{"requestId":${JSON.stringify(newRequestId)}}`;
-      let approveRes = await this.operatorSession.request('node.pair.approve', approveParams, 10000);
-      this.log.info(TAG, `Auto-pair: approve succeeded: ${approveRes.substring(0, 300)}`);
-      this._pairingApproved = true;
-
-      // NOTE: Do NOT store the node token from approve response!
-      // The 'token' in node.pair.approve response is a NODE VERIFICATION TOKEN
-      // (used for node.pair.verify), NOT a DEVICE AUTH TOKEN (used for connect).
-      // Node sessions should always use password auth after pairing.
-      // Storing and using this token causes "device token mismatch" errors.
-      this.log.info(TAG, 'Auto-pair: pairing complete. Node session will use password auth on reconnect.');
-    } catch (err) {
-      let errMsg = (err as Error).message ?? '';
-      this.log.error(TAG, `Auto-pair: failed: ${errMsg}`);
-      if (errMsg.includes('missing scope')) {
-        this._pairingScopeMissing = true;
-        this.log.warn(TAG, 'Auto-pair: operator lacks pairing scope. Set gateway.devices.autoApprove="all" in gateway config, or use CLI: openclaw nodes pending && openclaw nodes approve <requestId>');
-      }
+      let shortId = nodeId.length > 12 ? nodeId.substring(0, 12) + '...' : nodeId;
+      this.log.warn(TAG, `Node pairing required! Approve via CLI: openclaw nodes pending && openclaw nodes approve <requestId>`);
+      this.log.info(TAG, `Node ID: ${shortId}`);
     }
 
-    this._pairingInProgress = false;
+    // Let node session keep reconnecting - it will succeed once pairing is approved
     if (this.nodeSession) {
-      this.log.info(TAG, 'Auto-pair: notifying node session pairing done');
       this.nodeSession.notifyPairingDone();
     }
   }
@@ -1497,8 +1467,8 @@ export class NodeRuntime {
     if (opConnected && nodeConnected) {
       this._statusText = 'Connected';
     } else if (opConnected && !nodeConnected) {
-      this._statusText = this._pairingScopeMissing
-        ? 'Connected (node not paired)'
+      this._statusText = this._pairingNotified
+        ? 'Connected (node pairing required)'
         : 'Connected (node offline)';
     } else if (!opConnected && nodeConnected) {
       this._statusText = 'Connected (operator offline)';

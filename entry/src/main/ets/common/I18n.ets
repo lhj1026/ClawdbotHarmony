@@ -87,6 +87,12 @@ function buildZh(): Map<string, string> {
   // Custom provider & ASR
   m.set('settings.customProvider', '定制化');
   m.set('settings.aiEngine', 'AI 引擎');
+  m.set('settings.aiEngineDesc', '语音识别、向量嵌入、意图识别');
+  m.set('settings.aiEngineGatewayHint', '已接入网关，默认使用网关模型');
+  m.set('settings.aiEngineInheritHint', '使用上方 AI 提供商的 API Key');
+  m.set('settings.asrModel', '语音识别模型');
+  m.set('settings.asrModelPlaceholder', '留空使用网关模型');
+  m.set('settings.asrModelHint', '留空=使用网关大模型，填写=使用指定 ASR 模型');
   m.set('settings.asrMode', '语音识别');
   m.set('settings.asrModeDesc', '选择语音识别方式');
   m.set('settings.asrModeAuto', '自动');
@@ -136,6 +142,27 @@ function buildZh(): Map<string, string> {
   m.set('skills.countEnabled', '已启用');
   m.set('skills.countTools', '个工具');
   m.set('skills.builtin', '内置');
+
+  // ExperiencePage
+  m.set('experience.title', '经验');
+  m.set('experience.tabExperience', '经验包');
+  m.set('experience.tabSkills', '技能');
+  m.set('experience.tabMemory', '记忆');
+  m.set('experience.countExp', '条经验');
+  m.set('experience.countSkill', '个技能');
+  m.set('experience.countMemory', '条记忆');
+  m.set('experience.lastSync', '上次同步');
+  m.set('experience.levelPublic', '公开');
+  m.set('experience.levelSummary', '摘要');
+  m.set('experience.levelPrivate', '私密');
+  m.set('experience.empty', '暂无经验');
+  m.set('experience.emptyHint', '经验会在与 AI 交互过程中自动学习');
+  m.set('experience.skills', '技能');
+  m.set('experience.memories', '记忆');
+  m.set('experience.noSkills', '暂无技能');
+  m.set('experience.noMemory', '暂无记忆');
+  m.set('experience.createdAt', '创建时间');
+  m.set('experience.updatedAt', '更新时间');
 
   // MemoryPage
   m.set('memory.title', '记忆');
@@ -188,8 +215,10 @@ function buildZh(): Map<string, string> {
   m.set('settings.baseUrlDesc', '留空使用官方 API，填写可用于代理/中转服务');
   m.set('settings.generation', '生成参数');
   m.set('settings.temperature', '温度');
-  m.set('settings.gateway', '网关 / 节点模式');
-  m.set('settings.nodeMode', '节点模式');
+  m.set('settings.gateway', '网关 / 节点接入');
+  m.set('settings.gatewayConnect', '接入网关');
+  m.set('settings.gatewayConnectDesc', '连接到 OpenClaw 网关进行 AI 对话');
+  m.set('settings.nodeMode', '节点接入');
   m.set('settings.nodeModeDesc', '连接到 OpenClaw 网关');
   m.set('settings.gatewayHost', '网关主机');
   m.set('settings.gatewayHostPlaceholder', '192.168.1.100 或主机名');
@@ -203,6 +232,12 @@ function buildZh(): Map<string, string> {
   m.set('settings.status', '状态');
   m.set('settings.connect', '连接');
   m.set('settings.disconnect', '断开');
+  m.set('settings.connected', '已连接');
+  m.set('settings.connecting', '连接中...');
+  m.set('settings.disconnected', '未连接');
+  m.set('settings.reconnecting', '重连中...');
+  m.set('settings.connectionError', '连接错误');
+  m.set('settings.pairingPending', '等待批准配对');
   m.set('settings.parallelSessions', '并行会话数');
   m.set('settings.parallelSessionsDesc', '⚠️ 增大此值会加快 Token 消耗速度');
   m.set('settings.caps', '本机能力');
@@ -302,8 +337,8 @@ function buildZh(): Map<string, string> {
   m.set('settings.emailTestFail', '连接失败：');
 
   // Settings tabs
-  m.set('settings.tabStandalone', '单机模式');
-  m.set('settings.tabNode', '节点模式');
+  m.set('settings.tabOperator', 'AI助理');
+  m.set('settings.tabNode', '节点接入');
   m.set('settings.tabService', '服务模式');
   m.set('settings.tabModel', '模型');
 
@@ -512,6 +547,12 @@ function buildEn(): Map<string, string> {
   // Custom provider & ASR
   m.set('settings.customProvider', 'Custom');
   m.set('settings.aiEngine', 'AI Engine');
+  m.set('settings.aiEngineDesc', 'ASR, Embedding, Intent Recognition');
+  m.set('settings.aiEngineGatewayHint', 'Gateway connected, using gateway models');
+  m.set('settings.aiEngineInheritHint', 'Uses API Key from AI Provider above');
+  m.set('settings.asrModel', 'ASR Model');
+  m.set('settings.asrModelPlaceholder', 'Empty = use gateway model');
+  m.set('settings.asrModelHint', 'Empty = gateway LLM, filled = dedicated ASR model');
   m.set('settings.asrMode', 'Speech Recognition');
   m.set('settings.asrModeDesc', 'Choose speech recognition method');
   m.set('settings.asrModeAuto', 'Auto');
@@ -561,6 +602,27 @@ function buildEn(): Map<string, string> {
   m.set('skills.countEnabled', ' enabled');
   m.set('skills.countTools', ' tools');
   m.set('skills.builtin', 'Built-in');
+
+  // ExperiencePage
+  m.set('experience.title', 'Experience');
+  m.set('experience.tabExperience', 'Experience');
+  m.set('experience.tabSkills', 'Skills');
+  m.set('experience.tabMemory', 'Memory');
+  m.set('experience.countExp', ' experiences');
+  m.set('experience.countSkill', ' skills');
+  m.set('experience.countMemory', ' memories');
+  m.set('experience.lastSync', 'Last sync');
+  m.set('experience.levelPublic', 'Public');
+  m.set('experience.levelSummary', 'Summary');
+  m.set('experience.levelPrivate', 'Private');
+  m.set('experience.empty', 'No experiences');
+  m.set('experience.emptyHint', 'Experiences will be learned during AI interactions');
+  m.set('experience.skills', 'Skills');
+  m.set('experience.memories', 'Memories');
+  m.set('experience.noSkills', 'No skills');
+  m.set('experience.noMemory', 'No memories');
+  m.set('experience.createdAt', 'Created');
+  m.set('experience.updatedAt', 'Updated');
 
   // MemoryPage
   m.set('memory.title', 'Memory');
@@ -628,6 +690,12 @@ function buildEn(): Map<string, string> {
   m.set('settings.status', 'Status');
   m.set('settings.connect', 'Connect');
   m.set('settings.disconnect', 'Disconnect');
+  m.set('settings.connected', 'Connected');
+  m.set('settings.connecting', 'Connecting...');
+  m.set('settings.disconnected', 'Disconnected');
+  m.set('settings.reconnecting', 'Reconnecting...');
+  m.set('settings.connectionError', 'Connection Error');
+  m.set('settings.pairingPending', 'Awaiting Pairing Approval');
   m.set('settings.parallelSessions', 'Parallel Sessions');
   m.set('settings.parallelSessionsDesc', '⚠️ Higher values increase token consumption rate');
   m.set('settings.caps', 'Node Capabilities');

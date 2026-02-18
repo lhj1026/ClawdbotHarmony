@@ -1,20 +1,46 @@
-// Experience page - view and manage experiences (skills + memory)
+// Experience page - unified view for experiences, skills, and memory
 import { router } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { ExperienceStorage } from '../service/ExperienceStorage';
 import { Experience, Skill, Memory, ShareLevel, getShareLevelIcon } from '../model/ExperiencePack';
+import { SkillsPage } from './SkillsPage';
+import { MemoryPage } from './MemoryPage';
+import { I18n } from '../common/I18n';
 
 @Entry
 @Component
 struct ExperienceRoutePage {
+  @State currentTab: number = 0;
   @State experiences: Experience[] = [];
   @State selectedExp: Experience | null = null;
   @State isLoading: boolean = true;
   @State lastSync: string = '从未';
+  @State @Watch('onLangChange') lang: string = 'zh';
   private storage: ExperienceStorage = ExperienceStorage.getInstance();
+  private langListener: (() => void) | undefined = undefined;
+  private tabTitles: string[] = ['经验包', '技能', '记忆'];
 
   aboutToAppear(): void {
     this.loadExperiences();
+    this.lang = I18n.lang;
+    this.langListener = () => { this.lang = I18n.lang; };
+    I18n.addListener(this.langListener);
+  }
+
+  aboutToDisappear(): void {
+    if (this.langListener) {
+      I18n.removeListener(this.langListener);
+      this.langListener = undefined;
+    }
+  }
+
+  onLangChange(): void {
+    // Update tab titles on language change
+    this.tabTitles = [
+      I18n.t('experience.tabExperience'),
+      I18n.t('experience.tabSkills'),
+      I18n.t('experience.tabMemory')
+    ];
   }
 
   private async loadExperiences(): Promise<void> {
@@ -33,32 +59,37 @@ struct ExperienceRoutePage {
 
   build() {
     Navigation() {
-      if (this.isLoading) {
-        Column() {
-          LoadingProgress()
-            .width(48)
-            .height(48)
-          Text('加载中...')
-            .fontSize(14)
-            .fontColor('#999999')
-            .margin({ top: 16 })
-        }
-        .width('100%')
-        .height('100%')
-        .justifyContent(FlexAlign.Center)
-      } else if (this.selectedExp) {
-        // 详情视图
+      if (this.selectedExp) {
+        // Experience detail view
         this.ExperienceDetail(this.selectedExp)
       } else {
-        // 列表视图
-        this.ExperienceList()
+        // Tab view
+        Tabs({ barPosition: BarPosition.Start, index: this.currentTab }) {
+          TabContent() {
+            this.ExperienceTab()
+          }
+          .tabBar(this.TabBarItem(0, '📚', this.tabTitles[0]))
+
+          TabContent() {
+            SkillsPage()
+          }
+          .tabBar(this.TabBarItem(1, '⚡', this.tabTitles[1]))
+
+          TabContent() {
+            MemoryPage({ isActive: this.currentTab === 2 })
+          }
+          .tabBar(this.TabBarItem(2, '🧠', this.tabTitles[2]))
+        }
+        .barMode(BarMode.Fixed)
+        .barWidth('100%')
+        .barHeight(56)
+        .onChange((index: number) => {
+          this.currentTab = index;
+        })
       }
     }
-    .title(this.selectedExp ? this.selectedExp.name : '经验')
+    .title(this.selectedExp ? this.selectedExp.name : I18n.t('experience.title'))
     .titleMode(NavigationTitleMode.Mini)
-    .menus(this.selectedExp ? [
-      { value: '返回', action: () => { this.selectedExp = null; } }
-    ] : [])
     .navBarPosition(NavBarPosition.Start)
     .mode(NavigationMode.Stack)
     .backButtonIcon($r('sys.media.ohos_ic_public_arrow_left'))
@@ -70,16 +101,51 @@ struct ExperienceRoutePage {
   }
 
   @Builder
+  TabBarItem(index: number, icon: string, title: string) {
+    Column() {
+      Text(icon)
+        .fontSize(20)
+      Text(title)
+        .fontSize(12)
+        .fontColor(this.currentTab === index ? '#D2691E' : '#999999')
+        .margin({ top: 2 })
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder
+  ExperienceTab() {
+    if (this.isLoading) {
+      Column() {
+        LoadingProgress()
+          .width(48)
+          .height(48)
+        Text(I18n.t('common.loading'))
+          .fontSize(14)
+          .fontColor('#999999')
+          .margin({ top: 16 })
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+    } else {
+      this.ExperienceList()
+    }
+  }
+
+  @Builder
   ExperienceList() {
     Column() {
-      // 统计
+      // Statistics
       Row() {
         Column() {
           Text(`${this.experiences.length}`)
             .fontSize(24)
             .fontWeight(FontWeight.Bold)
             .fontColor('#1A1A1A')
-          Text('条经验')
+          Text(I18n.t('experience.countExp'))
             .fontSize(12)
             .fontColor('#999999')
         }
@@ -90,7 +156,7 @@ struct ExperienceRoutePage {
             .fontSize(24)
             .fontWeight(FontWeight.Bold)
             .fontColor('#1A1A1A')
-          Text('个技能')
+          Text(I18n.t('experience.countSkill'))
             .fontSize(12)
             .fontColor('#999999')
         }
@@ -101,7 +167,7 @@ struct ExperienceRoutePage {
             .fontSize(24)
             .fontWeight(FontWeight.Bold)
             .fontColor('#1A1A1A')
-          Text('条记忆')
+          Text(I18n.t('experience.countMemory'))
             .fontSize(12)
             .fontColor('#999999')
         }
@@ -113,38 +179,38 @@ struct ExperienceRoutePage {
       .borderRadius(12)
       .margin({ left: 16, right: 16, top: 16 })
 
-      // 同步时间
-      Text(`上次同步: ${this.lastSync}`)
+      // Last sync time
+      Text(`${I18n.t('experience.lastSync')}: ${this.lastSync}`)
         .fontSize(12)
         .fontColor('#999999')
         .margin({ top: 8 })
 
-      // 权限图例
+      // Share level legend
       Row() {
-        Text('🟢公开')
+        Text('🟢' + I18n.t('experience.levelPublic'))
           .fontSize(11)
           .fontColor('#666666')
-        Text('🟡摘要')
+        Text('🟡' + I18n.t('experience.levelSummary'))
           .fontSize(11)
           .fontColor('#666666')
           .margin({ left: 12 })
-        Text('🔴私密')
+        Text('🔴' + I18n.t('experience.levelPrivate'))
           .fontSize(11)
           .fontColor('#666666')
           .margin({ left: 12 })
       }
       .margin({ top: 4, bottom: 16 })
 
-      // 经验列表
+      // Experience list
       if (this.experiences.length === 0) {
         Column() {
           Text('📚')
             .fontSize(48)
-          Text('暂无经验')
+          Text(I18n.t('experience.empty'))
             .fontSize(16)
             .fontColor('#999999')
             .margin({ top: 12 })
-          Text('经验会在与 AI 交互过程中自动学习')
+          Text(I18n.t('experience.emptyHint'))
             .fontSize(12)
             .fontColor('#CCCCCC')
             .margin({ top: 4 })
@@ -194,14 +260,14 @@ struct ExperienceRoutePage {
       }
 
       Row() {
-        Text(`${exp.skills.length} 技能`)
+        Text(`${exp.skills.length} ${I18n.t('experience.skills')}`)
           .fontSize(12)
           .fontColor('#999999')
         Text('·')
           .fontSize(12)
           .fontColor('#CCCCCC')
           .margin({ left: 8, right: 8 })
-        Text(`${exp.memory.length} 记忆`)
+        Text(`${exp.memory.length} ${I18n.t('experience.memories')}`)
           .fontSize(12)
           .fontColor('#999999')
         Blank()
@@ -227,7 +293,7 @@ struct ExperienceRoutePage {
   ExperienceDetail(exp: Experience) {
     Scroll() {
       Column() {
-        // 描述
+        // Description
         if (exp.description.length > 0) {
           Text(exp.description)
             .fontSize(14)
@@ -236,10 +302,10 @@ struct ExperienceRoutePage {
             .padding(16)
         }
 
-        // Skills 部分
-        this.SectionTitle('技能', exp.skills.length)
+        // Skills section
+        this.SectionTitle(I18n.t('experience.skills'), exp.skills.length)
         if (exp.skills.length === 0) {
-          Text('暂无技能')
+          Text(I18n.t('experience.noSkills'))
             .fontSize(13)
             .fontColor('#999999')
             .padding(16)
@@ -249,10 +315,10 @@ struct ExperienceRoutePage {
           })
         }
 
-        // Memory 部分
-        this.SectionTitle('记忆', exp.memory.length)
+        // Memory section
+        this.SectionTitle(I18n.t('experience.memories'), exp.memory.length)
         if (exp.memory.length === 0) {
-          Text('暂无记忆')
+          Text(I18n.t('experience.noMemory'))
             .fontSize(13)
             .fontColor('#999999')
             .padding(16)
@@ -269,12 +335,12 @@ struct ExperienceRoutePage {
           .margin({ left: 16, right: 16 })
         }
 
-        // 时间信息
+        // Time info
         Column() {
-          Text(`创建时间: ${this.formatTime(exp.createdAt)}`)
+          Text(`${I18n.t('experience.createdAt')}: ${this.formatTime(exp.createdAt)}`)
             .fontSize(12)
             .fontColor('#999999')
-          Text(`更新时间: ${this.formatTime(exp.updatedAt)}`)
+          Text(`${I18n.t('experience.updatedAt')}: ${this.formatTime(exp.updatedAt)}`)
             .fontSize(12)
             .fontColor('#999999')
             .margin({ top: 4 })

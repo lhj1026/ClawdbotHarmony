@@ -22,9 +22,9 @@ export class Constants {
   static readonly CRON_POLL_INTERVAL_MS: number = 60000;  // Power optimization: was 30s
 
   // Settings mode configuration
-  // To enable all modes, change to: ['standalone', 'node', 'service']
-  static readonly ENABLED_MODES: string[] = ['standalone', 'node'];
-  static readonly DEFAULT_MODE: string = 'node';
+  // To enable all modes, change to: ['operator', 'node', 'service']
+  static readonly ENABLED_MODES: string[] = ['operator', 'node'];
+  static readonly DEFAULT_MODE: string = 'operator';
 
   // Feishu Bot API
   static readonly FEISHU_TOKEN_URL: string = 'https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal/';

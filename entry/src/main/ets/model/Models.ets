@@ -223,7 +223,7 @@ export interface CronParseResult {
 
 export interface SettingsProfile {
   name: string;
-  mode: string;        // 'standalone' | 'node'
+  mode: string;        // 'operator' | 'node'
   data: string;        // JSON-serialized settings
   createdAt: number;
 }

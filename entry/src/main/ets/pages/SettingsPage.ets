@@ -52,7 +52,7 @@ export struct SettingsPage {
   @State intentMode: string = 'auto'; // 'auto' | 'local' | 'cloud'
   @State showKey: boolean = false;
   @State @Watch('onLangChange') lang: string = 'zh';
-  @State settingsTab: string = Constants.DEFAULT_MODE; // 'standalone' | 'node' | 'service'
+  @State settingsTab: string = Constants.DEFAULT_MODE; // 'operator' | 'node' | 'service'
 
   // Assistant customization
   @State assistantName: string = '';
@@ -90,7 +90,8 @@ export struct SettingsPage {
   @State emailTestStatus: string = '';
 
   // Gateway / Node Mode
-  @State gwEnabled: boolean = false;
+  @State gwEnabled: boolean = false;  // Node access toggle
+  @State operatorEnabled: boolean = false;  // Gateway connect toggle
   @State gwHost: string = '192.168.1.68';
   @State gwPort: string = '18789';
   @State gwUseTls: boolean = false;
@@ -98,6 +99,8 @@ export struct SettingsPage {
   @State gwPassword: string = '';
   @State gwStatusText: string = 'Offline';
   @State gwState: ConnectionState = ConnectionState.Disconnected;
+  @State operatorState: ConnectionState = ConnectionState.Disconnected;
+  @State nodeState: ConnectionState = ConnectionState.Disconnected;
 
   // Capability toggles
   @State capLocation: boolean = true;
@@ -108,6 +111,7 @@ export struct SettingsPage {
   @State capMicrophone: boolean = true;
   @State capSpeaker: boolean = true;
   @State capEmail: boolean = true;
+  @State aiEngineEnabled: boolean = false;  // AI Engine toggle (ASR/Embedding/Intent)
   @State unreadNotification: boolean = true;
   @State ttsAutoRead: boolean = false;
   @State autoMemoryInject: boolean = Constants.DEFAULT_AUTO_MEMORY_INJECT;
@@ -160,6 +164,9 @@ export struct SettingsPage {
       let wasConnected = this.gwState === ConnectionState.Connected;
       this.gwState = state;
       this.gwStatusText = text;
+      // Update individual session states
+      this.operatorState = NodeRuntime.getInstance().operatorConnectionState;
+      this.nodeState = NodeRuntime.getInstance().nodeConnectionState;
       // Load maxConcurrent when newly connected
       if (!wasConnected && state === ConnectionState.Connected) {
         this.loadMaxConcurrent();
@@ -185,6 +192,8 @@ export struct SettingsPage {
     // Sync current state
     this.gwState = NodeRuntime.getInstance().connectionState;
     this.gwStatusText = NodeRuntime.getInstance().statusText;
+    this.operatorState = NodeRuntime.getInstance().operatorConnectionState;
+    this.nodeState = NodeRuntime.getInstance().nodeConnectionState;
     // Sync current identity if already connected
     let currentIdentity = NodeRuntime.getInstance().agentIdentity;
     if (currentIdentity) {
@@ -504,7 +513,7 @@ export struct SettingsPage {
           .margin({ left: 16, right: 16 })
           .backgroundColor(Color.White)
           .borderRadius(12)
-        } else if (this.settingsTab === 'standalone' || !this.modesInclude('node')) {
+        } else if (this.settingsTab === 'operator' || !this.modesInclude('node')) {
           // Local assistant settings (editable) - only in standalone mode
           this.SectionTitle(I18n.t('settings.assistant'))
           Column() {
@@ -555,258 +564,26 @@ export struct SettingsPage {
           .borderRadius(12)
         }
 
-        // ---- Capabilities ----
-        this.SectionTitle(I18n.t('settings.caps'))
-        Column() {
-          this.CapToggle(I18n.t('settings.capLocation'), this.capLocation, (v: boolean) => { this.capLocation = v; })
-          this.CapToggle(I18n.t('settings.capCamera'), this.capCamera, (v: boolean) => { this.capCamera = v; })
-          this.CapToggle(I18n.t('settings.capCanvas'), this.capCanvas, (v: boolean) => { this.capCanvas = v; })
-          this.CapToggle(I18n.t('settings.capScreen'), this.capScreen, (v: boolean) => { this.capScreen = v; })
-          this.CapToggle(I18n.t('settings.capNotification'), this.capNotification, (v: boolean) => { this.capNotification = v; })
-          this.CapToggle(I18n.t('settings.capMicrophone'), this.capMicrophone, (v: boolean) => { this.capMicrophone = v; })
-          this.CapToggle(I18n.t('settings.capSpeaker'), this.capSpeaker, (v: boolean) => { this.capSpeaker = v; })
-          this.CapToggle(I18n.t('settings.capEmail'), this.capEmail, (v: boolean) => { this.capEmail = v; })
-
-          Divider().margin({ top: 10, bottom: 10 }).color('#F0F0F0')
-          Row() {
-            Column({ space: 2 }) {
-              Text(I18n.t('settings.unreadNotification'))
-                .fontSize(13)
-                .fontColor('#1A1A1A')
-              Text(I18n.t('settings.unreadNotificationDesc'))
-                .fontSize(11)
-                .fontColor('#999999')
-            }
-            .layoutWeight(1)
-            .alignItems(HorizontalAlign.Start)
-            Toggle({ type: ToggleType.Switch, isOn: this.unreadNotification })
-              .selectedColor('#D2691E')
-              .onChange((v: boolean) => {
-                this.unreadNotification = v;
-                NodeRuntime.getInstance().setUnreadNotificationEnabled(v);
-              })
-          }
-          .width('100%')
-
-          Row() {
-            Column({ space: 2 }) {
-              Text(I18n.t('settings.ttsAutoRead'))
-                .fontSize(13)
-                .fontColor('#1A1A1A')
-              Text(I18n.t('settings.ttsAutoReadDesc'))
-                .fontSize(11)
-                .fontColor('#999999')
-            }
-            .layoutWeight(1)
-            .alignItems(HorizontalAlign.Start)
-            Toggle({ type: ToggleType.Switch, isOn: this.ttsAutoRead })
-              .selectedColor('#D2691E')
-              .onChange((v: boolean) => { this.ttsAutoRead = v; })
-          }
-          .width('100%')
-          .height(50)
-
-          Row() {
-            Column({ space: 2 }) {
-              Text(I18n.t('settings.autoMemoryInject'))
-                .fontSize(13)
-                .fontColor('#1A1A1A')
-              Text(I18n.t('settings.autoMemoryInjectDesc'))
-                .fontSize(11)
-                .fontColor('#999999')
-            }
-            .layoutWeight(1)
-            .alignItems(HorizontalAlign.Start)
-            Toggle({ type: ToggleType.Switch, isOn: this.autoMemoryInject })
-              .selectedColor('#D2691E')
-              .onChange((v: boolean) => { this.autoMemoryInject = v; })
-          }
-          .width('100%')
-          .height(50)
-        }
-        .width('100%')
-        .padding(16)
-        .margin({ left: 16, right: 16 })
-        .backgroundColor(Color.White)
-        .borderRadius(12)
-
-        // ---- Email / IMAP ----
-        this.SectionTitle(I18n.t('settings.email'))
-        Column() {
-          Row() {
-            Column({ space: 2 }) {
-              Text(I18n.t('settings.emailEnabled'))
-                .fontSize(14)
-                .fontColor('#1A1A1A')
-              Text(I18n.t('settings.emailEnabledDesc'))
-                .fontSize(11)
-                .fontColor('#999999')
-            }
-            .layoutWeight(1)
-            .alignItems(HorizontalAlign.Start)
-
-            Toggle({ type: ToggleType.Switch, isOn: this.emailEnabled })
-              .selectedColor('#D2691E')
-              .onChange((isOn: boolean) => { this.emailEnabled = isOn; })
-          }
-          .width('100%')
-
-          if (this.emailEnabled) {
-            Divider().margin({ top: 14, bottom: 14 }).color('#F0F0F0')
-
-            Text(I18n.t('settings.imapHost'))
-              .fontSize(14)
-              .fontColor('#1A1A1A')
-              .width('100%')
-            TextInput({ text: this.imapHost, placeholder: 'imap.gmail.com' })
-              .height(40)
-              .backgroundColor('#F5F5F5')
-              .borderRadius(8)
-              .margin({ top: 6 })
-              .onChange((v: string) => { this.imapHost = v; })
-
-            Divider().margin({ top: 14, bottom: 14 }).color('#F0F0F0')
-
-            Row() {
-              Text(I18n.t('settings.imapPort'))
-                .fontSize(14)
-                .fontColor('#1A1A1A')
-                .layoutWeight(1)
-              TextInput({ text: this.imapPort, placeholder: '993' })
-                .width(100)
-                .height(40)
-                .backgroundColor('#F5F5F5')
-                .borderRadius(8)
-                .type(InputType.Number)
-                .onChange((v: string) => { this.imapPort = v; })
-            }
-            .width('100%')
-
-            Divider().margin({ top: 14, bottom: 14 }).color('#F0F0F0')
-
-            Text(I18n.t('settings.smtpHost'))
-              .fontSize(14)
-              .fontColor('#1A1A1A')
-              .width('100%')
-            TextInput({ text: this.smtpHost, placeholder: 'smtp.gmail.com' })
-              .height(40)
-              .backgroundColor('#F5F5F5')
-              .borderRadius(8)
-              .margin({ top: 6 })
-              .onChange((v: string) => { this.smtpHost = v; })
-
-            Divider().margin({ top: 14, bottom: 14 }).color('#F0F0F0')
-
-            Row() {
-              Text(I18n.t('settings.smtpPort'))
-                .fontSize(14)
-                .fontColor('#1A1A1A')
-                .layoutWeight(1)
-              TextInput({ text: this.smtpPort, placeholder: '465' })
-                .width(100)
-                .height(40)
-                .backgroundColor('#F5F5F5')
-                .borderRadius(8)
-                .type(InputType.Number)
-                .onChange((v: string) => { this.smtpPort = v; })
-            }
-            .width('100%')
-
-            Divider().margin({ top: 14, bottom: 14 }).color('#F0F0F0')
-
-            Text(I18n.t('settings.imapUser'))
-              .fontSize(14)
-              .fontColor('#1A1A1A')
-              .width('100%')
-            TextInput({ text: this.imapUser, placeholder: 'user@gmail.com' })
-              .height(40)
-              .backgroundColor('#F5F5F5')
-              .borderRadius(8)
-              .margin({ top: 6 })
-              .onChange((v: string) => { this.imapUser = v; })
-
-            Divider().margin({ top: 14, bottom: 14 }).color('#F0F0F0')
-
-            Text(I18n.t('settings.imapPass'))
-              .fontSize(14)
-              .fontColor('#1A1A1A')
-              .width('100%')
-            Row() {
-              TextInput({ text: this.imapPass, placeholder: '••••••••' })
-                .layoutWeight(1)
-                .height(40)
-                .backgroundColor('#F5F5F5')
-                .borderRadius(8)
-                .type(this.showImapPass ? InputType.Normal : InputType.Password)
-                .onChange((v: string) => { this.imapPass = v; })
-              Button(this.showImapPass ? I18n.t('settings.hide') : I18n.t('settings.show'))
-                .fontSize(12)
-                .height(34)
-                .backgroundColor('#F0F0F0')
-                .fontColor('#666666')
-                .borderRadius(8)
-                .margin({ left: 8 })
-                .onClick(() => { this.showImapPass = !this.showImapPass; })
-            }
-            .margin({ top: 6 })
-            .width('100%')
-
-            Divider().margin({ top: 14, bottom: 14 }).color('#F0F0F0')
-
-            Button(this.emailTestStatus === I18n.t('settings.emailTesting')
-              ? I18n.t('settings.emailTesting')
-              : I18n.t('settings.emailTest'))
-              .width('100%')
-              .height(44)
-              .backgroundColor('#4CAF50')
-              .fontColor(Color.White)
-              .fontSize(15)
-              .fontWeight(FontWeight.Medium)
-              .borderRadius(10)
-              .onClick(() => { this.testEmailConnection(); })
-
-            if (this.emailTestStatus.length > 0) {
-              Text(this.emailTestStatus)
-                .fontSize(12)
-                .fontColor(this.emailTestStatus.includes(I18n.t('settings.emailTestOk')) ? '#4CAF50' : '#D32F2F')
-                .margin({ top: 8 })
-                .width('100%')
-            }
-          }
-        }
-        .width('100%')
-        .padding(16)
-        .margin({ left: 16, right: 16 })
-        .backgroundColor(Color.White)
-        .borderRadius(12)
-
         // =============== Tab Bar (only when multiple modes enabled) ===============
         if (this.showTabs()) {
           Row({ space: 0 }) {
-            if (this.modesInclude('standalone')) {
-              Text(I18n.t('settings.tabStandalone'))
+            if (this.modesInclude('operator')) {
+              Text(I18n.t('settings.tabOperator'))
                 .fontSize(14)
-                .fontWeight(this.settingsTab === 'standalone' ? FontWeight.Bold : FontWeight.Normal)
-                .fontColor(this.settingsTab === 'standalone' ? '#D2691E' : '#999999')
+                .fontWeight(this.settingsTab === 'operator' ? FontWeight.Bold : FontWeight.Normal)
+                .fontColor(this.settingsTab === 'operator' ? '#D2691E' : '#999999')
                 .layoutWeight(1)
                 .textAlign(TextAlign.Center)
                 .padding({ top: 12, bottom: 12 })
-                .borderWidth({ bottom: this.settingsTab === 'standalone' ? 2 : 0 })
+                .borderWidth({ bottom: this.settingsTab === 'operator' ? 2 : 0 })
                 .borderColor('#D2691E')
-                .onClick(() => { this.settingsTab = 'standalone'; })
+                .onClick(() => { this.settingsTab = 'operator'; })
             }
-            if (this.modesInclude('node')) {
-              Text(I18n.t('settings.tabNode'))
-                .fontSize(14)
-                .fontWeight(this.settingsTab === 'node' ? FontWeight.Bold : FontWeight.Normal)
-                .fontColor(this.settingsTab === 'node' ? '#D2691E' : '#999999')
-                .layoutWeight(1)
-                .textAlign(TextAlign.Center)
-                .padding({ top: 12, bottom: 12 })
-                .borderWidth({ bottom: this.settingsTab === 'node' ? 2 : 0 })
-                .borderColor('#D2691E')
-                .onClick(() => { this.settingsTab = 'node'; })
-            }
+            // Node tab removed - gateway access is now part of standalone/AI助理
+            // if (this.modesInclude('node')) {
+            //   Text(I18n.t('settings.tabNode'))
+            //     ...
+            // }
             if (this.modesInclude('service')) {
               Text(I18n.t('settings.tabService'))
                 .fontSize(14)
@@ -826,7 +603,7 @@ export struct SettingsPage {
           .borderRadius({ topLeft: 12, topRight: 12 })
 
           // ---- Soul / Personality (standalone tab only, multi-mode) ----
-          if (this.settingsTab === 'standalone' && this.modesInclude('standalone')) {
+          if (this.settingsTab === 'operator' && this.modesInclude('operator')) {
             this.SectionTitle(I18n.t('settings.soul'))
             Column() {
               Text(I18n.t('settings.soulDesc'))
@@ -869,7 +646,7 @@ export struct SettingsPage {
         }
 
         // =============== Standalone Tab — AI Provider, Generation, ASR ===============
-        if (this.settingsTab === 'standalone' && this.modesInclude('standalone')) {
+        if (this.settingsTab === 'operator' && this.modesInclude('operator')) {
           // ---- AI Provider ----
           this.SectionTitle(I18n.t('settings.aiProvider'))
           Column() {
@@ -919,7 +696,10 @@ export struct SettingsPage {
                 .backgroundColor('#F5F5F5')
                 .borderRadius(8)
                 .type(this.showKey ? InputType.Normal : InputType.Password)
-                .onChange((v: string) => { this.apiKey = v; })
+                .onChange((v: string) => {
+                  this.apiKey = v;
+                  this.savedKeys[this.provider] = v;  // Sync to savedKeys immediately
+                })
 
               Button(this.showKey ? I18n.t('settings.hide') : I18n.t('settings.show'))
                 .fontSize(12)
@@ -944,7 +724,10 @@ export struct SettingsPage {
               .backgroundColor('#F5F5F5')
               .borderRadius(8)
               .margin({ top: 6 })
-              .onChange((v: string) => { this.model = v; })
+              .onChange((v: string) => {
+                this.model = v;
+                this.savedModels[this.provider] = v;  // Sync immediately
+              })
 
             Divider().margin({ top: 14, bottom: 14 }).color('#F0F0F0')
             Text(I18n.t('settings.baseUrl'))
@@ -974,7 +757,130 @@ export struct SettingsPage {
               .backgroundColor('#F5F5F5')
               .borderRadius(8)
               .margin({ top: 6 })
-              .onChange((v: string) => { this.baseUrl = v; })
+              .onChange((v: string) => {
+                this.baseUrl = v;
+                this.savedUrls[this.provider] = v;  // Sync immediately
+              })
+
+            // ---- AI Engine Toggle ----
+            Divider().margin({ top: 14, bottom: 14 }).color('#F0F0F0')
+            Row() {
+              Column({ space: 2 }) {
+                Text(I18n.t('settings.aiEngine'))
+                  .fontSize(14)
+                  .fontColor('#1A1A1A')
+                Text(I18n.t('settings.aiEngineDesc'))
+                  .fontSize(11)
+                  .fontColor('#999999')
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Start)
+
+              Toggle({ type: ToggleType.Switch, isOn: this.aiEngineEnabled })
+                .selectedColor('#D2691E')
+                .onChange((isOn: boolean) => { this.aiEngineEnabled = isOn; })
+            }
+            .width('100%')
+
+            // AI Engine config (when enabled)
+            if (this.aiEngineEnabled) {
+              // Hint: if gateway connected, use gateway models
+              if (this.operatorEnabled) {
+                Row() {
+                  Text('💡')
+                    .fontSize(14)
+                  Text(I18n.t('settings.aiEngineGatewayHint'))
+                    .fontSize(12)
+                    .fontColor('#666666')
+                    .margin({ left: 6 })
+                }
+                .width('100%')
+                .padding(10)
+                .backgroundColor('#FFF8E1')
+                .borderRadius(8)
+                .margin({ top: 12 })
+              }
+
+              // --- ASR ---
+              Divider().margin({ top: 12, bottom: 12 }).color('#F0F0F0')
+              Text(I18n.t('settings.asrMode'))
+                .fontSize(13).fontColor('#1A1A1A').fontWeight(FontWeight.Medium).width('100%')
+
+              Row({ space: 0 }) {
+                ForEach(['auto', 'local', 'cloud'], (mode: string) => {
+                  Text(mode === 'auto' ? I18n.t('settings.asrModeAuto') :
+                    mode === 'local' ? I18n.t('settings.asrModeLocal') : I18n.t('settings.asrModeCloud'))
+                    .fontSize(11)
+                    .fontColor(this.asrMode === mode ? Color.White : '#666666')
+                    .backgroundColor(this.asrMode === mode ? '#D2691E' : '#F0F0F0')
+                    .borderRadius(6)
+                    .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+                    .layoutWeight(1).textAlign(TextAlign.Center)
+                    .onClick(() => { this.asrMode = mode; })
+                })
+              }.width('100%').margin({ top: 6 })
+
+              Text(this.asrMode === 'auto' ? I18n.t('settings.asrModeAutoDesc') :
+                this.asrMode === 'local' ? I18n.t('settings.asrModeLocalDesc') : I18n.t('settings.asrModeCloudDesc'))
+                .fontSize(10).fontColor('#999999').margin({ top: 4 }).width('100%')
+
+              // ASR model (when cloud mode - available even with gateway for non-multimodal models)
+              if (this.asrMode === 'auto' || this.asrMode === 'cloud') {
+                Text(I18n.t('settings.asrModel'))
+                  .fontSize(11).fontColor('#666666').margin({ top: 8 }).width('100%')
+                TextInput({ text: this.asrModel, placeholder: I18n.t('settings.asrModelPlaceholder') })
+                  .height(32).fontSize(12).backgroundColor('#F5F5F5').borderRadius(6).margin({ top: 4 })
+                  .onChange((v: string) => { this.asrModel = v; })
+                Text(I18n.t('settings.asrModelHint'))
+                  .fontSize(10).fontColor('#999999').margin({ top: 2 }).width('100%')
+              }
+
+              // --- Embedding ---
+              Divider().margin({ top: 12, bottom: 12 }).color('#F0F0F0')
+              Text(I18n.t('settings.embeddingMode'))
+                .fontSize(13).fontColor('#1A1A1A').fontWeight(FontWeight.Medium).width('100%')
+
+              Row({ space: 0 }) {
+                ForEach(['auto', 'local', 'cloud'], (mode: string) => {
+                  Text(mode === 'auto' ? I18n.t('settings.embeddingModeAuto') :
+                    mode === 'local' ? I18n.t('settings.embeddingModeLocal') : I18n.t('settings.embeddingModeCloud'))
+                    .fontSize(11)
+                    .fontColor(this.embeddingMode === mode ? Color.White : '#666666')
+                    .backgroundColor(this.embeddingMode === mode ? '#D2691E' : '#F0F0F0')
+                    .borderRadius(6)
+                    .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+                    .layoutWeight(1).textAlign(TextAlign.Center)
+                    .onClick(() => { this.embeddingMode = mode; })
+                })
+              }.width('100%').margin({ top: 6 })
+
+              Text(this.embeddingMode === 'auto' ? I18n.t('settings.embeddingModeAutoDesc') :
+                this.embeddingMode === 'local' ? I18n.t('settings.embeddingModeLocalDesc') : I18n.t('settings.embeddingModeCloudDesc'))
+                .fontSize(10).fontColor('#999999').margin({ top: 4 }).width('100%')
+
+              // --- Intent ---
+              Divider().margin({ top: 12, bottom: 12 }).color('#F0F0F0')
+              Text(I18n.t('settings.intentMode'))
+                .fontSize(13).fontColor('#1A1A1A').fontWeight(FontWeight.Medium).width('100%')
+
+              Row({ space: 0 }) {
+                ForEach(['auto', 'local', 'cloud'], (mode: string) => {
+                  Text(mode === 'auto' ? I18n.t('settings.intentModeAuto') :
+                    mode === 'local' ? I18n.t('settings.intentModeLocal') : I18n.t('settings.intentModeCloud'))
+                    .fontSize(11)
+                    .fontColor(this.intentMode === mode ? Color.White : '#666666')
+                    .backgroundColor(this.intentMode === mode ? '#D2691E' : '#F0F0F0')
+                    .borderRadius(6)
+                    .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+                    .layoutWeight(1).textAlign(TextAlign.Center)
+                    .onClick(() => { this.intentMode = mode; })
+                })
+              }.width('100%').margin({ top: 6 })
+
+              Text(this.intentMode === 'auto' ? I18n.t('settings.intentModeAutoDesc') :
+                this.intentMode === 'local' ? I18n.t('settings.intentModeLocalDesc') : I18n.t('settings.intentModeCloudDesc'))
+                .fontSize(10).fontColor('#999999').margin({ top: 4 }).width('100%')
+            }
           }
           .width('100%')
           .padding(16)
@@ -1006,43 +912,38 @@ export struct SettingsPage {
           .margin({ left: 16, right: 16 })
           .backgroundColor(Color.White)
           .borderRadius(12)
-
-          // ---- AI Engine: ASR / Embedding / Intent ----
-          this.AIEngineSection()
-
         }
 
-        // =============== Node Tab (multi-mode only, gateway with enable toggle) ===============
-        if (this.settingsTab === 'node' && this.showTabs()) {
-          // ---- Gateway / Node Mode ----
-          this.SectionTitle(I18n.t('settings.gateway'))
+        // =============== Gateway Connection (接入网关) ===============
+        if (this.settingsTab === 'operator' || !this.showTabs()) {
+          // ---- Gateway Connection ----
+          this.SectionTitle(I18n.t('settings.gatewayConnect'))
           Column() {
             Row() {
               Column({ space: 2 }) {
-                Text(I18n.t('settings.nodeMode'))
+                Text(I18n.t('settings.gatewayConnect'))
                   .fontSize(14)
                   .fontColor('#1A1A1A')
-                Text(I18n.t('settings.nodeModeDesc'))
+                Text(I18n.t('settings.gatewayConnectDesc'))
                   .fontSize(11)
                   .fontColor('#999999')
               }
               .layoutWeight(1)
               .alignItems(HorizontalAlign.Start)
 
-              Toggle({ type: ToggleType.Switch, isOn: this.gwEnabled })
+              Toggle({ type: ToggleType.Switch, isOn: this.operatorEnabled })
                 .selectedColor('#D2691E')
                 .onChange((isOn: boolean) => {
-                  this.gwEnabled = isOn;
+                  this.operatorEnabled = isOn;
                   if (!isOn) {
-                    NodeRuntime.getInstance().disconnect();
+                    NodeRuntime.getInstance().disconnectOperator();
                   }
                 })
             }
             .width('100%')
 
-            if (this.gwEnabled) {
+            if (this.operatorEnabled) {
               Divider().margin({ top: 14, bottom: 14 }).color('#F0F0F0')
-
               Text(I18n.t('settings.gatewayHost'))
                 .fontSize(14)
                 .fontColor('#1A1A1A')
@@ -1125,26 +1026,26 @@ export struct SettingsPage {
                   .fontColor('#1A1A1A')
                   .layoutWeight(1)
                 Circle({ width: 10, height: 10 })
-                  .fill(this.gwStateColor())
+                  .fill(this.operatorStateColor())
                   .margin({ right: 6 })
-                Text(this.gwStatusText)
+                Text(this.operatorStateText())
                   .fontSize(13)
-                  .fontColor(this.gwStateColor())
+                  .fontColor(this.operatorStateColor())
                   .fontWeight(FontWeight.Medium)
               }
               .width('100%')
               .height(40)
 
-              Button(this.gwIsConnected() ? I18n.t('settings.disconnect') : I18n.t('settings.connect'))
+              Button(this.operatorIsConnected() ? I18n.t('settings.disconnect') : I18n.t('settings.connect'))
                 .width('100%')
                 .height(44)
-                .backgroundColor(this.gwIsConnected() ? '#D32F2F' : '#4CAF50')
+                .backgroundColor(this.operatorIsConnected() ? '#D32F2F' : '#4CAF50')
                 .fontColor(Color.White)
                 .fontSize(15)
                 .fontWeight(FontWeight.Medium)
                 .borderRadius(10)
                 .margin({ top: 8 })
-                .onClick(() => { this.toggleGateway(); })
+                .onClick(() => { this.toggleOperatorConnection(); })
             }
           }
           .width('100%')
@@ -1153,8 +1054,191 @@ export struct SettingsPage {
           .backgroundColor(Color.White)
           .borderRadius(12)
 
-          // ---- AI Engine: ASR / Embedding / Intent ----
-          this.AIEngineSection()
+          // ---- Node Access / 节点接入 (separate section) ----
+          this.SectionTitle(I18n.t('settings.nodeMode'))
+          Column() {
+            Row() {
+              Column({ space: 2 }) {
+                Text(I18n.t('settings.nodeMode'))
+                  .fontSize(14)
+                  .fontColor('#1A1A1A')
+                Text(I18n.t('settings.nodeModeDesc'))
+                  .fontSize(11)
+                  .fontColor('#999999')
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Start)
+
+              Toggle({ type: ToggleType.Switch, isOn: this.gwEnabled })
+                .selectedColor('#D2691E')
+                .onChange((isOn: boolean) => {
+                  this.gwEnabled = isOn;
+                  if (!isOn) {
+                    NodeRuntime.getInstance().disconnectNode();
+                  }
+                })
+            }
+            .width('100%')
+
+            // Capabilities (shown when node access enabled)
+            if (this.gwEnabled) {
+              Divider().margin({ top: 14, bottom: 14 }).color('#F0F0F0')
+              Text(I18n.t('settings.caps'))
+                .fontSize(14)
+                .fontWeight(FontWeight.Bold)
+                .fontColor('#1A1A1A')
+                .width('100%')
+                .margin({ bottom: 10 })
+
+              this.CapToggle(I18n.t('settings.capLocation'), this.capLocation, (v: boolean) => { this.capLocation = v; })
+              this.CapToggle(I18n.t('settings.capCamera'), this.capCamera, (v: boolean) => { this.capCamera = v; })
+              this.CapToggle(I18n.t('settings.capCanvas'), this.capCanvas, (v: boolean) => { this.capCanvas = v; })
+              this.CapToggle(I18n.t('settings.capScreen'), this.capScreen, (v: boolean) => { this.capScreen = v; })
+              this.CapToggle(I18n.t('settings.capNotification'), this.capNotification, (v: boolean) => { this.capNotification = v; })
+              this.CapToggle(I18n.t('settings.capMicrophone'), this.capMicrophone, (v: boolean) => { this.capMicrophone = v; })
+              this.CapToggle(I18n.t('settings.capSpeaker'), this.capSpeaker, (v: boolean) => { this.capSpeaker = v; })
+              // Email capability with inline config
+              Row() {
+                Column({ space: 2 }) {
+                  Text(I18n.t('settings.capEmail'))
+                    .fontSize(13)
+                    .fontColor('#1A1A1A')
+                }
+                .layoutWeight(1)
+                .alignItems(HorizontalAlign.Start)
+                Toggle({ type: ToggleType.Switch, isOn: this.capEmail })
+                  .selectedColor('#D2691E')
+                  .onChange((v: boolean) => { this.capEmail = v; })
+              }
+              .width('100%')
+              .height(40)
+
+              // Email config (shown when capEmail enabled)
+              if (this.capEmail) {
+                Divider().margin({ top: 10, bottom: 10 }).color('#F0F0F0')
+                Text(I18n.t('settings.imapHost'))
+                  .fontSize(12)
+                  .fontColor('#666666')
+                  .width('100%')
+                TextInput({ text: this.imapHost, placeholder: 'imap.gmail.com' })
+                  .height(36)
+                  .backgroundColor('#F5F5F5')
+                  .borderRadius(6)
+                  .fontSize(13)
+                  .margin({ top: 4 })
+                  .onChange((v: string) => { this.imapHost = v; })
+
+                Row() {
+                  Text(I18n.t('settings.imapPort'))
+                    .fontSize(12)
+                    .fontColor('#666666')
+                    .layoutWeight(1)
+                  TextInput({ text: this.imapPort, placeholder: '993' })
+                    .width(80)
+                    .height(36)
+                    .backgroundColor('#F5F5F5')
+                    .borderRadius(6)
+                    .fontSize(13)
+                    .type(InputType.Number)
+                    .onChange((v: string) => { this.imapPort = v; })
+                }
+                .width('100%')
+                .margin({ top: 8 })
+
+                Text(I18n.t('settings.smtpHost'))
+                  .fontSize(12)
+                  .fontColor('#666666')
+                  .width('100%')
+                  .margin({ top: 8 })
+                TextInput({ text: this.smtpHost, placeholder: 'smtp.gmail.com' })
+                  .height(36)
+                  .backgroundColor('#F5F5F5')
+                  .borderRadius(6)
+                  .fontSize(13)
+                  .margin({ top: 4 })
+                  .onChange((v: string) => { this.smtpHost = v; })
+
+                Row() {
+                  Text(I18n.t('settings.smtpPort'))
+                    .fontSize(12)
+                    .fontColor('#666666')
+                    .layoutWeight(1)
+                  TextInput({ text: this.smtpPort, placeholder: '465' })
+                    .width(80)
+                    .height(36)
+                    .backgroundColor('#F5F5F5')
+                    .borderRadius(6)
+                    .fontSize(13)
+                    .type(InputType.Number)
+                    .onChange((v: string) => { this.smtpPort = v; })
+                }
+                .width('100%')
+                .margin({ top: 8 })
+
+                Text(I18n.t('settings.imapUser'))
+                  .fontSize(12)
+                  .fontColor('#666666')
+                  .width('100%')
+                  .margin({ top: 8 })
+                TextInput({ text: this.imapUser, placeholder: 'user@gmail.com' })
+                  .height(36)
+                  .backgroundColor('#F5F5F5')
+                  .borderRadius(6)
+                  .fontSize(13)
+                  .margin({ top: 4 })
+                  .onChange((v: string) => { this.imapUser = v; })
+
+                Text(I18n.t('settings.imapPass'))
+                  .fontSize(12)
+                  .fontColor('#666666')
+                  .width('100%')
+                  .margin({ top: 8 })
+                TextInput({ text: this.imapPass, placeholder: '••••••••' })
+                  .height(36)
+                  .backgroundColor('#F5F5F5')
+                  .borderRadius(6)
+                  .fontSize(13)
+                  .type(InputType.Password)
+                  .margin({ top: 4 })
+                  .onChange((v: string) => { this.imapPass = v; })
+              }
+
+              // Node status indicator
+              Divider().margin({ top: 14, bottom: 14 }).color('#F0F0F0')
+              Row() {
+                Text(I18n.t('settings.status'))
+                  .fontSize(14)
+                  .fontColor('#1A1A1A')
+                  .layoutWeight(1)
+                Circle({ width: 10, height: 10 })
+                  .fill(this.nodeStateColor())
+                  .margin({ right: 6 })
+                Text(this.nodeStateText())
+                  .fontSize(13)
+                  .fontColor(this.nodeStateColor())
+                  .fontWeight(FontWeight.Medium)
+              }
+              .width('100%')
+              .height(40)
+
+              // Node connection button
+              Button(this.nodeIsConnected() ? I18n.t('settings.disconnect') : I18n.t('settings.connect'))
+                .width('100%')
+                .height(44)
+                .backgroundColor(this.nodeIsConnected() ? '#D32F2F' : '#4CAF50')
+                .fontColor(Color.White)
+                .fontSize(15)
+                .fontWeight(FontWeight.Medium)
+                .borderRadius(10)
+                .margin({ top: 8 })
+                .onClick(() => { this.toggleNodeConnection(); })
+            }
+          }
+          .width('100%')
+          .padding(16)
+          .margin({ left: 16, right: 16 })
+          .backgroundColor(Color.White)
+          .borderRadius(12)
         }
 
         // =============== Service Tab ===============
@@ -1381,7 +1465,7 @@ export struct SettingsPage {
         Column() {
           this.InfoRow(I18n.t('settings.appName'), 'ClawdBot')
           Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
-          this.InfoRow(I18n.t('settings.version'), '2.25.0')
+          this.InfoRow(I18n.t('settings.version'), '2.29.0')
           Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
           this.InfoRow(I18n.t('settings.developer'), 'OpenClaw')
           Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
@@ -1639,136 +1723,6 @@ export struct SettingsPage {
   }
 
   @Builder
-  AIEngineSection() {
-    Column() {
-      this.SectionTitle(I18n.t('settings.aiEngine'))
-      Column() {
-        // --- ASR ---
-        Row() {
-          Text(I18n.t('settings.asrMode'))
-            .fontSize(14).fontColor('#1A1A1A').fontWeight(FontWeight.Medium)
-          Text(I18n.t('settings.asrModeDesc'))
-            .fontSize(11).fontColor('#999999').margin({ left: 8 })
-        }.width('100%')
-
-        Row({ space: 0 }) {
-          ForEach(['auto', 'local', 'cloud'], (mode: string) => {
-            Text(mode === 'auto' ? I18n.t('settings.asrModeAuto') :
-              mode === 'local' ? I18n.t('settings.asrModeLocal') : I18n.t('settings.asrModeCloud'))
-              .fontSize(12)
-              .fontColor(this.asrMode === mode ? Color.White : '#666666')
-              .backgroundColor(this.asrMode === mode ? '#D2691E' : '#F0F0F0')
-              .borderRadius(8)
-              .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-              .layoutWeight(1).textAlign(TextAlign.Center)
-              .onClick(() => { this.asrMode = mode; })
-          })
-        }.width('100%').margin({ top: 8 })
-
-        Text(this.asrMode === 'auto' ? I18n.t('settings.asrModeAutoDesc') :
-          this.asrMode === 'local' ? I18n.t('settings.asrModeLocalDesc') : I18n.t('settings.asrModeCloudDesc'))
-          .fontSize(11).fontColor('#999999').margin({ top: 4 }).width('100%')
-
-        // ASR cloud API fields (not needed in node mode — gateway handles cloud ASR)
-        if (this.settingsTab !== 'node' && (this.asrMode === 'auto' || this.asrMode === 'cloud')) {
-          Divider().margin({ top: 10, bottom: 10 }).color('#F0F0F0')
-          TextInput({ text: this.asrApiUrl, placeholder: 'API URL' })
-            .height(36).fontSize(13).backgroundColor('#F5F5F5').borderRadius(8)
-            .onChange((v: string) => { this.asrApiUrl = v; })
-          Row() {
-            TextInput({ text: this.asrApiKey, placeholder: 'API Key' })
-              .layoutWeight(1).height(36).fontSize(13).backgroundColor('#F5F5F5').borderRadius(8)
-              .type(this.showAsrKey ? InputType.Normal : InputType.Password)
-              .onChange((v: string) => { this.asrApiKey = v; })
-            Button(this.showAsrKey ? I18n.t('settings.hide') : I18n.t('settings.show'))
-              .fontSize(11).height(30).backgroundColor('#F0F0F0').fontColor('#666666')
-              .borderRadius(8).margin({ left: 6 })
-              .onClick(() => { this.showAsrKey = !this.showAsrKey; })
-          }.margin({ top: 6 }).width('100%')
-          TextInput({ text: this.asrModel, placeholder: 'Model' })
-            .height(36).fontSize(13).backgroundColor('#F5F5F5').borderRadius(8).margin({ top: 6 })
-            .onChange((v: string) => { this.asrModel = v; })
-        }
-
-        // --- Embedding ---
-        Divider().margin({ top: 14, bottom: 14 }).color('#E8E8E8')
-
-        Row() {
-          Text(I18n.t('settings.embeddingMode'))
-            .fontSize(14).fontColor('#1A1A1A').fontWeight(FontWeight.Medium)
-          Text(I18n.t('settings.embeddingModeDesc'))
-            .fontSize(11).fontColor('#999999').margin({ left: 8 })
-        }.width('100%')
-
-        Row({ space: 0 }) {
-          ForEach(['auto', 'local', 'cloud'], (mode: string) => {
-            Text(mode === 'auto' ? I18n.t('settings.embeddingModeAuto') :
-              mode === 'local' ? I18n.t('settings.embeddingModeLocal') : I18n.t('settings.embeddingModeCloud'))
-              .fontSize(12)
-              .fontColor(this.embeddingMode === mode ? Color.White : '#666666')
-              .backgroundColor(this.embeddingMode === mode ? '#D2691E' : '#F0F0F0')
-              .borderRadius(8)
-              .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-              .layoutWeight(1).textAlign(TextAlign.Center)
-              .onClick(() => { this.embeddingMode = mode; })
-          })
-        }.width('100%').margin({ top: 8 })
-
-        Text(this.embeddingMode === 'auto' ? I18n.t('settings.embeddingModeAutoDesc') :
-          this.embeddingMode === 'local' ? I18n.t('settings.embeddingModeLocalDesc') : I18n.t('settings.embeddingModeCloudDesc'))
-          .fontSize(11).fontColor('#999999').margin({ top: 4 }).width('100%')
-
-        // Embedding cloud API key (standalone mode only - node mode uses gateway for cloud embedding)
-        if (this.settingsTab !== 'node' && (this.embeddingMode === 'auto' || this.embeddingMode === 'cloud')) {
-          Row() {
-            TextInput({ text: this.embeddingApiKey, placeholder: 'API Key' })
-              .layoutWeight(1).height(36).fontSize(13).backgroundColor('#F5F5F5').borderRadius(8)
-              .type(this.showEmbeddingKey ? InputType.Normal : InputType.Password)
-              .onChange((v: string) => { this.embeddingApiKey = v; })
-            Button(this.showEmbeddingKey ? I18n.t('settings.hide') : I18n.t('settings.show'))
-              .fontSize(11).height(30).backgroundColor('#F0F0F0').fontColor('#666666')
-              .borderRadius(8).margin({ left: 6 })
-              .onClick(() => { this.showEmbeddingKey = !this.showEmbeddingKey; })
-          }.margin({ top: 8 }).width('100%')
-        }
-
-        Divider().margin({ top: 14, bottom: 14 }).color('#E8E8E8')
-
-        // --- Intent ---
-        Row() {
-          Text(I18n.t('settings.intentMode'))
-            .fontSize(14).fontColor('#1A1A1A').fontWeight(FontWeight.Medium)
-          Text(I18n.t('settings.intentModeDesc'))
-            .fontSize(11).fontColor('#999999').margin({ left: 8 })
-        }.width('100%')
-
-        Row({ space: 0 }) {
-          ForEach(['auto', 'local', 'cloud'], (mode: string) => {
-            Text(mode === 'auto' ? I18n.t('settings.intentModeAuto') :
-              mode === 'local' ? I18n.t('settings.intentModeLocal') : I18n.t('settings.intentModeCloud'))
-              .fontSize(12)
-              .fontColor(this.intentMode === mode ? Color.White : '#666666')
-              .backgroundColor(this.intentMode === mode ? '#D2691E' : '#F0F0F0')
-              .borderRadius(8)
-              .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-              .layoutWeight(1).textAlign(TextAlign.Center)
-              .onClick(() => { this.intentMode = mode; })
-          })
-        }.width('100%').margin({ top: 8 })
-
-        Text(this.intentMode === 'auto' ? I18n.t('settings.intentModeAutoDesc') :
-          this.intentMode === 'local' ? I18n.t('settings.intentModeLocalDesc') : I18n.t('settings.intentModeCloudDesc'))
-          .fontSize(11).fontColor('#999999').margin({ top: 4 }).width('100%')
-      }
-      .width('100%')
-      .padding(16)
-      .margin({ left: 16, right: 16 })
-      .backgroundColor(Color.White)
-      .borderRadius(12)
-    }
-  }
-
-  @Builder
   CapToggle(label: string, isOn: boolean, onChange: (v: boolean) => void) {
     Row() {
       Text(label)
@@ -1834,8 +1788,54 @@ export struct SettingsPage {
     return '#999999';
   }
 
+  private operatorStateColor(): string {
+    if (this.operatorState === ConnectionState.Connected) return '#4CAF50';
+    if (this.operatorState === ConnectionState.Connecting) return '#FF9800';
+    if (this.operatorState === ConnectionState.Reconnecting) return '#FF9800';
+    if (this.operatorState === ConnectionState.Error) return '#D32F2F';
+    return '#999999';
+  }
+
+  private nodeStateColor(): string {
+    if (this.nodeState === ConnectionState.Connected) return '#4CAF50';
+    if (this.nodeState === ConnectionState.Connecting) return '#FF9800';
+    if (this.nodeState === ConnectionState.Reconnecting) return '#FF9800';
+    if (this.nodeState === ConnectionState.Error) return '#D32F2F';
+    return '#999999';
+  }
+
+  private operatorStateText(): string {
+    if (this.operatorState === ConnectionState.Connected) return I18n.t('settings.connected');
+    if (this.operatorState === ConnectionState.Connecting) return I18n.t('settings.connecting');
+    if (this.operatorState === ConnectionState.Reconnecting) return I18n.t('settings.reconnecting');
+    if (this.operatorState === ConnectionState.Error) return I18n.t('settings.connectionError');
+    return I18n.t('settings.disconnected');
+  }
+
+  private nodeStateText(): string {
+    if (this.nodeState === ConnectionState.Connected) return I18n.t('settings.connected');
+    if (this.nodeState === ConnectionState.Connecting) return I18n.t('settings.connecting');
+    if (this.nodeState === ConnectionState.Reconnecting) {
+      // Check if waiting for pairing approval
+      if (NodeRuntime.getInstance().isNodePairingPending) {
+        return I18n.t('settings.pairingPending');
+      }
+      return I18n.t('settings.reconnecting');
+    }
+    if (this.nodeState === ConnectionState.Error) return I18n.t('settings.connectionError');
+    return I18n.t('settings.disconnected');
+  }
+
   private gwIsConnected(): boolean {
     return this.gwState !== ConnectionState.Disconnected;
+  }
+
+  private operatorIsConnected(): boolean {
+    return this.operatorState === ConnectionState.Connected;
+  }
+
+  private nodeIsConnected(): boolean {
+    return this.nodeState === ConnectionState.Connected;
   }
 
   private getAssistantInitial(): string {
@@ -1909,11 +1909,35 @@ export struct SettingsPage {
     } catch { /* ignore */ }
   }
 
+  /** Legacy method - connects both operator and node */
   private async toggleGateway(): Promise<void> {
     if (this.gwIsConnected()) {
       NodeRuntime.getInstance().disconnect();
       return;
     }
+    await this.connectToGateway(true, true);
+  }
+
+  /** Connect operator session only (for AI chat) */
+  private async toggleOperatorConnection(): Promise<void> {
+    if (this.operatorIsConnected()) {
+      NodeRuntime.getInstance().disconnectOperator();
+      return;
+    }
+    await this.connectToGateway(true, false);
+  }
+
+  /** Connect node session only (for capabilities) */
+  private async toggleNodeConnection(): Promise<void> {
+    if (this.nodeIsConnected()) {
+      NodeRuntime.getInstance().disconnectNode();
+      return;
+    }
+    await this.connectToGateway(false, true);
+  }
+
+  /** Helper: connect to gateway with specified sessions */
+  private async connectToGateway(connectOperator: boolean, connectNode: boolean): Promise<void> {
     let host = this.gwHost.trim();
     if (host.length === 0) {
       promptAction.showToast({ message: I18n.t('settings.enterHost'), duration: 1500 });
@@ -1936,7 +1960,13 @@ export struct SettingsPage {
       this.capMicrophone, this.capSpeaker, this.capEmail
     );
     await runtime.loadDisplayName(ctx);
-    runtime.connect(ctx, endpoint, token, password);
+    if (connectOperator && connectNode) {
+      runtime.connect(ctx, endpoint, token, password);
+    } else if (connectOperator) {
+      runtime.connectOperator(ctx, endpoint, token, password);
+    } else if (connectNode) {
+      runtime.connectNode(ctx, endpoint, token, password);
+    }
   }
 
   private saveMaxConcurrent(): void {
@@ -2003,6 +2033,8 @@ export struct SettingsPage {
       this.model = this.savedModels[this.provider] ?? this.defaultModelFor(this.provider);
       this.apiKey = this.savedKeys[this.provider] ?? '';
       this.baseUrl = this.savedUrls[this.provider] ?? '';
+      // AI Engine toggle
+      this.aiEngineEnabled = (await store.get('ai_engine_enabled', false)) as boolean;
       // ASR settings
       // Backward compat: migrate asr_enabled boolean to asr_mode string
       let storedAsrMode = (await store.get('asr_mode', '')) as string;
@@ -2036,6 +2068,7 @@ export struct SettingsPage {
       let savedToken = (await store.get('token', '')) as string;
       let savedPassword = (await store.get('password', '')) as string;
       this.gwEnabled = (await store.get('enabled', false)) as boolean;
+      this.operatorEnabled = (await store.get('operatorEnabled', false)) as boolean;
       // Only override defaults if saved values exist
       if (savedHost.length > 0) this.gwHost = savedHost;
       if (savedPort.length > 0) this.gwPort = savedPort;
@@ -2294,6 +2327,8 @@ export struct SettingsPage {
       await store.put('url_siliconflow', this.savedUrls['siliconflow'] ?? '');
       await store.put('url_local', this.savedUrls['local'] ?? '');
       await store.put('url_custom', this.savedUrls['custom'] ?? '');
+      // AI Engine toggle
+      await store.put('ai_engine_enabled', this.aiEngineEnabled);
       // ASR settings
       await store.put('asr_mode', this.asrMode);
       await store.put('asr_url', this.asrApiUrl);
@@ -2315,6 +2350,7 @@ export struct SettingsPage {
       // In single node mode, gateway is always enabled
       let gwEnabledValue = !this.showTabs() && this.modesInclude('node') ? true : this.gwEnabled;
       await gwStore.put('enabled', gwEnabledValue);
+      await gwStore.put('operatorEnabled', this.operatorEnabled);
       await gwStore.put('host', this.gwHost);
       await gwStore.put('port', this.gwPort);
       await gwStore.put('useTls', this.gwUseTls);
@@ -2394,7 +2430,7 @@ export struct SettingsPage {
     if (name.length === 0) return;
 
     let data: Record<string, string | number | boolean> = {};
-    if (this.settingsTab === 'standalone' || (!this.showTabs() && this.modesInclude('standalone'))) {
+    if (this.settingsTab === 'operator' || (!this.showTabs() && this.modesInclude('operator'))) {
       // Standalone mode settings
       this.savedModels[this.provider] = this.model;
       this.savedKeys[this.provider] = this.apiKey;
@@ -2430,8 +2466,8 @@ export struct SettingsPage {
       data['autoMemoryInject'] = this.autoMemoryInject;
     }
 
-    let mode = (this.settingsTab === 'node' || (!this.showTabs() && this.modesInclude('node') && !this.modesInclude('standalone')))
-      ? 'node' : 'standalone';
+    let mode = (this.settingsTab === 'node' || (!this.showTabs() && this.modesInclude('node') && !this.modesInclude('operator')))
+      ? 'node' : 'operator';
 
     let profile: SettingsProfile = {
       name: name,
@@ -2450,7 +2486,7 @@ export struct SettingsPage {
   private loadProfile(profile: SettingsProfile): void {
     try {
       let data: Record<string, string | number | boolean> = JSON.parse(profile.data) as Record<string, string | number | boolean>;
-      if (profile.mode === 'standalone') {
+      if (profile.mode === 'operator') {
         if (data['provider'] !== undefined) this.provider = data['provider'] as string;
         if (data['temperature'] !== undefined) this.temperature = data['temperature'] as number;
         if (data['model'] !== undefined) this.model = data['model'] as string;

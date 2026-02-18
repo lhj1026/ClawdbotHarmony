@@ -136,11 +136,12 @@ export struct ChatPage {
     this.loadTtsAutoReadSetting();
     this.loadAutoMemoryInjectSetting();
     this.loadAssistantSettings();
-    this.gwConnected = NodeRuntime.getInstance().isConnected;
+    this.gwConnected = NodeRuntime.getInstance().isOperatorConnected;
     this.memSvc.setNodeMode(this.gwConnected);
-    this.gwListener = (state: ConnectionState, _text: string) => {
+    this.gwListener = (_state: ConnectionState, _text: string) => {
       let wasConnected = this.gwConnected;
-      this.gwConnected = (state === ConnectionState.Connected);
+      // Use operator connection state for agent identity display
+      this.gwConnected = NodeRuntime.getInstance().isOperatorConnected;
       this.memSvc.setNodeMode(this.gwConnected);
       // When gateway first connects, sync memories from server
       if (!wasConnected && this.gwConnected) {
@@ -164,9 +165,9 @@ export struct ChatPage {
       }
     };
     NodeRuntime.getInstance().addIdentityListener(this.identityListener);
-    // Hydrate from existing identity if already connected
+    // Hydrate from existing identity if operator already connected
     let existingIdentity = NodeRuntime.getInstance().agentIdentity;
-    if (existingIdentity && this.gwConnected) {
+    if (existingIdentity && NodeRuntime.getInstance().isOperatorConnected) {
       this.gwAgentName = existingIdentity.name;
       this.gwAgentEmoji = existingIdentity.emoji;
       this.gwAgentTheme = existingIdentity.theme;
