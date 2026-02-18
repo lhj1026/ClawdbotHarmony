@@ -33,6 +33,7 @@ import {
   GatewayTokenUsage,
   ExecApprovalRequest,
   AgentIdentity,
+  GatewayFileResult,
 } from './GatewayModels';
 import { image } from '@kit.ImageKit';
 import { buffer } from '@kit.ArkTS';
@@ -44,9 +45,10 @@ import { fileIo } from '@kit.CoreFileKit';
 import { LogService } from '../../common/LogService';
 import { Constants } from '../../common/Constants';
 import { NotificationHelper } from '../NotificationHelper';
+import { ExperienceStorage } from '../ExperienceStorage';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.21.15';
+const APP_VERSION = '2.23.0';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -426,6 +428,43 @@ export class NodeRuntime {
     let params = `{"raw":${patchJson}}`;
     let resJson = await this.operatorSession.request('config.patch', params, 15000);
     this.log.info(TAG, `config.patch response: ${resJson.substring(0, 200)}`);
+  }
+
+  /**
+   * Request a file from the gateway server.
+   * Sends file.get RPC with the file path, returns base64 data and metadata.
+   * @returns { data: base64, fileName, size, mimeType } or throws on error
+   */
+  async requestFile(filePath: string): Promise<GatewayFileResult> {
+    if (!this.operatorSession || this._operatorState !== ConnectionState.Connected) {
+      throw new Error('Gateway not connected');
+    }
+    let params = `{"path":${JSON.stringify(filePath)}}`;
+    this.log.info(TAG, `requestFile: path=${filePath}`);
+    let resJson = await this.operatorSession.request('file.get', params, 30000);
+    this.log.info(TAG, `file.get response length: ${resJson.length}`);
+
+    if (resJson.length === 0) {
+      throw new Error('Empty response from gateway');
+    }
+
+    let res = JSON.parse(resJson) as Record<string, Object>;
+    let data = (res['data'] as string) ?? '';
+    let fileName = (res['fileName'] as string) ?? filePath.split('/').pop() ?? 'file';
+    let size = (res['size'] as number) ?? 0;
+    let mimeType = (res['mimeType'] as string) ?? 'application/octet-stream';
+
+    if (data.length === 0) {
+      throw new Error(((res['error'] as string) ?? 'No file data returned'));
+    }
+
+    let result: GatewayFileResult = {
+      data: data,
+      fileName: fileName,
+      size: size,
+      mimeType: mimeType
+    };
+    return result;
   }
 
   /** Look up which chatSessionId a runId belongs to. */
@@ -1238,6 +1277,7 @@ export class NodeRuntime {
       this.log.info(TAG, `operator state: ${state} - ${message}`);
       if (state === ConnectionState.Connected) {
         this.fetchAgentIdentity().catch(() => { /* ignore */ });
+        this.syncExperiencePack().catch(() => { /* ignore */ });
       }
     };
     this.operatorSession.onEvent = (event, payloadJson) => {
@@ -1647,6 +1687,12 @@ export class NodeRuntime {
     this.log.info(TAG, `operator event: "${event}" payloadLen=${payloadJson ? payloadJson.length : 0} payload(500)=${payloadJson ? payloadJson.substring(0, 500) : '(none)'}`);
 
     if (!payloadJson) return;
+
+    // Handle experience_update from gateway (server learned something new)
+    if (event === 'experience_update') {
+      this.handleExperienceUpdate(payloadJson);
+      return;
+    }
 
     // Handle exec approval requests from gateway
     if (event === 'exec.approval.requested') {
@@ -2100,6 +2146,42 @@ export class NodeRuntime {
       });
     } catch (err) {
       this.log.warn(TAG, `Failed to load notification icon: ${(err as Error).message ?? ''}`);
+    }
+  }
+
+  // ---- Experience Pack sync ----
+
+  /** Send the local experience pack to the gateway after connecting. */
+  private async syncExperiencePack(): Promise<void> {
+    if (!this._context || !this.operatorSession) return;
+    try {
+      let storage = ExperienceStorage.getInstance();
+      let pack = await storage.load(this._context);
+      if (!pack) {
+        this.log.info(TAG, 'No experience pack to sync');
+        return;
+      }
+      let payload = JSON.stringify({ type: 'experience_sync', data: pack });
+      await this.operatorSession.sendNodeEvent('experience_sync', payload);
+      await storage.markSynced(this._context);
+      this.log.info(TAG, 'Experience pack synced to gateway');
+    } catch (err) {
+      this.log.warn(TAG, `Experience sync failed: ${(err as Error).message ?? ''}`);
+    }
+  }
+
+  /** Handle experience_update events from the server (learning feedback). */
+  private handleExperienceUpdate(payloadJson: string): void {
+    if (!this._context) return;
+    try {
+      let raw = JSON.parse(payloadJson) as Record<string, Object>;
+      let storage = ExperienceStorage.getInstance();
+      storage.mergeUpdate(this._context, raw).catch((err: Error) => {
+        this.log.error(TAG, `Experience merge failed: ${err.message ?? ''}`);
+      });
+      this.log.info(TAG, 'Experience update received and merged');
+    } catch (err) {
+      this.log.error(TAG, `Failed to parse experience_update: ${(err as Error).message ?? ''}`);
     }
   }
 }

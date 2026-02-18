@@ -14,7 +14,9 @@ import { SettingsProfile } from '../model/Models';
 import { ImapService } from '../service/ImapService';
 import { FeishuBotService } from '../service/FeishuBotService';
 import { VoiceprintManager } from '../components/VoiceprintManager';
+import { ExperienceStorage } from '../service/ExperienceStorage';
 import socket from '@ohos.net.socket';
+import { util } from '@kit.ArkTS';
 
 interface BmExecResult {
   exitCode: number;
@@ -133,6 +135,12 @@ export struct SettingsPage {
   @State latestVersion: string = '';
   @State updateAvailable: boolean = false;
 
+  // Experience Pack
+  @State expSkillsCount: number = 0;
+  @State expMemoryCount: number = 0;
+  @State expSyncedAt: number = 0;
+  @State expLoaded: boolean = false;
+
   private gwListener: ((state: ConnectionState, text: string) => void) | undefined = undefined;
   private langListener: (() => void) | undefined = undefined;
   private identityListener: ((identity: AgentIdentity | undefined) => void) | undefined = undefined;
@@ -143,6 +151,7 @@ export struct SettingsPage {
     this.loadEmail();
     this.loadFeishu();
     this.loadProfiles();
+    this.loadExperienceSummary();
     this.lang = I18n.lang;
     this.langListener = () => { this.lang = I18n.lang; };
     I18n.addListener(this.langListener);
@@ -1371,7 +1380,7 @@ export struct SettingsPage {
         Column() {
           this.InfoRow(I18n.t('settings.appName'), 'ClawdBot')
           Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
-          this.InfoRow(I18n.t('settings.version'), '2.21.15')
+          this.InfoRow(I18n.t('settings.version'), '2.23.0')
           Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
           this.InfoRow(I18n.t('settings.developer'), 'OpenClaw')
           Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
@@ -1416,6 +1425,70 @@ export struct SettingsPage {
               this.checkForUpdates();
             }
           })
+        }
+        .width('100%')
+        .padding(16)
+        .margin({ left: 16, right: 16 })
+        .backgroundColor(Color.White)
+        .borderRadius(12)
+
+        // =============== Experience Pack ===============
+        this.SectionTitle('经验包')
+        Column() {
+          // Summary: skills + memory = experience
+          this.InfoRow('技能 (Skills)', `${this.expSkillsCount} 条`)
+          Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
+          this.InfoRow('记忆 (Memory)', `${this.expMemoryCount} 条`)
+          Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
+          this.InfoRow('上次同步', this.expSyncedAt > 0 ? new Date(this.expSyncedAt).toLocaleString() : '从未同步')
+
+          Divider().margin({ top: 14, bottom: 14 }).color('#F0F0F0')
+
+          // Export
+          Row() {
+            Text('导出经验包')
+              .fontSize(14)
+              .fontColor('#1A1A1A')
+              .layoutWeight(1)
+            Text('>')
+              .fontSize(14)
+              .fontColor('#CCCCCC')
+          }
+          .width('100%')
+          .height(44)
+          .alignItems(VerticalAlign.Center)
+          .onClick(() => { this.exportExperience(); })
+
+          Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
+
+          // Import
+          Row() {
+            Text('导入经验包')
+              .fontSize(14)
+              .fontColor('#1A1A1A')
+              .layoutWeight(1)
+            Text('>')
+              .fontSize(14)
+              .fontColor('#CCCCCC')
+          }
+          .width('100%')
+          .height(44)
+          .alignItems(VerticalAlign.Center)
+          .onClick(() => { this.importExperience(); })
+
+          Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
+
+          // Clear
+          Row() {
+            Text('清除经验')
+              .fontSize(14)
+              .fontColor('#D32F2F')
+              .layoutWeight(1)
+          }
+          .width('100%')
+          .height(44)
+          .alignItems(VerticalAlign.Center)
+          .onClick(() => { this.clearExperience(); })
         }
         .width('100%')
         .padding(16)
@@ -2596,5 +2669,99 @@ export struct SettingsPage {
       console.error(`[SettingsPage] Install error: ${(e as Error).message ?? ''}`);
       promptAction.showToast({ message: `安装出错: ${(e as Error).message ?? ''}`, duration: 2000 });
     }
+  }
+
+  // ============ Experience Pack ============
+
+  private async loadExperienceSummary(): Promise<void> {
+    try {
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let storage = ExperienceStorage.getInstance();
+      let pack = await storage.load(ctx);
+      if (pack) {
+        this.expSkillsCount = pack.skills.length;
+        this.expMemoryCount = pack.memory.length;
+        this.expSyncedAt = pack.syncedAt;
+        this.expLoaded = true;
+      }
+    } catch { /* ignore */ }
+  }
+
+  private async exportExperience(): Promise<void> {
+    try {
+      let storage = ExperienceStorage.getInstance();
+      let json = storage.exportToJson();
+      if (json === '{}') {
+        promptAction.showToast({ message: '没有经验数据可导出', duration: 1500 });
+        return;
+      }
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let filePath = `${ctx.filesDir}/experience_pack.json`;
+      let fd = fileIo.openSync(filePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      fileIo.writeSync(fd.fd, json);
+      fileIo.closeSync(fd.fd);
+      promptAction.showToast({ message: `已导出到: experience_pack.json`, duration: 2000 });
+    } catch (e) {
+      promptAction.showToast({ message: `导出失败: ${(e as Error).message ?? ''}`, duration: 2000 });
+    }
+  }
+
+  private async importExperience(): Promise<void> {
+    try {
+      let docPicker = new picker.DocumentViewPicker();
+      let result = await docPicker.select({ maxSelectNumber: 1 });
+      if (!result || result.length === 0) return;
+
+      let uri = result[0];
+      let fd = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
+      let stat = fileIo.statSync(fd.fd);
+      let buf = new ArrayBuffer(stat.size);
+      fileIo.readSync(fd.fd, buf);
+      fileIo.closeSync(fd.fd);
+
+      let decoder = new util.TextDecoder('utf-8');
+      let json = decoder.decodeToString(new Uint8Array(buf));
+
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let storage = ExperienceStorage.getInstance();
+      let success = await storage.importFromJson(ctx, json);
+      if (success) {
+        promptAction.showToast({ message: '经验包导入成功', duration: 1500 });
+        await this.loadExperienceSummary();
+      } else {
+        promptAction.showToast({ message: '导入失败: 数据格式无效', duration: 2000 });
+      }
+    } catch (e) {
+      promptAction.showToast({ message: `导入失败: ${(e as Error).message ?? ''}`, duration: 2000 });
+    }
+  }
+
+  private async clearExperience(): Promise<void> {
+    AlertDialog.show({
+      title: '确认清除',
+      message: '清除所有经验数据？此操作不可恢复。',
+      primaryButton: {
+        value: '取消',
+        action: () => {}
+      },
+      secondaryButton: {
+        value: '清除',
+        fontColor: '#D32F2F',
+        action: async () => {
+          try {
+            let ctx = getContext(this) as common.UIAbilityContext;
+            let storage = ExperienceStorage.getInstance();
+            await storage.clear(ctx);
+            this.expSkillsCount = 0;
+            this.expMemoryCount = 0;
+            this.expSyncedAt = 0;
+            this.expLoaded = false;
+            promptAction.showToast({ message: '经验已清除', duration: 1500 });
+          } catch (e) {
+            promptAction.showToast({ message: `清除失败: ${(e as Error).message ?? ''}`, duration: 2000 });
+          }
+        }
+      }
+    });
   }
 }
