@@ -27,6 +27,7 @@ export struct MessageBubble {
   onQuoteClick: (replyToId: string) => void = () => {};
   onFileDownload: (message: ChatMessage) => void = () => {};
   onFileOpen: (filePath: string) => void = () => {};
+  onFilePathClick: (filePath: string) => void = () => {};
   @State audioPlaying: boolean = false;
   @State showMenu: boolean = false;
   @State a2uiHeight: number = 280;
@@ -292,7 +293,8 @@ export struct MessageBubble {
           MarkdownText({
             content: this.getDisplayContent(),
             textColor: '#1A1A1A',
-            baseFontSize: 15
+            baseFontSize: 15,
+            onFilePathClick: (fp: string): void => { this.onFilePathClick(fp); }
           })
 
           if (this.sLen(this.message.imagePath) > 0) {

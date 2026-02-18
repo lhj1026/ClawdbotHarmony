@@ -155,6 +155,15 @@ export interface AgentIdentity {
   avatar: string;  // URL, data: URI, or workspace-relative path
 }
 
+// --------------- File transfer result ---------------
+
+export interface GatewayFileResult {
+  data: string;       // base64-encoded file content
+  fileName: string;   // original filename
+  size: number;       // file size in bytes
+  mimeType: string;   // MIME type
+}
+
 // --------------- Gateway settings (persisted) ---------------
 
 export interface GatewaySettings {

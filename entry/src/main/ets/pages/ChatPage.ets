@@ -508,7 +508,8 @@ export struct ChatPage {
                 onNewSession: (message: ChatMessage): void => { this.createNewSession(message); },
                 onQuoteClick: (replyToId: string): void => { this.scrollToMessage(replyToId); },
                 onFileDownload: (message: ChatMessage): void => { this.downloadFile(message); },
-                onFileOpen: (filePath: string): void => { this.openFile(filePath); }
+                onFileOpen: (filePath: string): void => { this.openFile(filePath); },
+                onFilePathClick: (filePath: string): void => { this.downloadFileFromGateway(filePath); }
               })
             }
             .backgroundColor(this.highlightMessageId === msg.id ? '#FFF3E0' : Color.Transparent)
@@ -3786,6 +3787,48 @@ Adjust your tone accordingly:
     //   type: message.fileMimeType
     // };
     // context.startAbility(want);
+  }
+
+  /** Download a file from the gateway server by its remote file path. */
+  private async downloadFileFromGateway(remotePath: string): Promise<void> {
+    if (!this.gwConnected) {
+      promptAction.showToast({ message: 'Gateway 未连接，无法下载文件' });
+      return;
+    }
+
+    let fileName = remotePath.split('/').pop() ?? remotePath.split('\\').pop() ?? 'file';
+    this.log.info('ChatPage', `Downloading from gateway: ${remotePath}`);
+    promptAction.showToast({ message: `正在下载: ${fileName}` });
+
+    try {
+      let result = await NodeRuntime.getInstance().requestFile(remotePath);
+
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let downloadDir = `${ctx.filesDir}/downloads`;
+      try {
+        fileIo.mkdirSync(downloadDir);
+      } catch {
+        // Directory might already exist
+      }
+
+      let timestamp = Date.now();
+      let safeName = result.fileName.replace(/[^\w\.\-\u4e00-\u9fa5]/g, '_');
+      let localPath = `${downloadDir}/${timestamp}_${safeName}`;
+
+      // Decode base64 and write to file
+      let helper = new util.Base64Helper();
+      let uint8 = helper.decodeSync(result.data);
+      let file = fileIo.openSync(localPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY);
+      fileIo.writeSync(file.fd, uint8.buffer as ArrayBuffer);
+      fileIo.closeSync(file);
+
+      this.log.info('ChatPage', `File downloaded from gateway: ${localPath} (${result.size} bytes)`);
+      promptAction.showToast({ message: `下载完成: ${result.fileName}` });
+    } catch (e) {
+      let errMsg = e instanceof Error ? e.message : String(e);
+      this.log.error('ChatPage', `Gateway file download failed: ${errMsg}`);
+      promptAction.showToast({ message: `下载失败: ${errMsg}` });
+    }
   }
 
   private scrollToEnd(): void {

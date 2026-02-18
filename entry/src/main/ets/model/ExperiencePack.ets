@@ -5,14 +5,20 @@
 //  两者结合构成完整的经验，可迁移到新的 AI 助理
 // ============================================================
 
-/** 技能：总结做事的方式 */
+/** 技能：总结做事的方式（与 OpenClaw skill 格式一致）*/
 export interface Skill {
-  id: string;
-  name: string;           // 技能名称，如 "ClawdBotHarmony 开发"
-  description?: string;   // 简述
-  steps: string[];        // 步骤/规则
-  confidence: number;     // 置信度 0-1
-  updatedAt: number;      // 最后更新时间
+  name: string;           // 技能名称，如 "clawdbot-harmony-dev"
+  description: string;    // 简短描述
+  content: string;        // Markdown 内容（技能指令）
+  metadata?: SkillMetadata; // 可选元数据
+}
+
+/** 技能元数据 */
+export interface SkillMetadata {
+  emoji?: string;         // 图标
+  confidence?: number;    // 置信度 0-1
+  source?: string;        // 来源：'learned' | 'imported' | 'manual'
+  updatedAt?: number;     // 最后更新时间
 }
 
 /** 记忆分类 */
@@ -54,14 +60,16 @@ export function createDefaultExperiencePack(): ExperiencePack {
 }
 
 /** 创建新技能 */
-export function createSkill(name: string, steps: string[], description?: string): Skill {
+export function createSkill(name: string, description: string, content: string): Skill {
   return {
-    id: generateId(),
     name,
     description,
-    steps,
-    confidence: 0.5,
-    updatedAt: Date.now(),
+    content,
+    metadata: {
+      confidence: 0.5,
+      source: 'learned',
+      updatedAt: Date.now(),
+    },
   };
 }
 

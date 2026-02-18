@@ -9,6 +9,7 @@ export class Constants {
   static readonly PREFS_EMAIL: string = 'clawdbot_email';
   static readonly PREFS_FEISHU: string = 'clawdbot_feishu';
   static readonly PREFS_CUSTOM_SKILLS: string = 'clawdbot_custom_skills';
+  static readonly PREFS_EXPERIENCE: string = 'clawdbot_experience';
 
   // Session persistence
   static readonly PREFS_SESSIONS: string = 'chat_sessions';

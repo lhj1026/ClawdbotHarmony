@@ -9,6 +9,7 @@ import { LogService } from '../common/LogService';
 import {
   ExperiencePack,
   Skill,
+  SkillMetadata,
   Memory,
   MemoryCategory,
   createDefaultExperiencePack,
@@ -90,23 +91,32 @@ export class ExperienceStorage {
     await this.save(context, pack);
   }
 
-  async updateSkill(context: common.UIAbilityContext, id: string, updates: Partial<Skill>): Promise<void> {
+  async updateSkill(context: common.UIAbilityContext, name: string, updates: Partial<Skill>): Promise<void> {
     let pack = await this.ensureLoaded(context);
-    let idx = pack.skills.findIndex((s: Skill) => s.id === id);
+    let idx = pack.skills.findIndex((s: Skill) => s.name === name);
     if (idx >= 0) {
       let skill = pack.skills[idx];
-      if (updates.name !== undefined) skill.name = updates.name;
       if (updates.description !== undefined) skill.description = updates.description;
-      if (updates.steps !== undefined) skill.steps = updates.steps;
-      if (updates.confidence !== undefined) skill.confidence = updates.confidence;
-      skill.updatedAt = Date.now();
+      if (updates.content !== undefined) skill.content = updates.content;
+      if (updates.metadata !== undefined) {
+        if (!skill.metadata) {
+          skill.metadata = {};
+        }
+        // 手动合并 metadata 字段
+        if (updates.metadata.emoji !== undefined) skill.metadata.emoji = updates.metadata.emoji;
+        if (updates.metadata.confidence !== undefined) skill.metadata.confidence = updates.metadata.confidence;
+        if (updates.metadata.source !== undefined) skill.metadata.source = updates.metadata.source;
+      }
+      if (skill.metadata) {
+        skill.metadata.updatedAt = Date.now();
+      }
       await this.save(context, pack);
     }
   }
 
-  async removeSkill(context: common.UIAbilityContext, id: string): Promise<void> {
+  async removeSkill(context: common.UIAbilityContext, name: string): Promise<void> {
     let pack = await this.ensureLoaded(context);
-    pack.skills = pack.skills.filter((s: Skill) => s.id !== id);
+    pack.skills = pack.skills.filter((s: Skill) => s.name !== name);
     await this.save(context, pack);
   }
 
@@ -209,17 +219,24 @@ export class ExperienceStorage {
   async mergeUpdate(context: common.UIAbilityContext, partial: Record<string, Object>): Promise<void> {
     let pack = await this.ensureLoaded(context);
 
-    // 合并 skills
+    // 合并 skills (按 name 去重)
     if (partial['skills'] && Array.isArray(partial['skills'])) {
       let newSkills = partial['skills'] as Skill[];
       for (let i = 0; i < newSkills.length; i++) {
         let skill = newSkills[i];
-        if (!skill.id) skill.id = generateId();
-        if (!skill.updatedAt) skill.updatedAt = Date.now();
+        // 确保 metadata 存在
+        if (!skill.metadata) {
+          skill.metadata = { updatedAt: Date.now(), source: 'imported' };
+        }
+        if (!skill.metadata.updatedAt) {
+          skill.metadata.updatedAt = Date.now();
+        }
         let idx = pack.skills.findIndex((s: Skill) => s.name === skill.name);
         if (idx >= 0) {
           // 只在新的更新时间更晚时覆盖
-          if (skill.updatedAt > pack.skills[idx].updatedAt) {
+          let existingTime = pack.skills[idx].metadata?.updatedAt ?? 0;
+          let newTime = skill.metadata.updatedAt ?? 0;
+          if (newTime > existingTime) {
             pack.skills[idx] = skill;
           }
         } else {
@@ -228,7 +245,7 @@ export class ExperienceStorage {
       }
     }
 
-    // 合并 memory
+    // 合并 memory (按 category + key 去重)
     if (partial['memory'] && Array.isArray(partial['memory'])) {
       let newMemories = partial['memory'] as Memory[];
       for (let i = 0; i < newMemories.length; i++) {

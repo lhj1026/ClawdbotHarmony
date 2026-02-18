@@ -58,4 +58,6 @@ export class Command {
   static readonly CALENDAR_ADD: string = 'calendar.add';
   // Exec (shell)
   static readonly EXEC_RUN: string = 'exec.run';
+  // File transfer
+  static readonly FILE_GET: string = 'file.get';
 }

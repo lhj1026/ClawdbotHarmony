@@ -11,6 +11,7 @@ interface MdSpan {
   italic: boolean;
   code: boolean;
   url: string;  // non-empty if this span is a clickable URL
+  filePath: string;  // non-empty if this span is a clickable file path
   key: string;
 }
 
@@ -24,6 +25,95 @@ interface MdBlock {
   key: string;
   tableHeaders: string[];
   tableRows: string[][];
+}
+
+// ---------- File path detection ----------
+
+// Known file extensions for path detection (lowercase, without dot)
+const FILE_EXTENSIONS: string[] = [
+  'md', 'txt', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'ppt', 'pptx',
+  'jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp',
+  'zip', 'tar', 'gz', 'rar', '7z', 'bz2',
+  'json', 'xml', 'html', 'htm', 'css',
+  'py', 'js', 'ts', 'java', 'c', 'cpp', 'h', 'hpp', 'go', 'rs', 'sh', 'bat',
+  'log', 'cfg', 'ini', 'yaml', 'yml', 'toml', 'conf',
+  'mp3', 'mp4', 'wav', 'aac', 'ogg', 'flac', 'avi', 'mkv', 'mov',
+  'apk', 'hap', 'ipa', 'deb', 'rpm',
+  'sql', 'db', 'sqlite',
+];
+
+function hasFileExtension(path: string): boolean {
+  let dotIdx = path.lastIndexOf('.');
+  if (dotIdx <= 0 || dotIdx >= path.length - 1) return false;
+  let ext = path.substring(dotIdx + 1).toLowerCase();
+  // Handle .tar.gz
+  if (ext === 'gz') {
+    let prevDot = path.lastIndexOf('.', dotIdx - 1);
+    if (prevDot > 0) {
+      let prevExt = path.substring(prevDot + 1, dotIdx).toLowerCase();
+      if (prevExt === 'tar') return true;
+    }
+  }
+  return FILE_EXTENSIONS.indexOf(ext) >= 0;
+}
+
+function isPathChar(c: string): boolean {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+    (c >= '0' && c <= '9') || '-_.~/'.includes(c) ||
+    (c >= '\u4e00' && c <= '\u9fa5'); // Chinese characters in paths
+}
+
+function isWinPathChar(c: string): boolean {
+  return isPathChar(c) || c === '\\' || c === ':';
+}
+
+/** Try to extract a Unix file path starting at idx. Returns path string or empty. */
+function extractUnixPath(text: string, idx: number): string {
+  // Must start with / and next char must be alphanumeric (avoid // comments, /n etc.)
+  if (idx + 1 >= text.length) return '';
+  let next = text.charAt(idx + 1);
+  if (!((next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') ||
+    (next >= '0' && next <= '9') || (next >= '\u4e00' && next <= '\u9fa5'))) return '';
+
+  let end = idx + 1;
+  while (end < text.length && (isPathChar(text.charAt(end)) || text.charAt(end) === '-')) {
+    end++;
+  }
+  // Must contain at least one / separator beyond the leading /
+  let path = text.substring(idx, end);
+  if (path.indexOf('/', 1) < 0) return '';
+  // Must end with a known file extension
+  // Remove trailing punctuation
+  while (path.length > 1 && '.,;:!?)\'\"'.includes(path.charAt(path.length - 1))) {
+    path = path.substring(0, path.length - 1);
+  }
+  if (!hasFileExtension(path)) return '';
+  return path;
+}
+
+/** Try to extract a Windows file path starting at idx (e.g. C:\path\file.ext). Returns path or empty. */
+function extractWindowsPath(text: string, idx: number): string {
+  // Must match pattern: letter + :\ or letter + :/
+  if (idx + 2 >= text.length) return '';
+  let drive = text.charAt(idx);
+  if (!((drive >= 'a' && drive <= 'z') || (drive >= 'A' && drive <= 'Z'))) return '';
+  if (text.charAt(idx + 1) !== ':') return '';
+  let sep = text.charAt(idx + 2);
+  if (sep !== '\\' && sep !== '/') return '';
+
+  let end = idx + 3;
+  while (end < text.length && (isWinPathChar(text.charAt(end)) || text.charAt(end) === ' ')) {
+    // Stop at double space or end-of-word punctuation
+    if (text.charAt(end) === ' ' && end + 1 < text.length && text.charAt(end + 1) === ' ') break;
+    end++;
+  }
+  let path = text.substring(idx, end).trimEnd();
+  // Remove trailing punctuation
+  while (path.length > 3 && '.,;:!?)\'\"'.includes(path.charAt(path.length - 1))) {
+    path = path.substring(0, path.length - 1);
+  }
+  if (!hasFileExtension(path)) return '';
+  return path;
 }
 
 // ---------- URL detection ----------
@@ -85,7 +175,7 @@ function parseInline(text: string): MdSpan[] {
       if (buf.length > 0) {
         let s: MdSpan = {
           text: buf, bold: inCode ? false : bold,
-          italic: inCode ? false : italic, code: inCode, url: '', key: '' + idx++
+          italic: inCode ? false : italic, code: inCode, url: '', filePath: '', key: '' + idx++
         };
         spans.push(s);
         buf = '';
@@ -106,7 +196,7 @@ function parseInline(text: string): MdSpan[] {
         (ch === 'h' && text.substring(i, i + 8) === 'https://')) {
       // Flush buffer before URL
       if (buf.length > 0) {
-        let s: MdSpan = { text: buf, bold: bold, italic: italic, code: false, url: '', key: '' + idx++ };
+        let s: MdSpan = { text: buf, bold: bold, italic: italic, code: false, url: '', filePath: '', key: '' + idx++ };
         spans.push(s);
         buf = '';
       }
@@ -114,16 +204,48 @@ function parseInline(text: string): MdSpan[] {
       let urlEnd = i + (text.charAt(i + 4) === 's' ? 8 : 7); // past http:// or https://
       let urlPath = extractUrl(text, urlEnd);
       let fullUrl = text.substring(i, urlEnd) + urlPath;
-      let urlSpan: MdSpan = { text: fullUrl, bold: false, italic: false, code: false, url: fullUrl, key: '' + idx++ };
+      let urlSpan: MdSpan = { text: fullUrl, bold: false, italic: false, code: false, url: fullUrl, filePath: '', key: '' + idx++ };
       spans.push(urlSpan);
       i += fullUrl.length;
       continue;
     }
 
+    // Check for Unix file path (/path/to/file.ext)
+    if (ch === '/' && !inCode) {
+      let fp = extractUnixPath(text, i);
+      if (fp.length > 0) {
+        if (buf.length > 0) {
+          let s: MdSpan = { text: buf, bold: bold, italic: italic, code: false, url: '', filePath: '', key: '' + idx++ };
+          spans.push(s);
+          buf = '';
+        }
+        let fpSpan: MdSpan = { text: fp, bold: false, italic: false, code: false, url: '', filePath: fp, key: '' + idx++ };
+        spans.push(fpSpan);
+        i += fp.length;
+        continue;
+      }
+    }
+
+    // Check for Windows file path (C:\path\to\file.ext)
+    if (((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z')) && !inCode) {
+      let wp = extractWindowsPath(text, i);
+      if (wp.length > 0) {
+        if (buf.length > 0) {
+          let s: MdSpan = { text: buf, bold: bold, italic: italic, code: false, url: '', filePath: '', key: '' + idx++ };
+          spans.push(s);
+          buf = '';
+        }
+        let wpSpan: MdSpan = { text: wp, bold: false, italic: false, code: false, url: '', filePath: wp, key: '' + idx++ };
+        spans.push(wpSpan);
+        i += wp.length;
+        continue;
+      }
+    }
+
     // ** → toggle bold
     if (ch === '*' && i + 1 < text.length && text.charAt(i + 1) === '*') {
       if (buf.length > 0) {
-        let s: MdSpan = { text: buf, bold: bold, italic: italic, code: false, url: '', key: '' + idx++ };
+        let s: MdSpan = { text: buf, bold: bold, italic: italic, code: false, url: '', filePath: '', key: '' + idx++ };
         spans.push(s);
         buf = '';
       }
@@ -135,7 +257,7 @@ function parseInline(text: string): MdSpan[] {
     // single * → toggle italic
     if (ch === '*') {
       if (buf.length > 0) {
-        let s: MdSpan = { text: buf, bold: bold, italic: italic, code: false, url: '', key: '' + idx++ };
+        let s: MdSpan = { text: buf, bold: bold, italic: italic, code: false, url: '', filePath: '', key: '' + idx++ };
         spans.push(s);
         buf = '';
       }
@@ -149,12 +271,12 @@ function parseInline(text: string): MdSpan[] {
   }
 
   if (buf.length > 0) {
-    let s: MdSpan = { text: buf, bold: bold, italic: italic, code: inCode, url: '', key: '' + idx++ };
+    let s: MdSpan = { text: buf, bold: bold, italic: italic, code: inCode, url: '', filePath: '', key: '' + idx++ };
     spans.push(s);
   }
 
   if (spans.length === 0) {
-    let empty: MdSpan = { text: '', bold: false, italic: false, code: false, url: '', key: '0' };
+    let empty: MdSpan = { text: '', bold: false, italic: false, code: false, url: '', filePath: '', key: '0' };
     spans.push(empty);
   }
   return spans;
@@ -371,11 +493,12 @@ export struct MarkdownText {
       console.error('Failed to open URL: ' + url);
     }
   };
+  onFilePathClick: (filePath: string) => void = () => {};
 
-  // Check if spans contain any URLs
-  private hasUrls(spans: MdSpan[]): boolean {
+  // Check if spans contain any URLs or file paths
+  private hasLinks(spans: MdSpan[]): boolean {
     for (let i = 0; i < spans.length; i++) {
-      if (spans[i].url.length > 0) return true;
+      if (spans[i].url.length > 0 || spans[i].filePath.length > 0) return true;
     }
     return false;
   }
@@ -512,9 +635,9 @@ export struct MarkdownText {
           .width('100%')
           .alignItems(VerticalAlign.Top)
         } else {
-          // paragraph - check if it has URLs
-          if (this.hasUrls(block.spans)) {
-            // Use Flex layout for clickable URLs
+          // paragraph - check if it has URLs or file paths
+          if (this.hasLinks(block.spans)) {
+            // Use Flex layout for clickable URLs / file paths
             Flex({ wrap: FlexWrap.Wrap }) {
               ForEach(block.spans, (span: MdSpan) => {
                 if (span.url.length > 0) {
@@ -524,6 +647,13 @@ export struct MarkdownText {
                     .decoration({ type: TextDecorationType.Underline, color: '#007AFF' })
                     .lineHeight(22)
                     .onClick(() => { this.onLinkClick(span.url); })
+                } else if (span.filePath.length > 0) {
+                  Text('\uD83D\uDCC1 ' + span.text)
+                    .fontSize(this.baseFontSize)
+                    .fontColor('#007AFF')
+                    .decoration({ type: TextDecorationType.Underline, color: '#007AFF' })
+                    .lineHeight(22)
+                    .onClick(() => { this.onFilePathClick(span.filePath); })
                 } else {
                   Text(span.text)
                     .fontSize(this.baseFontSize)
