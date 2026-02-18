@@ -164,6 +164,15 @@ export interface GatewayFileResult {
   mimeType: string;   // MIME type
 }
 
+// --------------- Chat attachment (for sending images/files to gateway) ---------------
+
+export interface ChatAttachment {
+  type?: string;      // optional type hint
+  mimeType?: string;  // e.g., 'image/jpeg', 'image/png'
+  fileName?: string;  // optional filename
+  content: string;    // base64-encoded content
+}
+
 // --------------- Gateway settings (persisted) ---------------
 
 export interface GatewaySettings {

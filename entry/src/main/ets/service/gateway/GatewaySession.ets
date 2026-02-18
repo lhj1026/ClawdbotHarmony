@@ -350,40 +350,41 @@ export class GatewaySession {
       this.log.error(this.logTag, `Connect handshake FAILED: ${errMsg}`);
 
       if (errMsg.includes('NOT_PAIRED')) {
-        // Keep WebSocket alive while pairing is being approved by operator session.
-        // The gateway invalidates the pairing requestId when the node WS closes,
-        // so we must stay connected until the approve completes.
-        this.log.info(this.logTag, 'Waiting for pairing approval (keeping WS alive)...');
+        // Gateway closes the WebSocket immediately after returning NOT_PAIRED (code=1008).
+        // The old approach of waiting here doesn't work because:
+        // 1. The requestId returned in the error is tied to this WebSocket connection
+        // 2. When Gateway closes the WebSocket, that requestId becomes invalid
+        // 3. Trying to approve an invalid requestId fails with "unknown requestId"
+        //
+        // New approach: Let the WebSocket close naturally, trigger pairing via operator session
+        // using node.pair.request (which creates a NEW requestId), then reconnect.
+        // The onPairingRequired callback will handle this flow.
+        this.log.info(this.logTag, 'NOT_PAIRED: Gateway will close WebSocket. Pairing will be handled on reconnect.');
+
+        // Set up pairing completion handler for when we reconnect
         let pairingTimeout = setTimeout(() => {
           if (this.pairingResolve) {
-            this.log.warn(this.logTag, 'Pairing approval timed out after 12s');
+            this.log.warn(this.logTag, 'Pairing approval timed out after 20s');
             let resolve = this.pairingResolve;
             this.pairingResolve = undefined;
             resolve();
           }
-        }, 12000);
+        }, 20000);  // Extended timeout for node.pair.request + approve flow
+
         new Promise<void>((resolve) => {
           this.pairingResolve = resolve;
         }).then(() => {
           clearTimeout(pairingTimeout);
           if (gen !== this.wsGeneration) return;
-          // Retry connect RPC on the SAME WebSocket with password auth.
-          // Token auth fails after pairing because gateway may not issue a node token during approve.
-          // Password auth bypasses the pairing requirement entirely.
-          this.log.info(this.logTag, 'Pairing done, retrying connect on same WebSocket (forcePassword=true)...');
-          return this.performConnect(savedNonce, true);
-        }).then(() => {
-          if (gen !== this.wsGeneration) return;
+          // Pairing completed via node.pair.request + approve.
+          // Force reconnect to establish authenticated connection.
+          this.log.info(this.logTag, 'Pairing done, forcing reconnect...');
           this.reconnectAttempt = 0;
-          this.log.info(this.logTag, 'Connect handshake SUCCESS (after pairing)');
-        }).catch((retryErr: Error) => {
-          if (gen !== this.wsGeneration) return;
-          let retryMsg = retryErr.message ?? '';
-          this.log.error(this.logTag, `Connect retry after pairing FAILED: ${retryMsg}`);
-          this.closeSocket();
-          this.reconnectAttempt = 0;
-          this.onWsClosedOnce(`Auth failed after pairing: ${retryMsg}`);
+          this.forceReconnect();
         });
+
+        // Don't close socket here - Gateway will close it with code 1008.
+        // The onWsClosed handler will trigger reconnect, and pairing will complete.
         return;
       }
 

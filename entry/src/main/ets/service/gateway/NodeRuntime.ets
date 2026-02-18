@@ -34,6 +34,7 @@ import {
   ExecApprovalRequest,
   AgentIdentity,
   GatewayFileResult,
+  ChatAttachment,
 } from './GatewayModels';
 import { image } from '@kit.ImageKit';
 import { buffer } from '@kit.ArkTS';
@@ -48,7 +49,7 @@ import { NotificationHelper } from '../NotificationHelper';
 import { ExperienceStorage } from '../ExperienceStorage';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.23.0';
+const APP_VERSION = '2.25.0';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -346,7 +347,7 @@ export class NodeRuntime {
    * Responses come back as 'chat' events (delta/final/error) via chat listeners.
    * @param chatSessionId optional client-side session ID for multi-session routing
    */
-  async sendChatMessage(text: string, chatSessionId?: string): Promise<string> {
+  async sendChatMessage(text: string, chatSessionId?: string, attachments?: ChatAttachment[]): Promise<string> {
     if (!this.operatorSession) {
       throw new Error('Gateway not connected');
     }
@@ -359,8 +360,13 @@ export class NodeRuntime {
     // Dynamic sessionKey: each local session maps to its own Gateway session for parallel execution
     let sessionKey = chatSessionId ? `agent:main:harmony:${chatSessionId}` : 'agent:main:main';
 
-    let params = `{"sessionKey":${JSON.stringify(sessionKey)},"message":${JSON.stringify(text)},"idempotencyKey":${JSON.stringify(idempotencyKey)}}`;
-    this.log.info(TAG, `sendChatMessage: key=${idempotencyKey} chatSession=${chatSessionId ?? 'none'} text=${text.substring(0, 100)}`);
+    // Build params JSON string directly (ArkTS requires explicit types for object literals)
+    let attachmentsJson = '';
+    if (attachments && attachments.length > 0) {
+      attachmentsJson = `,"attachments":${JSON.stringify(attachments)}`;
+    }
+    let params = `{"sessionKey":${JSON.stringify(sessionKey)},"message":${JSON.stringify(text)},"idempotencyKey":${JSON.stringify(idempotencyKey)}${attachmentsJson}}`;
+    this.log.info(TAG, `sendChatMessage: key=${idempotencyKey} chatSession=${chatSessionId ?? 'none'} attachments=${attachments?.length ?? 0} text=${text.substring(0, 100)}`);
 
     // Register idempotencyKey → chatSessionId before RPC (events may arrive before response)
     if (chatSessionId) {
@@ -1343,7 +1349,25 @@ export class NodeRuntime {
   private _pairingInProgress: boolean = false;
   private _pairingScopeMissing: boolean = false;
 
-  private async autoApproveNodePairing(requestId: string): Promise<void> {
+  /**
+   * Handle node pairing when Gateway returns NOT_PAIRED.
+   *
+   * **Problem:** Gateway closes the WebSocket immediately after returning NOT_PAIRED,
+   * which invalidates the requestId returned in the error response. The old approach
+   * of calling `node.pair.approve` with that requestId fails with "unknown requestId".
+   *
+   * **Solution:** Use `node.pair.request` RPC to create a NEW pending pairing request,
+   * then approve that request. This creates a stable requestId that doesn't depend on
+   * the closed WebSocket connection.
+   *
+   * Flow:
+   * 1. Wait for operator session to connect
+   * 2. Call `node.pair.request` with node info (caps, commands, etc.)
+   * 3. Get the new requestId from the response
+   * 4. Call `node.pair.approve` with the new requestId
+   * 5. Node session can now reconnect successfully
+   */
+  private async autoApproveNodePairing(_oldRequestId: string): Promise<void> {
     if (this._pairingApproved) {
       if (this.nodeSession) this.nodeSession.notifyPairingDone();
       return;
@@ -1373,43 +1397,90 @@ export class NodeRuntime {
       return;
     }
 
-    this.log.info(TAG, `Auto-pair: approving requestId=${requestId} via node.pair.approve`);
-    let params = `{"requestId":${JSON.stringify(requestId)}}`;
     try {
-      let res = await this.operatorSession.request('node.pair.approve', params, 10000);
-      this.log.info(TAG, `Auto-pair: succeeded (full response): ${res}`);
-      this._pairingApproved = true;
+      // Step 1: Get device identity for nodeId
+      let nodeId = '';
+      if (this._context) {
+        let identity = await this.identityStore.loadOrCreate(this._context);
+        nodeId = identity.deviceId;
+      }
+      if (nodeId.length === 0) {
+        this.log.error(TAG, 'Auto-pair: no device identity available');
+        this._pairingInProgress = false;
+        if (this.nodeSession) this.nodeSession.notifyPairingDone();
+        return;
+      }
 
-      // Extract and store device token from approve response if present
-      if (res.length > 0 && this._context) {
-        try {
-          let resObj = JSON.parse(res) as Record<string, Object>;
-          // Check common token field names
-          let token = (resObj['deviceToken'] ?? resObj['token'] ?? resObj['nodeToken'] ?? '') as string;
-          // Also check nested auth object
-          if (token.length === 0 && resObj['auth']) {
-            let authObj = resObj['auth'] as Record<string, string>;
-            token = authObj['deviceToken'] ?? authObj['token'] ?? '';
-          }
-          if (token.length > 0) {
-            this.log.info(TAG, `Auto-pair: found token in approve response (${token.length} chars), storing...`);
-            let identity = await this.identityStore.loadOrCreate(this._context);
-            await this.authStore.saveToken(this._context, identity.deviceId, 'node', token);
-          } else {
-            this.log.info(TAG, `Auto-pair: no token in approve response, keys: [${Object.keys(resObj).join(',')}]`);
-          }
-        } catch {
-          // ignore parse errors
+      // Step 2: Build node.pair.request params with full node info
+      let nodeOpts = this.buildNodeOptions();
+      let displayName = this._displayName.length > 0 ? this._displayName : 'ClawdBot HarmonyOS';
+      let capsJson = JSON.stringify(nodeOpts.caps);
+      let commandsJson = JSON.stringify(nodeOpts.commands);
+      let pairReqJson = `{"nodeId":${JSON.stringify(nodeId)},"displayName":${JSON.stringify(displayName)},"platform":"HarmonyOS","version":"${APP_VERSION}","deviceFamily":"HarmonyOS","caps":${capsJson},"commands":${commandsJson},"silent":true}`;
+
+      this.log.info(TAG, `Auto-pair: sending node.pair.request nodeId=${nodeId.substring(0, 12)}... caps=[${nodeOpts.caps.join(',')}]`);
+      let pairRes = await this.operatorSession.request('node.pair.request', pairReqJson, 10000);
+      this.log.info(TAG, `Auto-pair: node.pair.request response: ${pairRes.substring(0, 300)}`);
+
+      // Step 3: Parse response to get the new requestId
+      let newRequestId = '';
+      let pairingStatus = '';
+      if (pairRes.length > 0) {
+        let resObj = JSON.parse(pairRes) as Record<string, Object>;
+        pairingStatus = (resObj['status'] as string) ?? '';
+
+        // Check if already paired (status="paired")
+        if (pairingStatus === 'paired') {
+          this.log.info(TAG, 'Auto-pair: node already paired!');
+          this._pairingApproved = true;
+
+          // NOTE: Do NOT store the node token from pair.response!
+          // The 'token' in node.pair.request response is a NODE VERIFICATION TOKEN
+          // (used for node.pair.verify), NOT a DEVICE AUTH TOKEN (used for connect).
+          // Node sessions should always use password auth after pairing.
+          this.log.info(TAG, 'Auto-pair: node already paired. Will use password auth on reconnect.');
+
+          this._pairingInProgress = false;
+          if (this.nodeSession) this.nodeSession.notifyPairingDone();
+          return;
+        }
+
+        // Get requestId from pending request
+        let request = resObj['request'] as Record<string, Object> | undefined;
+        if (request && request['requestId']) {
+          newRequestId = request['requestId'] as string;
         }
       }
+
+      if (newRequestId.length === 0) {
+        this.log.error(TAG, `Auto-pair: no requestId in response, status=${pairingStatus}`);
+        this._pairingInProgress = false;
+        if (this.nodeSession) this.nodeSession.notifyPairingDone();
+        return;
+      }
+
+      // Step 4: Approve the new request
+      this.log.info(TAG, `Auto-pair: approving new requestId=${newRequestId}`);
+      let approveParams = `{"requestId":${JSON.stringify(newRequestId)}}`;
+      let approveRes = await this.operatorSession.request('node.pair.approve', approveParams, 10000);
+      this.log.info(TAG, `Auto-pair: approve succeeded: ${approveRes.substring(0, 300)}`);
+      this._pairingApproved = true;
+
+      // NOTE: Do NOT store the node token from approve response!
+      // The 'token' in node.pair.approve response is a NODE VERIFICATION TOKEN
+      // (used for node.pair.verify), NOT a DEVICE AUTH TOKEN (used for connect).
+      // Node sessions should always use password auth after pairing.
+      // Storing and using this token causes "device token mismatch" errors.
+      this.log.info(TAG, 'Auto-pair: pairing complete. Node session will use password auth on reconnect.');
     } catch (err) {
       let errMsg = (err as Error).message ?? '';
       this.log.error(TAG, `Auto-pair: failed: ${errMsg}`);
       if (errMsg.includes('missing scope')) {
         this._pairingScopeMissing = true;
-        this.log.warn(TAG, 'Auto-pair: operator lacks pairing scope. Set gateway.devices.autoApprove="all" in gateway config, or run: openclaw nodes approve ' + requestId);
+        this.log.warn(TAG, 'Auto-pair: operator lacks pairing scope. Set gateway.devices.autoApprove="all" in gateway config, or use CLI: openclaw nodes pending && openclaw nodes approve <requestId>');
       }
     }
+
     this._pairingInProgress = false;
     if (this.nodeSession) {
       this.log.info(TAG, 'Auto-pair: notifying node session pairing done');

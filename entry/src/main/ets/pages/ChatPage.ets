@@ -12,7 +12,7 @@ import { CustomSkillService } from '../service/CustomSkillService';
 import { CustomSkillDef } from '../model/Models';
 import { Constants } from '../common/Constants';
 import { NodeRuntime } from '../service/gateway/NodeRuntime';
-import { ConnectionState, GatewayChatEvent, ExecApprovalRequest, AgentIdentity } from '../service/gateway/GatewayModels';
+import { ConnectionState, GatewayChatEvent, ExecApprovalRequest, AgentIdentity, ChatAttachment } from '../service/gateway/GatewayModels';
 import { NotificationInfo } from '../service/gateway/NotificationCapability';
 import { LogService } from '../common/LogService';
 import { I18n } from '../common/I18n';
@@ -1646,7 +1646,7 @@ Respond ONLY with the JSON array.`;
     let enrichedText = await this.enrichWithLocation(textForAI);
 
     if (this.gwConnected) {
-      await this.sendViaGateway(enrichedText);
+      await this.sendViaGateway(enrichedText, allImagePaths);
     } else {
       await this.sendViaLocalAI(enrichedText);
     }
@@ -1698,9 +1698,9 @@ Respond ONLY with the JSON array.`;
 
 
   /** Send message through the gateway operator session (chat.send RPC). */
-  private async sendViaGateway(text: string): Promise<void> {
+  private async sendViaGateway(text: string, imagePaths?: string[]): Promise<void> {
     try {
-      this.log.info('ChatPage', `Sending via gateway: ${text.substring(0, 100)}`);
+      this.log.info('ChatPage', `Sending via gateway: ${text.substring(0, 100)} images=${imagePaths?.length ?? 0}`);
 
       // Note: In node mode, embedding/memory is handled entirely by the Gateway server.
       // No local memory injection needed here.
@@ -1717,6 +1717,22 @@ Respond ONLY with the JSON array.`;
         this.gwIdleTimer = -1;
       }
 
+      // Convert images to attachments (base64)
+      let attachments: ChatAttachment[] = [];
+      if (imagePaths && imagePaths.length > 0) {
+        for (let imgPath of imagePaths) {
+          try {
+            let attachment = await this.imageToAttachment(imgPath);
+            if (attachment) {
+              attachments.push(attachment);
+            }
+          } catch (err) {
+            this.log.error('ChatPage', `Failed to convert image to attachment: ${imgPath} - ${(err as Error).message}`);
+          }
+        }
+        this.log.info('ChatPage', `Converted ${attachments.length}/${imagePaths.length} images to attachments`);
+      }
+
       // Create placeholder assistant message BEFORE sending RPC
       // to avoid race condition where events arrive before gwRunId is set.
       // The handleGatewayChatEvent will adopt any runId it receives while gwRunId is empty.
@@ -1727,7 +1743,7 @@ Respond ONLY with the JSON array.`;
       this.scrollToEnd();
 
       let runtime = NodeRuntime.getInstance();
-      let runId = await runtime.sendChatMessage(text, this.currentSessionId);
+      let runId = await runtime.sendChatMessage(text, this.currentSessionId, attachments.length > 0 ? attachments : undefined);
       this.log.info('ChatPage', `chat.send returned runId=${runId}, current gwRunId=${this.gwRunId} session=${this.currentSessionId}`);
 
       // Only set gwRunId from RPC if events haven't already set it
@@ -4040,6 +4056,78 @@ Adjust your tone accordingly:
    * Called after the gateway or local AI response is finalized.
    * Strips MEDIA: references and other non-text content before reading.
    */
+  // ---- Convert image file to ChatAttachment (base64) ----
+
+  /**
+   * Read an image file and convert it to a ChatAttachment for sending to gateway.
+   * @param imagePath Path to the image file (can be file:// URI or absolute path)
+   * @returns ChatAttachment with base64-encoded content, or undefined on failure
+   */
+  private async imageToAttachment(imagePath: string): Promise<ChatAttachment | undefined> {
+    try {
+      // Normalize path: remove file:// prefix if present
+      let filePath = imagePath;
+      if (filePath.startsWith('file://')) {
+        filePath = filePath.substring(7);
+      }
+
+      // Open and read the file
+      let file = fileIo.openSync(filePath, fileIo.OpenMode.READ_ONLY);
+      let stat = fileIo.statSync(filePath);
+      let fileSize = stat.size;
+
+      // Limit file size to 10MB to avoid memory issues
+      const MAX_SIZE = 10 * 1024 * 1024;
+      if (fileSize > MAX_SIZE) {
+        this.log.warn('ChatPage', `Image too large (${fileSize} bytes), skipping: ${filePath}`);
+        fileIo.closeSync(file);
+        return undefined;
+      }
+
+      // Read file content
+      let arrayBuffer = new ArrayBuffer(fileSize);
+      let bytesRead = fileIo.readSync(file.fd, arrayBuffer);
+      fileIo.closeSync(file);
+
+      if (bytesRead <= 0) {
+        this.log.error('ChatPage', `Failed to read image file: ${filePath}`);
+        return undefined;
+      }
+
+      // Convert to base64
+      let uint8Array = new Uint8Array(arrayBuffer, 0, bytesRead);
+      let base64Helper = new util.Base64Helper();
+      let base64Content = base64Helper.encodeToStringSync(uint8Array);
+
+      // Determine MIME type from file extension
+      let mimeType = 'image/jpeg'; // default
+      let lowerPath = filePath.toLowerCase();
+      if (lowerPath.endsWith('.png')) {
+        mimeType = 'image/png';
+      } else if (lowerPath.endsWith('.gif')) {
+        mimeType = 'image/gif';
+      } else if (lowerPath.endsWith('.webp')) {
+        mimeType = 'image/webp';
+      } else if (lowerPath.endsWith('.bmp')) {
+        mimeType = 'image/bmp';
+      }
+
+      // Extract filename
+      let fileName = filePath.split('/').pop() ?? 'image.jpg';
+
+      this.log.info('ChatPage', `Converted image to attachment: ${fileName} (${bytesRead} bytes, ${mimeType})`);
+
+      return {
+        mimeType: mimeType,
+        fileName: fileName,
+        content: base64Content
+      };
+    } catch (err) {
+      this.log.error('ChatPage', `imageToAttachment failed: ${(err as Error).message}`);
+      return undefined;
+    }
+  }
+
   // ---- Auto-enrich: append GPS location for weather/location queries ----
 
   private async enrichWithLocation(text: string): Promise<string> {

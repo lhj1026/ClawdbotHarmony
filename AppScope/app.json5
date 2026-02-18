@@ -2,8 +2,8 @@
   "app": {
     "bundleName": "com.hongjieliu.clawdbot",
     "vendor": "clawdbot",
-    "versionCode": 2024001,
-    "versionName": "2.24.1",
+    "versionCode": 2025000,
+    "versionName": "2.25.0",
     "icon": "$media:app_icon",
     "label": "$string:app_name"
   }
