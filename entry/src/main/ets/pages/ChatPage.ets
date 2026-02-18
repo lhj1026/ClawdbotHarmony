@@ -3186,8 +3186,17 @@ Respond ONLY with the JSON array.`;
       let asrKey = (await store.get('asr_key', '')) as string;
       let asrModel = (await store.get('asr_model', '')) as string;
 
+      // Fallback: if ASR key is empty, try to use SiliconFlow AI key (same provider)
+      if (asrKey.length === 0) {
+        let siliconflowKey = (await store.get('siliconflow_api_key', '')) as string;
+        if (siliconflowKey.length > 0) {
+          asrKey = siliconflowKey;
+          this.asrDebug('ASR using SiliconFlow AI key as fallback');
+        }
+      }
+
       if (asrUrl.length === 0 || asrKey.length === 0) {
-        this.asrDebug('ASR API not configured');
+        this.asrDebug('ASR API not configured (no ASR key and no SiliconFlow key)');
         return '';
       }
 

@@ -49,7 +49,7 @@ import { NotificationHelper } from '../NotificationHelper';
 import { ExperienceStorage } from '../ExperienceStorage';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.30.0';
+const APP_VERSION = '2.30.1';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
