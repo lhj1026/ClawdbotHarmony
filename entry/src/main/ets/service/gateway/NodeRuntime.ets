@@ -47,10 +47,11 @@ import { LogService } from '../../common/LogService';
 import { Constants } from '../../common/Constants';
 import { NotificationHelper } from '../NotificationHelper';
 import { ExperienceStorage } from '../ExperienceStorage';
+import { ExperiencePack } from '../../model/ExperiencePack';
 import { MemoryService } from '../MemoryService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.32.0';
+const APP_VERSION = '2.33.0';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -2281,46 +2282,81 @@ export class NodeRuntime {
   // ---- Experience Pack sync ----
 
   /** Send the local experience pack and memories to the gateway after connecting.
-   *  This pushes the phone (source of truth) to the server. */
+   *  Uses agent.request so the AI agent processes and persists the data
+   *  to workspace files (MEMORY.md, skills, etc.). */
   private async syncExperiencePack(): Promise<void> {
     if (!this._context || !this.operatorSession) return;
+
+    let storage = ExperienceStorage.getInstance();
+    let memSvc = MemoryService.getInstance();
+
+    // Collect experience pack
+    let pack: ExperiencePack | null = null;
     try {
-      let storage = ExperienceStorage.getInstance();
-      let pack = await storage.load(this._context);
-      if (!pack) {
-        this.log.info(TAG, 'No experience pack to sync');
-        return;
-      }
-      let payload = JSON.stringify({ type: 'experience_sync', data: pack });
-      await this.operatorSession.sendNodeEvent('experience_sync', payload);
-      await storage.markSynced(this._context);
-      this.log.info(TAG, 'Experience pack synced to gateway');
+      pack = await storage.load(this._context);
     } catch (err) {
-      this.log.warn(TAG, `Experience sync failed: ${(err as Error).message ?? ''}`);
+      this.log.warn(TAG, `Experience load failed: ${(err as Error).message ?? ''}`);
     }
 
-    // Also push local memory items to server (phone is source of truth)
+    // Collect memory items
+    let memItems: Record<string, string | number>[] = [];
     try {
-      let memSvc = MemoryService.getInstance();
       let items = await memSvc.loadAll(this._context);
-      if (items.length > 0) {
-        let memPayload: Record<string, string | number>[] = [];
-        for (let item of items) {
-          let entry: Record<string, string | number> = {
-            'type': item.memType,
-            'content': item.content,
-            'importance': item.importance,
-            'createdAt': item.createdAt,
-          };
-          memPayload.push(entry);
-        }
-        let syncObj: Record<string, string | Record<string, string | number>[]> = { 'type': 'memory_sync', 'items': memPayload };
-        let payload = JSON.stringify(syncObj);
-        await this.operatorSession.sendNodeEvent('memory_sync', payload);
-        this.log.info(TAG, `Pushed ${items.length} memory items to server`);
+      for (let item of items) {
+        let entry: Record<string, string | number> = {
+          'type': item.memType,
+          'content': item.content,
+          'importance': item.importance,
+          'createdAt': item.createdAt,
+        };
+        memItems.push(entry);
       }
     } catch (err) {
-      this.log.warn(TAG, `Memory push failed: ${(err as Error).message ?? ''}`);
+      this.log.warn(TAG, `Memory load failed: ${(err as Error).message ?? ''}`);
+    }
+
+    if (!pack && memItems.length === 0) {
+      this.log.info(TAG, 'No experience or memory to sync');
+      return;
+    }
+
+    // Build a concise summary for the agent
+    let parts: string[] = [];
+    parts.push('[System: Experience sync from mobile device]');
+
+    if (pack && pack.experiences.length > 0) {
+      parts.push(`\nExperience Pack (${pack.experiences.length} experiences):`);
+      parts.push('```json');
+      parts.push(storage.exportForSharing());
+      parts.push('```');
+    }
+
+    if (memItems.length > 0) {
+      parts.push(`\nMemory Items (${memItems.length}):`);
+      parts.push('```json');
+      parts.push(JSON.stringify(memItems, null, 2));
+      parts.push('```');
+    }
+
+    parts.push('\nPlease merge these into the workspace:');
+    parts.push('- Skills → workspace skill files or TOOLS.md');
+    parts.push('- Memories → MEMORY.md or memory/ files');
+    parts.push('- Use append-only: do not overwrite existing content');
+    parts.push('- Respond briefly confirming what was saved.');
+
+    let message = parts.join('\n');
+
+    try {
+      let agentPayload = JSON.stringify({
+        'message': message,
+        'sessionKey': 'main',
+        'deliver': false,
+      });
+      await this.operatorSession.sendNodeEvent('agent.request', agentPayload);
+      await storage.markSynced(this._context);
+      this.log.info(TAG, 'Experience pack sent to agent for processing');
+    } catch (err) {
+      this.log.warn(TAG, `Experience sync via agent.request failed: ${(err as Error).message ?? ''}`);
     }
   }
 

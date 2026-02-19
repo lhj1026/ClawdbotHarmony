@@ -35,13 +35,16 @@ struct Index {
     // triggers UI re-render
   }
 
-  /** Auto-connect to Gateway if Node Mode is enabled in settings */
+  /** Auto-connect to Gateway on startup using saved settings */
   private async autoConnectGateway(): Promise<void> {
     try {
       let ctx = getContext(this) as common.UIAbilityContext;
       let store = await preferences.getPreferences(ctx, Constants.PREFS_GATEWAY);
-      let enabled = (await store.get('enabled', false)) as boolean;
-      if (!enabled) return;
+      let nodeEnabled = (await store.get('enabled', false)) as boolean;
+      let operatorEnabled = (await store.get('operatorEnabled', false)) as boolean;
+
+      // Need at least one session type enabled
+      if (!nodeEnabled && !operatorEnabled) return;
 
       let host = (await store.get('host', '')) as string;
       if (host.length === 0) return;
@@ -66,9 +69,11 @@ struct Index {
       await runtime.loadDisplayName(ctx);
       runtime.connect(ctx, endpoint,
         token.length > 0 ? token : undefined,
-        password.length > 0 ? password : undefined);
+        password.length > 0 ? password : undefined,
+        operatorEnabled,
+        nodeEnabled);
 
-      LogService.getInstance().info('App', `Auto-connecting gateway: ${host}:${port}`);
+      LogService.getInstance().info('App', `Auto-connecting gateway: ${host}:${port} operator=${operatorEnabled} node=${nodeEnabled}`);
     } catch {
       LogService.getInstance().warn('App', 'Failed to auto-connect gateway');
     }
@@ -93,7 +98,7 @@ struct Index {
     Column() {
       ChatPage()
       // Hidden version tag for pre-commit consistency check
-      Text('v2.32.0').fontSize(0).opacity(0).height(0)
+      Text('v2.33.0').fontSize(0).opacity(0).height(0)
     }
     .width('100%')
     .height('100%')

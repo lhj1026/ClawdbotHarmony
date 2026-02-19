@@ -806,6 +806,7 @@ export struct ChatPage {
             .padding({ left: 16, right: 16 })
             .fontSize(15)
             .enableKeyboardOnFocus(false)
+            .copyOption(CopyOptions.LocalDevice)
             .onChange((v: string) => { this.inputText = v; })
             .onSubmit(() => { this.send(); })
         }

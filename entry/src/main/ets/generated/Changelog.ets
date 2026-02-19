@@ -8,9 +8,20 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.32.0';
+export const APP_VERSION: string = '2.33.0';
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '2.33.0',
+    date: '2026-02-19',
+    features: [
+      '经验包跨服务器同步：通过 agent.request 将经验包和记忆推送到 Gateway workspace',
+      'Append-only 合并策略：不覆盖已有内容，只追加新条目',
+    ],
+    fixes: [
+
+    ],
+  },
   {
     version: '2.32.0',
     date: '2026-02-19',
@@ -307,4 +318,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.32.0';
+export const LATEST_VERSION: string = '2.33.0';
