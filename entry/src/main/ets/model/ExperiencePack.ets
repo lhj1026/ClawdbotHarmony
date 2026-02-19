@@ -12,17 +12,21 @@ export type ShareLevel = 'public' | 'summary' | 'private';
 
 /** 技能（与 Anthropic skills 格式一致）*/
 export interface Skill {
-  name: string;           // 技能名称
+  name: string;           // 技能名称（唯一标识）
   description: string;    // 简短描述
   instructions: string;   // 执行指令 (markdown)
   shareLevel: ShareLevel; // 分享权限，默认 'public'
+  lastModified?: number;  // 最后修改时间戳（同步用）
+  deletedAt?: number;     // 删除时间戳（tombstone，0 = 未删除）
 }
 
 /** 记忆 */
 export interface Memory {
-  key: string;            // 如 "项目路径" / "当前版本"
+  key: string;            // 如 "项目路径" / "当前版本"（唯一标识）
   value: string;          // 具体值
   shareLevel: ShareLevel; // 分享权限，默认 'private'
+  lastModified?: number;  // 最后修改时间戳（同步用）
+  deletedAt?: number;     // 删除时间戳（tombstone，0 = 未删除）
 }
 
 /** 一条经验 = skills + memory */
@@ -79,6 +83,8 @@ export function createSkill(name: string, description: string, instructions: str
     description,
     instructions,
     shareLevel: 'public',
+    lastModified: Date.now(),
+    deletedAt: 0,
   };
 }
 
@@ -88,7 +94,19 @@ export function createMemory(key: string, value: string): Memory {
     key,
     value,
     shareLevel: 'private',
+    lastModified: Date.now(),
+    deletedAt: 0,
   };
+}
+
+/** 获取未删除的技能 */
+export function getActiveSkills(exp: Experience): Skill[] {
+  return exp.skills.filter((s: Skill) => !s.deletedAt || s.deletedAt === 0);
+}
+
+/** 获取未删除的记忆 */
+export function getActiveMemories(exp: Experience): Memory[] {
+  return exp.memory.filter((m: Memory) => !m.deletedAt || m.deletedAt === 0);
 }
 
 /** 获取分享级别图标 */

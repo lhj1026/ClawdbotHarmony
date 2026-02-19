@@ -2,7 +2,7 @@
 import { router } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { ExperienceStorage } from '../service/ExperienceStorage';
-import { Experience, Skill, Memory, ShareLevel, getShareLevelIcon } from '../model/ExperiencePack';
+import { Experience, Skill, Memory, ShareLevel, getShareLevelIcon, getActiveSkills, getActiveMemories } from '../model/ExperiencePack';
 import { SkillsPage } from './SkillsPage';
 import { MemoryPage } from './MemoryPage';
 import { I18n } from '../common/I18n';
@@ -59,45 +59,13 @@ struct ExperienceRoutePage {
 
   build() {
     Navigation() {
-      if (this.selectedExp) {
-        // Experience detail view
-        this.ExperienceDetail(this.selectedExp)
-      } else {
-        // Tab view
-        Tabs({ barPosition: BarPosition.Start, index: this.currentTab }) {
-          TabContent() {
-            this.ExperienceTab()
-          }
-          .tabBar(this.TabBarItem(0, '📚', this.tabTitles[0]))
-
-          TabContent() {
-            SkillsPage()
-          }
-          .tabBar(this.TabBarItem(1, '⚡', this.tabTitles[1]))
-
-          TabContent() {
-            MemoryPage({ isActive: this.currentTab === 2 })
-          }
-          .tabBar(this.TabBarItem(2, '🧠', this.tabTitles[2]))
-        }
-        .barMode(BarMode.Fixed)
-        .barWidth('100%')
-        .barHeight(56)
-        .onChange((index: number) => {
-          this.currentTab = index;
-        })
-      }
+      MemoryPage({ isActive: true })
     }
-    .title(this.selectedExp ? this.selectedExp.name : I18n.t('experience.title'))
+    .title(I18n.t('experience.title'))
     .titleMode(NavigationTitleMode.Mini)
     .navBarPosition(NavBarPosition.Start)
     .mode(NavigationMode.Stack)
     .backButtonIcon($r('sys.media.ohos_ic_public_arrow_left'))
-    .onNavBarStateChange((isVisible: boolean) => {
-      if (!isVisible && this.selectedExp) {
-        this.selectedExp = null;
-      }
-    })
   }
 
   @Builder
@@ -260,14 +228,14 @@ struct ExperienceRoutePage {
       }
 
       Row() {
-        Text(`${exp.skills.length} ${I18n.t('experience.skills')}`)
+        Text(`${getActiveSkills(exp).length} ${I18n.t('experience.skills')}`)
           .fontSize(12)
           .fontColor('#999999')
         Text('·')
           .fontSize(12)
           .fontColor('#CCCCCC')
           .margin({ left: 8, right: 8 })
-        Text(`${exp.memory.length} ${I18n.t('experience.memories')}`)
+        Text(`${getActiveMemories(exp).length} ${I18n.t('experience.memories')}`)
           .fontSize(12)
           .fontColor('#999999')
         Blank()
@@ -302,29 +270,29 @@ struct ExperienceRoutePage {
             .padding(16)
         }
 
-        // Skills section
-        this.SectionTitle(I18n.t('experience.skills'), exp.skills.length)
-        if (exp.skills.length === 0) {
+        // Skills section (filter out deleted)
+        this.SectionTitle(I18n.t('experience.skills'), getActiveSkills(exp).length)
+        if (getActiveSkills(exp).length === 0) {
           Text(I18n.t('experience.noSkills'))
             .fontSize(13)
             .fontColor('#999999')
             .padding(16)
         } else {
-          ForEach(exp.skills, (skill: Skill) => {
+          ForEach(getActiveSkills(exp), (skill: Skill) => {
             this.SkillCard(skill)
           })
         }
 
-        // Memory section
-        this.SectionTitle(I18n.t('experience.memories'), exp.memory.length)
-        if (exp.memory.length === 0) {
+        // Memory section (filter out deleted)
+        this.SectionTitle(I18n.t('experience.memories'), getActiveMemories(exp).length)
+        if (getActiveMemories(exp).length === 0) {
           Text(I18n.t('experience.noMemory'))
             .fontSize(13)
             .fontColor('#999999')
             .padding(16)
         } else {
           Column() {
-            ForEach(exp.memory, (mem: Memory) => {
+            ForEach(getActiveMemories(exp), (mem: Memory) => {
               this.MemoryRow(mem)
             })
           }

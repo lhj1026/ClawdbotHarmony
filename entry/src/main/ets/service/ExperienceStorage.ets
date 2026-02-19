@@ -126,6 +126,8 @@ export class ExperienceStorage {
     let pack = await this.ensureLoaded(context);
     let exp = pack.experiences.find((e: Experience) => e.id === expId);
     if (exp) {
+      skill.lastModified = Date.now();
+      skill.deletedAt = 0;
       let idx = exp.skills.findIndex((s: Skill) => s.name === skill.name);
       if (idx >= 0) {
         exp.skills[idx] = skill;
@@ -141,7 +143,12 @@ export class ExperienceStorage {
     let pack = await this.ensureLoaded(context);
     let exp = pack.experiences.find((e: Experience) => e.id === expId);
     if (exp) {
-      exp.skills = exp.skills.filter((s: Skill) => s.name !== skillName);
+      let skill = exp.skills.find((s: Skill) => s.name === skillName);
+      if (skill) {
+        // Tombstone: mark as deleted instead of removing (for sync propagation)
+        skill.deletedAt = Date.now();
+        skill.lastModified = Date.now();
+      }
       exp.updatedAt = Date.now();
       await this.save(context, pack);
     }
@@ -153,6 +160,8 @@ export class ExperienceStorage {
     let pack = await this.ensureLoaded(context);
     let exp = pack.experiences.find((e: Experience) => e.id === expId);
     if (exp) {
+      mem.lastModified = Date.now();
+      mem.deletedAt = 0;
       let idx = exp.memory.findIndex((m: Memory) => m.key === mem.key);
       if (idx >= 0) {
         exp.memory[idx] = mem;
@@ -168,7 +177,12 @@ export class ExperienceStorage {
     let pack = await this.ensureLoaded(context);
     let exp = pack.experiences.find((e: Experience) => e.id === expId);
     if (exp) {
-      exp.memory = exp.memory.filter((m: Memory) => m.key !== key);
+      let mem = exp.memory.find((m: Memory) => m.key === key);
+      if (mem) {
+        // Tombstone: mark as deleted instead of removing (for sync propagation)
+        mem.deletedAt = Date.now();
+        mem.lastModified = Date.now();
+      }
       exp.updatedAt = Date.now();
       await this.save(context, pack);
     }
@@ -213,9 +227,10 @@ export class ExperienceStorage {
         updatedAt: exp.updatedAt,
       };
 
-      // 过滤 skills
+      // 过滤 skills (skip deleted)
       for (let j = 0; j < exp.skills.length; j++) {
         let skill = exp.skills[j];
+        if (skill.deletedAt && skill.deletedAt > 0) continue;
         if (skill.shareLevel === 'public') {
           // 完整分享
           filteredExp.skills.push(skill);
@@ -231,9 +246,10 @@ export class ExperienceStorage {
         // private 的不分享
       }
 
-      // 过滤 memory
+      // 过滤 memory (skip deleted)
       for (let k = 0; k < exp.memory.length; k++) {
         let mem = exp.memory[k];
+        if (mem.deletedAt && mem.deletedAt > 0) continue;
         if (mem.shareLevel === 'public') {
           filteredExp.memory.push(mem);
         } else if (mem.shareLevel === 'summary') {
@@ -291,60 +307,162 @@ export class ExperienceStorage {
   // ==================== 服务端合并更新 ====================
 
   /**
-   * Append-only merge: never overwrite existing experiences.
-   * New experiences are appended; duplicates (same id) are skipped.
-   * Skills and memories within existing experiences are also append-only.
+   * Smart merge (v2): timestamp-based per-item sync.
+   * - Match experiences by id or name
+   * - Match skills by name, memory by key
+   * - Each item has lastModified: newer wins
+   * - Deleted items propagate via deletedAt tombstone
+   * Returns merge stats: { added, updated, deleted, skipped }
    */
-  async mergeUpdate(context: common.UIAbilityContext, partial: Record<string, Object>): Promise<void> {
+  async mergeUpdate(context: common.UIAbilityContext, partial: Record<string, Object>): Promise<Record<string, number>> {
     let pack = await this.ensureLoaded(context);
+    let stats: Record<string, number> = { 'added': 0, 'updated': 0, 'deleted': 0, 'skipped': 0 };
 
     if (partial['experiences'] && Array.isArray(partial['experiences'])) {
-      let newExps = partial['experiences'] as Experience[];
-      let existingIds = new Set<string>();
+      let remoteExps = partial['experiences'] as Experience[];
+
+      // Build lookup by id AND by name
+      let localById = new Map<string, Experience>();
+      let localByName = new Map<string, Experience>();
       for (let e of pack.experiences) {
-        existingIds.add(e.id);
+        localById.set(e.id, e);
+        localByName.set(e.name.toLowerCase(), e);
       }
 
-      for (let i = 0; i < newExps.length; i++) {
-        let exp = newExps[i];
-        if (!exp.id) exp.id = generateId();
-        if (!exp.createdAt) exp.createdAt = Date.now();
-        if (!exp.updatedAt) exp.updatedAt = Date.now();
+      for (let i = 0; i < remoteExps.length; i++) {
+        let remote = remoteExps[i];
+        if (!remote.id) remote.id = generateId();
+        if (!remote.createdAt) remote.createdAt = Date.now();
+        if (!remote.updatedAt) remote.updatedAt = Date.now();
 
-        if (existingIds.has(exp.id)) {
-          // Append-only: merge new skills/memories into existing experience
-          let existing = pack.experiences.find((e: Experience) => e.id === exp.id);
-          if (existing) {
-            let existingSkillNames = new Set<string>();
-            for (let s of existing.skills) {
-              existingSkillNames.add(s.name);
-            }
-            for (let s of exp.skills) {
-              if (!existingSkillNames.has(s.name)) {
-                existing.skills.push(s);
+        // Find matching local experience
+        let local = localById.get(remote.id);
+        if (!local && remote.name) {
+          local = localByName.get(remote.name.toLowerCase());
+        }
+
+        if (local) {
+          let changed = false;
+
+          // --- Merge skills by name (timestamp-based) ---
+          let localSkillMap = new Map<string, Skill>();
+          for (let s of local.skills) {
+            localSkillMap.set(s.name.toLowerCase(), s);
+          }
+          for (let rs of remote.skills) {
+            let remoteModified = rs.lastModified ?? remote.updatedAt ?? 0;
+            let ls = localSkillMap.get(rs.name.toLowerCase());
+
+            if (!ls) {
+              // New skill from remote
+              if (!rs.deletedAt || rs.deletedAt === 0) {
+                if (!rs.lastModified) rs.lastModified = remoteModified;
+                local.skills.push(rs);
+                changed = true;
+                stats['added'] = (stats['added'] ?? 0) + 1;
+              }
+            } else {
+              let localModified = ls.lastModified ?? local.updatedAt ?? 0;
+
+              // Remote is deleted — propagate deletion if remote is newer
+              if (rs.deletedAt && rs.deletedAt > 0 && remoteModified > localModified) {
+                ls.deletedAt = rs.deletedAt;
+                ls.lastModified = remoteModified;
+                changed = true;
+                stats['deleted'] = (stats['deleted'] ?? 0) + 1;
+              }
+              // Remote is newer and not deleted — update
+              else if (remoteModified > localModified && (!rs.deletedAt || rs.deletedAt === 0)) {
+                ls.instructions = rs.instructions;
+                ls.description = rs.description;
+                ls.lastModified = remoteModified;
+                // Keep local shareLevel
+                changed = true;
+                stats['updated'] = (stats['updated'] ?? 0) + 1;
+              } else {
+                stats['skipped'] = (stats['skipped'] ?? 0) + 1;
               }
             }
-            let existingMemKeys = new Set<string>();
-            for (let m of existing.memory) {
-              existingMemKeys.add(m.key);
-            }
-            for (let m of exp.memory) {
-              if (!existingMemKeys.has(m.key)) {
-                existing.memory.push(m);
+          }
+
+          // --- Merge memory by key (timestamp-based) ---
+          let localMemMap = new Map<string, Memory>();
+          for (let m of local.memory) {
+            localMemMap.set(m.key.toLowerCase(), m);
+          }
+          for (let rm of remote.memory) {
+            let remoteModified = rm.lastModified ?? remote.updatedAt ?? 0;
+            let lm = localMemMap.get(rm.key.toLowerCase());
+
+            if (!lm) {
+              // New memory from remote
+              if (!rm.deletedAt || rm.deletedAt === 0) {
+                if (!rm.lastModified) rm.lastModified = remoteModified;
+                local.memory.push(rm);
+                changed = true;
+                stats['added'] = (stats['added'] ?? 0) + 1;
+              }
+            } else {
+              let localModified = lm.lastModified ?? local.updatedAt ?? 0;
+
+              // Remote is deleted — propagate
+              if (rm.deletedAt && rm.deletedAt > 0 && remoteModified > localModified) {
+                lm.deletedAt = rm.deletedAt;
+                lm.lastModified = remoteModified;
+                changed = true;
+                stats['deleted'] = (stats['deleted'] ?? 0) + 1;
+              }
+              // Remote is newer — update
+              else if (remoteModified > localModified && (!rm.deletedAt || rm.deletedAt === 0)) {
+                lm.value = rm.value;
+                lm.lastModified = remoteModified;
+                // Keep local shareLevel
+                changed = true;
+                stats['updated'] = (stats['updated'] ?? 0) + 1;
+              } else {
+                stats['skipped'] = (stats['skipped'] ?? 0) + 1;
               }
             }
-            existing.updatedAt = Date.now();
+          }
+
+          if (changed) {
+            local.updatedAt = Date.now();
           }
         } else {
-          // New experience: append
-          pack.experiences.push(exp);
-          existingIds.add(exp.id);
+          // New experience from remote
+          let dominated = false;
+          for (let existing of pack.experiences) {
+            if (existing.name.toLowerCase() === remote.name.toLowerCase()) {
+              dominated = true;
+              break;
+            }
+          }
+          if (!dominated) {
+            pack.experiences.push(remote);
+            localById.set(remote.id, remote);
+            localByName.set(remote.name.toLowerCase(), remote);
+            stats['added'] = (stats['added'] ?? 0) + 1;
+          } else {
+            stats['skipped'] = (stats['skipped'] ?? 0) + 1;
+          }
         }
       }
     }
 
+    // Clean up: remove items with deletedAt older than 30 days
+    let thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    for (let exp of pack.experiences) {
+      exp.skills = exp.skills.filter((s: Skill) => !s.deletedAt || s.deletedAt === 0 || s.deletedAt > thirtyDaysAgo);
+      exp.memory = exp.memory.filter((m: Memory) => !m.deletedAt || m.deletedAt === 0 || m.deletedAt > thirtyDaysAgo);
+    }
+
     await this.save(context, pack);
-    this.log.info(TAG, 'Merged server update (append-only)');
+    let added = stats['added'] ?? 0;
+    let updated = stats['updated'] ?? 0;
+    let deleted = stats['deleted'] ?? 0;
+    let skipped = stats['skipped'] ?? 0;
+    this.log.info(TAG, `Smart merge v2: +${added} added, ~${updated} updated, -${deleted} deleted, =${skipped} skipped`);
+    return stats;
   }
 
   // ==================== 统计 ====================
@@ -357,7 +475,7 @@ export class ExperienceStorage {
     if (!this._pack) return 0;
     let count = 0;
     for (let i = 0; i < this._pack.experiences.length; i++) {
-      count += this._pack.experiences[i].skills.length;
+      count += this._pack.experiences[i].skills.filter((s: Skill) => !s.deletedAt || s.deletedAt === 0).length;
     }
     return count;
   }
@@ -366,7 +484,7 @@ export class ExperienceStorage {
     if (!this._pack) return 0;
     let count = 0;
     for (let i = 0; i < this._pack.experiences.length; i++) {
-      count += this._pack.experiences[i].memory.length;
+      count += this._pack.experiences[i].memory.filter((m: Memory) => !m.deletedAt || m.deletedAt === 0).length;
     }
     return count;
   }
