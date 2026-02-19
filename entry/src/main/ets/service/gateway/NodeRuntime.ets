@@ -51,7 +51,7 @@ import { ExperiencePack } from '../../model/ExperiencePack';
 import { MemoryService } from '../MemoryService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.33.0';
+const APP_VERSION = '2.33.1';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -2384,17 +2384,21 @@ export class NodeRuntime {
   private async pullServerExperience(): Promise<void> {
     if (!this.nodeSession) return;
     try {
-      let pullMessage = '[System: Experience pull request from mobile device]\n\n'
-        + 'Read your workspace MEMORY.md and TOOLS.md. Extract any facts, preferences, '
-        + 'instructions, and skills worth syncing to the mobile device.\n\n'
+      let pullMessage = '[System: Full experience dump request from mobile device]\n\n'
+        + 'Read ALL of these workspace files (use the read tool): MEMORY.md, TOOLS.md, USER.md, SOUL.md, IDENTITY.md.\n'
+        + 'For each file that exists, create a memory entry with the FULL file content (do not summarize or filter).\n\n'
         + 'Return ONLY a JSON block wrapped in <!--EXPERIENCE_PULL_START--> and '
         + '<!--EXPERIENCE_PULL_END--> markers, with this structure:\n'
-        + '```\n'
         + '<!--EXPERIENCE_PULL_START-->\n'
-        + '{"experiences":[],"memories":[{"type":"fact","content":"...","importance":0.8}]}\n'
+        + '{"experiences":[],"memories":['
+        + '{"type":"fact","content":"[MEMORY.md full content here]","source":"MEMORY.md","importance":1.0},'
+        + '{"type":"instruction","content":"[SOUL.md full content here]","source":"SOUL.md","importance":1.0},'
+        + '{"type":"fact","content":"[USER.md full content here]","source":"USER.md","importance":1.0},'
+        + '{"type":"fact","content":"[IDENTITY.md full content here]","source":"IDENTITY.md","importance":1.0},'
+        + '{"type":"fact","content":"[TOOLS.md full content here]","source":"TOOLS.md","importance":1.0}'
+        + ']}\n'
         + '<!--EXPERIENCE_PULL_END-->\n'
-        + '```\n'
-        + 'If nothing to sync, return empty arrays. No other text outside the markers.';
+        + 'Replace placeholders with actual file contents. If a file does not exist, omit that entry. No other text outside the markers.';
 
       let pullPayload = JSON.stringify({
         'message': pullMessage,
