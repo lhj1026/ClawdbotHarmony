@@ -98,7 +98,7 @@ struct Index {
     Column() {
       ChatPage()
       // Hidden version tag for pre-commit consistency check
-      Text('v2.33.1').fontSize(0).opacity(0).height(0)
+      Text('v2.33.2').fontSize(0).opacity(0).height(0)
     }
     .width('100%')
     .height('100%')

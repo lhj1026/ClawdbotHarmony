@@ -880,47 +880,28 @@ Respond ONLY with the JSON array.`;
         return;
       }
 
-      let resJson = await runtime.fetchMemories();
-      if (resJson.length === 0) {
-        promptAction.showToast({ message: I18n.t('chat.noNewMemory'), duration: 1500 });
+      promptAction.showToast({ message: '正在从服务器拉取...', duration: 2000 });
+
+      // Use agent.request path (asks AI to read workspace files and return structured data)
+      // Returns [success(0|1), count]
+      let result = await runtime.pullServerExperienceWithCallback();
+      let success = result[0] > 0;
+      let count = result[1];
+      if (!success) {
+        promptAction.showToast({ message: I18n.t('memory.syncFailed'), duration: 1500 });
         this.isSyncing = false;
         return;
       }
 
-      let res = JSON.parse(resJson) as Record<string, Object>;
-      let items = res['items'] as Object[] | undefined;
-      if (!items || !Array.isArray(items) || items.length === 0) {
-        promptAction.showToast({ message: I18n.t('chat.noNewMemory'), duration: 1500 });
-        this.isSyncing = false;
-        return;
-      }
-
-      let localItems = await this.memSvc.loadAll(ctx);
-      let localContents = new Set<string>();
-      for (let li of localItems) {
-        localContents.add(li.content.toLowerCase().trim());
-      }
-
-      let addedCount = 0;
-      for (let item of items) {
-        let serverItem = item as Record<string, Object>;
-        let content = String(serverItem['content'] ?? '');
-        let memType = String(serverItem['type'] ?? serverItem['memType'] ?? 'fact');
-        let importance = (serverItem['importance'] as number) ?? 0.5;
-
-        if (content.length > 0 && !localContents.has(content.toLowerCase().trim())) {
-          let newItem = await this.memSvc.add(ctx, memType, content, importance);
-          this.entries.push(newItem);
-          localContents.add(content.toLowerCase().trim());
-          addedCount++;
-        }
-      }
+      // Reload all entries from local storage (pull already merged data)
+      let allItems = await this.memSvc.loadAll(ctx);
+      this.entries = allItems;
 
       promptAction.showToast({
-        message: I18n.t('memory.syncDone').replace('{0}', addedCount.toString()),
+        message: I18n.t('memory.syncDone').replace('{0}', count.toString()),
         duration: 2000
       });
-      this.log.info('MemoryPage', `Sync from server: ${items.length} server items, ${addedCount} new merged`);
+      this.log.info('MemoryPage', `Sync from server via agent.request: ${count} memories pulled`);
     } catch (e) {
       this.log.warn('MemoryPage', `Sync from server failed: ${(e as Error).message ?? ''}`);
       promptAction.showToast({ message: I18n.t('memory.syncFailed'), duration: 1500 });

@@ -51,7 +51,7 @@ import { ExperiencePack } from '../../model/ExperiencePack';
 import { MemoryService } from '../MemoryService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.33.1';
+const APP_VERSION = '2.33.2';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -133,6 +133,9 @@ export class NodeRuntime {
 
   // A2UI / inline canvas listeners — notify ChatPage when A2UI or canvas content arrives
   private _a2uiListeners: Array<(type: string, content: string) => void> = [];
+
+  // Experience pull completion callbacks — notify MemoryPage when pull finishes
+  private _experiencePullCallbacks: Array<(success: boolean, count: number) => void> = [];
 
   // Inline canvas controller — provided by ChatPage/MessageBubble for eval/snapshot
   private _inlineCanvasController: webview.WebviewController | undefined = undefined;
@@ -2381,6 +2384,30 @@ export class NodeRuntime {
   /** Pull experience/memories from the server by asking the AI agent to read
    *  workspace files and return them in a structured format.
    *  The response arrives via chat events; detectExperienceInChat() parses it. */
+  /** Public method: trigger a server experience pull and get notified on completion.
+   *  Returns a Promise that resolves with [success, count] when the pull finishes. */
+  pullServerExperienceWithCallback(): Promise<number[]> {
+    return new Promise<number[]>((resolve) => {
+      let resolved = false;
+      // Register callback
+      this._experiencePullCallbacks.push((success: boolean, count: number) => {
+        if (!resolved) {
+          resolved = true;
+          resolve([success ? 1 : 0, count]);
+        }
+      });
+      // Set a timeout in case no response arrives
+      setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          this._experiencePullCallbacks = [];
+          resolve([0, 0]);
+        }
+      }, 60000); // 60s timeout
+      this.pullServerExperience();
+    });
+  }
+
   private async pullServerExperience(): Promise<void> {
     if (!this.nodeSession) return;
     try {
@@ -2427,10 +2454,19 @@ export class NodeRuntime {
 
     try {
       let data = JSON.parse(jsonStr) as Record<string, Object>;
+      let memCount = (data['memories'] as Object[])?.length ?? 0;
       this.handleExperienceUpdate(JSON.stringify(data));
       this.log.info(TAG, 'Experience pull data merged successfully');
+      for (let cb of this._experiencePullCallbacks) {
+        cb(true, memCount);
+      }
+      this._experiencePullCallbacks = [];
     } catch (err) {
       this.log.error(TAG, `Failed to parse experience pull data: ${(err as Error).message ?? ''}`);
+      for (let cb of this._experiencePullCallbacks) {
+        cb(false, 0);
+      }
+      this._experiencePullCallbacks = [];
     }
   }
 
