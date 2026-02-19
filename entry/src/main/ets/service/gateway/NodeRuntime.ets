@@ -1955,9 +1955,13 @@ export class NodeRuntime {
 
         this.log.info(TAG, `agentChat: state=${chatState} runId=${runId} seq=${seq} textLen=${fullText.length} blocks=${blocks.length} text(100)="${fullText.substring(0, 100)}"`);
 
-        // Check for experience pull response in chat messages
-        if (fullText.length > 0 && (chatState === 'final' || chatState === 'streaming')) {
-          this.detectExperienceInChat(fullText);
+        // Check for experience pull response in chat messages.
+        // Use data.text (accumulated) instead of fullText (delta) to see full content.
+        if (dataObj !== undefined && dataObj !== null && typeof dataObj !== 'string') {
+          let accumulatedText = dataObj['text'] !== undefined ? String(dataObj['text']) : '';
+          if (accumulatedText.length > 0) {
+            this.detectExperienceInChat(accumulatedText);
+          }
         }
 
         // Track this runId+seq so we can skip duplicate 'chat' events for the same data
