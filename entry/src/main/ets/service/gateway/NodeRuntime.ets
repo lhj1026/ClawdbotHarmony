@@ -47,11 +47,13 @@ import { LogService } from '../../common/LogService';
 import { Constants } from '../../common/Constants';
 import { NotificationHelper } from '../NotificationHelper';
 import { ExperienceStorage } from '../ExperienceStorage';
-import { ExperiencePack } from '../../model/ExperiencePack';
+import { ExperiencePack, Experience, Skill, ShareLevel, generateId } from '../../model/ExperiencePack';
 import { MemoryService } from '../MemoryService';
+import { Monitor } from '../ModuleMonitor';
+import { ContextAwarenessService, ContextRecommendation } from '../context/ContextAwarenessService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.33.4';
+const APP_VERSION = '2.34.0';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -151,6 +153,10 @@ export class NodeRuntime {
   private _isInForeground: boolean = true;
   private _isChatPageVisible: boolean = false;
   private _unreadMessageNotifEnabled: boolean = true;
+  private _bgNotifSentForRun: string = '';  // track runId for which we already sent a bg notification
+  private _bgNotifAccumText: string = '';   // accumulate text for background notification
+  private _bgNotifSentLen: number = 0;     // how much of _bgNotifAccumText was already sent in a notification
+  private _bgNotifTimerId: number = -1;     // timer for delayed notification send
 
   // Background task for keeping WebSocket alive when app is in background
   private _backgroundTaskRunning: boolean = false;
@@ -257,6 +263,12 @@ export class NodeRuntime {
     // Clear message notifications when user returns to the app
     if (inForeground) {
       NotificationHelper.getInstance().cancelAll();
+      this._bgNotifSentForRun = '';
+      this._bgNotifAccumText = '';
+      if (this._bgNotifTimerId >= 0) {
+        clearTimeout(this._bgNotifTimerId);
+        this._bgNotifTimerId = -1;
+      }
       // Stop background task when returning to foreground
       this.stopBackgroundTask();
     } else {
@@ -269,6 +281,89 @@ export class NodeRuntime {
   }
 
   /** Start background task for DATA_TRANSFER to keep WebSocket alive */
+  /** Start Context Awareness if not already running */
+  private async maybeStartContextAwareness(context: common.UIAbilityContext): Promise<void> {
+    try {
+      let store = preferences.getPreferencesSync(context, { name: 'chat_prefs' });
+      let enabled = store.getSync('contextAwarenessEnabled', false) as boolean;
+      if (enabled) {
+        this.startContextAwareness(context);
+      } else {
+        this.log.info(TAG, '情景智能已关闭（设置中未启用）');
+      }
+    } catch (err) {
+      this.log.warn(TAG, `读取情景智能设置失败: ${err}`);
+    }
+  }
+
+  /**
+   * Toggle context awareness on/off from settings
+   */
+  async setContextAwarenessEnabled(enabled: boolean): Promise<void> {
+    if (!this._context) {
+      return;
+    }
+    try {
+      let store = preferences.getPreferencesSync(this._context, { name: 'chat_prefs' });
+      store.putSync('contextAwarenessEnabled', enabled);
+      store.flush();
+    } catch (err) {
+      this.log.warn(TAG, `保存情景智能设置失败: ${err}`);
+    }
+
+    let cas = ContextAwarenessService.getInstance();
+    if (enabled) {
+      if (!cas.isActive()) {
+        this.startContextAwareness(this._context);
+      }
+    } else {
+      if (cas.isActive()) {
+        cas.stop();
+        Monitor.stopModule('ContextAwareness');
+        this.log.info(TAG, '情景智能已停止');
+      }
+    }
+  }
+
+  private startContextAwareness(context: common.UIAbilityContext): void {
+    let cas = ContextAwarenessService.getInstance();
+    if (cas.isActive()) {
+      return;
+    }
+    cas.init(context).then(() => {
+      return cas.start();
+    }).then((ok: boolean) => {
+      if (ok) {
+        this.log.info(TAG, '情景智能已启动');
+        Monitor.startModule('ContextAwareness');
+        // Listen for recommendations and dispatch as chat events
+        cas.addRecommendationListener((rec: ContextRecommendation) => {
+          this.log.info(TAG, `情景推荐: ${rec.reason}`);
+          // Send as a chat message to listeners
+          let event: GatewayChatEvent = {
+            runId: `ctx-${Date.now()}`,
+            sessionKey: '',
+            seq: 0,
+            state: 'final',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: `💡 ${rec.reason}` }],
+            },
+          };
+          this.dispatchChatEvent(event);
+          // Also send system notification if in background
+          if (!this._isInForeground) {
+            NotificationHelper.getInstance().send('💡 情景智能', rec.reason).catch(() => { /* ignore */ });
+          }
+        });
+      } else {
+        this.log.warn(TAG, '情景智能启动失败');
+      }
+    }).catch((err: Error) => {
+      this.log.warn(TAG, `情景智能初始化失败: ${err.message ?? ''}`);
+    });
+  }
+
   private async startBackgroundTask(context: common.UIAbilityContext): Promise<void> {
     if (this._backgroundTaskRunning) {
       this.log.info(TAG, 'Background task already running');
@@ -290,11 +385,11 @@ export class NodeRuntime {
       this.log.info(TAG, '🌐 Background task started (DATA_TRANSFER) - WebSocket will stay alive');
     } catch (err) {
       let code = (err as Record<string, number>)['code'] ?? 0;
-      this.log.error(TAG, `Failed to start background task: code=${code} ${(err as Error).message ?? ''}`);
+      this.log.system(TAG, `Failed to start background task: code=${code} ${(err as Error).message ?? ''}`);
       if (code === 9800001) {
-        this.log.error(TAG, 'Missing ohos.permission.KEEP_BACKGROUND_RUNNING permission');
+        this.log.system(TAG, 'Missing ohos.permission.KEEP_BACKGROUND_RUNNING permission');
       } else if (code === 9800003) {
-        this.log.error(TAG, 'backgroundModes not configured in module.json5 (need dataTransfer)');
+        this.log.system(TAG, 'backgroundModes not configured in module.json5 (need dataTransfer)');
       }
     }
   }
@@ -590,15 +685,67 @@ export class NodeRuntime {
     }
 
     // Send system notification for new messages when app is in background or chat page is not visible
-    if (this._unreadMessageNotifEnabled && event.state === 'final' && event.message) {
-      let shouldNotify = !this._isInForeground || !this._isChatPageVisible;
-      if (shouldNotify) {
-        this.sendMessageNotification(event);
+    // Accumulate text and send after a delay so notification has meaningful content
+    let hasMsg: boolean = event.message !== undefined && event.message !== null;
+    let isBackground: boolean = !this._isInForeground || !this._isChatPageVisible;
+    let shouldNotify: boolean = this._unreadMessageNotifEnabled && hasMsg && isBackground;
+    if (shouldNotify && (event.state === 'final' || event.state === 'delta')) {
+      // Accumulate text from this event
+      if (event.message && event.message.content) {
+        for (let block of event.message.content) {
+          if (block.type === 'text' && block.text) {
+            this._bgNotifAccumText += block.text;
+          }
+        }
       }
+      let runKey = event.runId ?? '';
+      if (this._bgNotifSentForRun !== runKey) {
+        // New run — only send ONE notification per run
+        this._bgNotifSentForRun = runKey;
+        this._bgNotifAccumText = '';
+        this._bgNotifSentLen = 0;
+        if (this._bgNotifTimerId >= 0) {
+          clearTimeout(this._bgNotifTimerId);
+        }
+        // Send notification after 2 seconds to accumulate enough text for context
+        this._bgNotifTimerId = setTimeout(() => {
+          this._bgNotifTimerId = -1;
+          this.sendAccumulatedNotification();
+        }, 2000) as number;
+      }
+      // No more notifications for this run — one is enough
+    }
+    // Reset tracking when run completes so next run can trigger notification
+    if (event.state === 'final' || event.state === 'error' || event.state === 'aborted') {
+      this._bgNotifSentForRun = '';
+      this._bgNotifAccumText = '';
+      this._bgNotifSentLen = 0;
     }
   }
 
-  /** Send a system notification for a new chat message */
+  /** Send notification with accumulated text from background streaming */
+  private sendAccumulatedNotification(): void {
+    // Only send the NEW portion since last notification
+    let newText = this._bgNotifAccumText.substring(this._bgNotifSentLen).trim();
+    if (newText.length === 0) {
+      return;
+    }
+    this._bgNotifSentLen = this._bgNotifAccumText.length;
+    // Truncate for notification display
+    let notifText = newText.length > 500 ? newText.substring(0, 500) + '…' : newText;
+
+    let title = this._agentIdentity?.name ?? 'OpenClaw';
+    if (this._agentIdentity?.emoji) {
+      title = `${this._agentIdentity.emoji} ${title}`;
+    }
+
+    this.log.info(TAG, `Sending bg notification: title="${title}" text="${notifText.substring(0, 80)}..."`);
+    NotificationHelper.getInstance().send(title, notifText).catch((err: Error) => {
+      this.log.warn(TAG, `Failed to send bg notification: ${err.message ?? ''}`);
+    });
+  }
+
+  /** Send a system notification for a new chat message (used by gateway-triggered notifications) */
   private sendMessageNotification(event: GatewayChatEvent): void {
     if (!event.message || !event.message.content) {
       return;
@@ -617,7 +764,7 @@ export class NodeRuntime {
     }
 
     // Truncate long messages for notification
-    let notifText = messageText.length > 200 ? messageText.substring(0, 200) + '…' : messageText;
+    let notifText = messageText.length > 500 ? messageText.substring(0, 500) + '…' : messageText;
 
     // Get agent name for notification title
     let title = this._agentIdentity?.name ?? 'OpenClaw';
@@ -942,7 +1089,7 @@ export class NodeRuntime {
     // Strategy 0: Extract identity from connect response (most reliable source)
     let connectRes = this.operatorSession.getConnectResult();
     if (connectRes) {
-      this.log.info(TAG, `Connect response keys: [${Object.keys(connectRes).join(',')}]`);
+      this.log.debug(TAG, `Connect response keys: [${Object.keys(connectRes).join(',')}]`);
       let identity: AgentIdentity | undefined = undefined;
 
       // Check agent.identity (common OpenClaw format)
@@ -1005,7 +1152,7 @@ export class NodeRuntime {
     // Strategy 1: config.get RPC
     try {
       let resJson = await this.operatorSession.request('config.get', '{}', 10000);
-      this.log.info(TAG, `config.get response (500): ${resJson.substring(0, 500)}`);
+      this.log.debug(TAG, `config.get response (500): ${resJson.substring(0, 500)}`);
       if (resJson.length === 0) return;
       let wrapper = JSON.parse(resJson) as Record<string, Object>;
       // config.get returns { path, exists, raw: "<json string>" } — parse raw field
@@ -1016,7 +1163,7 @@ export class NodeRuntime {
       } else {
         config = wrapper;
       }
-      this.log.info(TAG, `config keys: [${Object.keys(config).join(',')}]`);
+      this.log.debug(TAG, `config keys: [${Object.keys(config).join(',')}]`);
 
       // Strategy 1a: Look for agent identity in agents block
       let identity = this.extractAgentIdentityFromConfig(config);
@@ -1066,7 +1213,7 @@ export class NodeRuntime {
       this.log.info(TAG, 'No identity in config, trying status RPC...');
       await this.fetchIdentityFromStatus();
     } catch (err) {
-      this.log.error(TAG, `fetchAgentIdentity failed: ${(err as Error).message ?? ''}`);
+      this.log.system(TAG, `fetchAgentIdentity failed: ${(err as Error).message ?? ''}`);
     }
   }
 
@@ -1302,6 +1449,9 @@ export class NodeRuntime {
     notifHelper.init(context.abilityInfo.bundleName);
     notifHelper.requestPermission();
 
+    // Start Context Awareness Service only if user enabled it
+    this.maybeStartContextAwareness(context);
+
     // Wire up A2UI action callback
     this.canvasCapability.onA2UIAction = (actionJson: string) => {
       this.log.info(TAG, `A2UI callback invoked, nodeSession=${this.nodeSession ? 'exists' : 'NULL'}`);
@@ -1321,10 +1471,13 @@ export class NodeRuntime {
       this.operatorSession.onStateChanged = (state, message) => {
         this._operatorState = state;
         this.updateStatus();
-        this.log.info(TAG, `operator state: ${state} - ${message}`);
+        this.log.system(TAG, `operator state: ${state} - ${message}`);
         if (state === ConnectionState.Connected) {
+          Monitor.startModule('Gateway');
           this.fetchAgentIdentity().catch(() => { /* ignore */ });
-          this.syncExperiencePack().catch(() => { /* ignore */ });
+          // syncExperiencePack removed from auto-connect — user triggers manually via UI buttons
+        } else if (state === ConnectionState.Disconnected) {
+          Monitor.stopModule('Gateway');
         }
       };
       this.operatorSession.onEvent = (event, payloadJson) => {
@@ -1350,7 +1503,7 @@ export class NodeRuntime {
           this._pairingPending = false;
         }
         this.updateStatus();
-        this.log.info(TAG, `node state: ${state} - ${message}`);
+        this.log.system(TAG, `node state: ${state} - ${message}`);
       };
       this.nodeSession.onEvent = (event, payloadJson) => {
         this.log.debug(TAG, `node event: ${event} payloadLen=${payloadJson ? payloadJson.length : 0}`);
@@ -1733,7 +1886,7 @@ export class NodeRuntime {
   }
 
   private handleOperatorEvent(event: string, payloadJson: string | undefined): void {
-    this.log.info(TAG, `operator event: "${event}" payloadLen=${payloadJson ? payloadJson.length : 0} payload(500)=${payloadJson ? payloadJson.substring(0, 500) : '(none)'}`);
+    this.log.debug(TAG, `operator event: "${event}" payloadLen=${payloadJson ? payloadJson.length : 0} payload(500)=${payloadJson ? payloadJson.substring(0, 500) : '(none)'}`);
 
     if (!payloadJson) return;
 
@@ -1773,7 +1926,7 @@ export class NodeRuntime {
 
         // Log the raw keys for debugging
         let rawKeys = Object.keys(raw);
-        this.log.info(TAG, `agent event keys: [${rawKeys.join(',')}] payload(300): ${payloadJson.substring(0, 300)}`);
+        this.log.debug(TAG, `agent event keys: [${rawKeys.join(',')}] payload(300): ${payloadJson.substring(0, 300)}`);
 
         let runId: string = (raw['runId'] as string) ?? '';
         let stream: string = (raw['stream'] as string) ?? '';
@@ -1942,7 +2095,7 @@ export class NodeRuntime {
             outputTokens: outputToks,
             totalTokens: totalToks
           };
-          this.log.info(TAG, `Token usage: input=${inputToks} output=${outputToks} total=${totalToks}`);
+          this.log.debug(TAG, `Token usage: input=${inputToks} output=${outputToks} total=${totalToks}`);
         }
 
         let chatEvent: GatewayChatEvent = {
@@ -1964,6 +2117,7 @@ export class NodeRuntime {
           let accumulatedText = dataObj['text'] !== undefined ? String(dataObj['text']) : '';
           if (accumulatedText.length > 0) {
             this.detectExperienceInChat(accumulatedText);
+            this.detectExperiencePushConfirm(accumulatedText);
           }
         }
 
@@ -2296,7 +2450,7 @@ export class NodeRuntime {
   /** Send the local experience pack and memories to the gateway after connecting.
    *  Uses agent.request so the AI agent processes and persists the data
    *  to workspace files (MEMORY.md, skills, etc.). */
-  private async syncExperiencePack(): Promise<void> {
+  async syncExperiencePack(): Promise<void> {
     if (!this._context || !this.operatorSession) return;
 
     let storage = ExperienceStorage.getInstance();
@@ -2411,25 +2565,24 @@ export class NodeRuntime {
   private async pullServerExperience(): Promise<void> {
     if (!this.nodeSession) return;
     try {
-      let pullMessage = '[System: Full experience dump request from mobile device]\n\n'
-        + 'Read ALL of these workspace files (use the read tool): MEMORY.md, TOOLS.md, USER.md, SOUL.md, IDENTITY.md.\n'
-        + 'For each file that exists, create a memory entry with the FULL file content (do not summarize or filter).\n\n'
-        + 'Return ONLY a JSON block wrapped in <!--EXPERIENCE_PULL_START--> and '
-        + '<!--EXPERIENCE_PULL_END--> markers, with this structure:\n'
+      let pullMessage = '[System: Experience pull request from mobile device]\n\n'
+        + 'Read these workspace files: MEMORY.md, TOOLS.md, USER.md, SOUL.md, IDENTITY.md.\n'
+        + 'Also list and read skill files: `find ~/.openclaw/workspace/skills/ -name "SKILL.md"`\n\n'
+        + 'IMPORTANT: Split large files into sections. For markdown files:\n'
+        + '- Split by ## headings. Each section = one memory entry.\n'
+        + '- Use source format: "FILENAME#SectionName" (e.g. "MEMORY.md#Mobile Sync")\n'
+        + '- For bullet-list sections, each bullet can be a separate entry with source "FILENAME#Section:key"\n'
+        + '- Small files (<20 lines) can stay as one entry.\n\n'
+        + 'Return ONLY a JSON block in <!--EXPERIENCE_PULL_START--> / <!--EXPERIENCE_PULL_END--> markers:\n'
         + '<!--EXPERIENCE_PULL_START-->\n'
-        + '{"experiences":[],"memories":['
-        + '{"type":"fact","content":"[MEMORY.md full content here]","source":"MEMORY.md","importance":1.0},'
-        + '{"type":"instruction","content":"[SOUL.md full content here]","source":"SOUL.md","importance":1.0},'
-        + '{"type":"fact","content":"[USER.md full content here]","source":"USER.md","importance":1.0},'
-        + '{"type":"fact","content":"[IDENTITY.md full content here]","source":"IDENTITY.md","importance":1.0},'
-        + '{"type":"fact","content":"[TOOLS.md full content here]","source":"TOOLS.md","importance":1.0}'
-        + ']}\n'
+        + '{"skills":[{"name":"skill-name","description":"desc","instructions":"SKILL.md content","shareLevel":"public"}],'
+        + '"memories":[{"type":"fact","content":"section content","source":"MEMORY.md#SectionName","importance":1.0}]}\n'
         + '<!--EXPERIENCE_PULL_END-->\n'
-        + 'Replace placeholders with actual file contents. If a file does not exist, omit that entry. No other text outside the markers.';
+        + 'Replace placeholders with actual content. Omit missing files. No text outside markers.';
 
       let pullPayload = JSON.stringify({
         'message': pullMessage,
-        'sessionKey': 'experience-sync',
+        'sessionKey': 'main',
         'deliver': false,
       });
       await this.nodeSession.sendNodeEvent('agent.request', pullPayload);
@@ -2455,8 +2608,9 @@ export class NodeRuntime {
     try {
       let data = JSON.parse(jsonStr) as Record<string, Object>;
       let memCount = (data['memories'] as Object[])?.length ?? 0;
+      let skillCount = (data['skills'] as Object[])?.length ?? 0;
       this.handleExperienceUpdate(JSON.stringify(data));
-      this.log.info(TAG, 'Experience pull data merged successfully');
+      this.log.info(TAG, `Experience pull data merged: ${memCount} memories, ${skillCount} skills`);
       for (let cb of this._experiencePullCallbacks) {
         cb(true, memCount);
       }
@@ -2472,7 +2626,7 @@ export class NodeRuntime {
 
   /** Handle experience_update events from the server (learning feedback).
    *  Also syncs new memory items to local MemoryService (append-only). */
-  private handleExperienceUpdate(payloadJson: string): void {
+  private async handleExperienceUpdate(payloadJson: string): Promise<void> {
     if (!this._context) return;
     try {
       let raw = JSON.parse(payloadJson) as Record<string, Object>;
@@ -2480,28 +2634,263 @@ export class NodeRuntime {
 
       // Merge experience pack (append-only)
       let storage = ExperienceStorage.getInstance();
-      storage.mergeUpdate(ctx, raw).catch((err: Error) => {
-        this.log.error(TAG, `Experience merge failed: ${err.message ?? ''}`);
-      });
+      await storage.mergeUpdate(ctx, raw);
 
-      // Also sync memory items to local MemoryService
+      // Also sync memory items to local MemoryService + Experience memory
       if (raw['memories'] && Array.isArray(raw['memories'])) {
         let memItems = raw['memories'] as Record<string, Object>[];
         let memSvc = MemoryService.getInstance();
+
+        // Convert to Experience Memory format for mergeUpdate (key=source, value=content)
+        let pack = await storage.ensureLoaded(ctx);
+        let defaultExp = pack.experiences.find((e: Experience) => e.name === 'Server Workspace');
+        if (!defaultExp) {
+          defaultExp = {
+            id: generateId(),
+            name: 'Server Workspace',
+            description: 'Workspace files synced from server',
+            skills: [],
+            memory: [],
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          };
+          pack.experiences.push(defaultExp);
+        }
+
+        let existingKeys = new Map<string, Memory>();
+        for (let m of defaultExp.memory) {
+          existingKeys.set(m.key.toLowerCase(), m);
+        }
+
+        let added = 0;
+        let updated = 0;
         for (let mem of memItems) {
           let content = String(mem['content'] ?? '');
+          let source = String(mem['source'] ?? '');
           let memType = String(mem['type'] ?? mem['memType'] ?? 'fact');
           let importance = (mem['importance'] as number) ?? 0.5;
+
+          // Sync to MemoryService (with dedup)
           if (content.length > 0) {
-            memSvc.addIfNew(ctx, memType, content, importance).catch(() => { /* ignore */ });
+            await memSvc.addIfNew(ctx, memType, content, importance);
+          }
+
+          // Sync to Experience memory (by source key)
+          if (source.length > 0 && content.length > 0) {
+            let existing = existingKeys.get(source.toLowerCase());
+            let remoteModified = (mem['lastModified'] as number) ?? Date.now();
+            if (!existing) {
+              let newMem: Memory = { key: source, value: content, shareLevel: 'private', lastModified: remoteModified, deletedAt: 0 };
+              defaultExp.memory.push(newMem);
+              existingKeys.set(source.toLowerCase(), newMem);
+              added++;
+            } else {
+              let localModified = existing.lastModified ?? 0;
+              if (existing.value !== content && remoteModified > localModified) {
+                // Remote is newer — update
+                existing.value = content;
+                existing.lastModified = remoteModified;
+                updated++;
+              }
+            }
           }
         }
-        this.log.info(TAG, `Real-time memory sync: ${memItems.length} items received`);
+
+        if (added > 0 || updated > 0) {
+          defaultExp.updatedAt = Date.now();
+          await storage.save(ctx, pack);
+        }
+        this.log.info(TAG, `Memory sync: ${memItems.length} items, +${added} new, ~${updated} updated`);
+      }
+
+      // Also sync skills into experience pack
+      if (raw['skills'] && Array.isArray(raw['skills'])) {
+        let newSkills = raw['skills'] as Record<string, Object>[];
+        let pack = await storage.ensureLoaded(ctx);
+        // Create or get a default experience to hold server skills
+        let defaultExp = pack.experiences.find((e: Experience) => e.name === 'Server Skills');
+        if (!defaultExp) {
+          defaultExp = {
+            id: generateId(),
+            name: 'Server Skills',
+            description: 'Skills synced from server',
+            skills: [],
+            memory: [],
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          };
+          pack.experiences.push(defaultExp);
+        }
+        let existingNames = new Set<string>();
+        for (let s of defaultExp.skills) { existingNames.add(s.name); }
+        let addedSkills = 0;
+        for (let sk of newSkills) {
+          let name = String(sk['name'] ?? '');
+          if (name.length > 0 && !existingNames.has(name)) {
+            let skill: Skill = {
+              name: name,
+              description: String(sk['description'] ?? ''),
+              instructions: String(sk['instructions'] ?? ''),
+              shareLevel: (String(sk['shareLevel'] ?? 'public')) as ShareLevel,
+            };
+            defaultExp.skills.push(skill);
+            existingNames.add(name);
+            addedSkills++;
+          }
+        }
+        if (addedSkills > 0) {
+          defaultExp.updatedAt = Date.now();
+          await storage.save(ctx, pack);
+          this.log.info(TAG, `Skills synced: ${addedSkills} new skills added`);
+        }
       }
 
       this.log.info(TAG, 'Experience update received and merged (append-only)');
     } catch (err) {
       this.log.error(TAG, `Failed to parse experience_update: ${(err as Error).message ?? ''}`);
+    }
+  }
+
+  // ==================== Push: Phone → Server ====================
+
+  private _experiencePushCallbacks: ((success: boolean) => void)[] = [];
+
+  /** Push local memories to the server. Returns Promise<boolean> for UI. */
+  pushMemoriesToServerWithCallback(): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      let resolved = false;
+      this._experiencePushCallbacks.push((success: boolean) => {
+        if (!resolved) {
+          resolved = true;
+          resolve(success);
+        }
+      });
+      setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          this._experiencePushCallbacks = [];
+          resolve(false);
+        }
+      }, 90000); // 90s timeout (writing files takes longer)
+      this.pushMemoriesToServer();
+    });
+  }
+
+  private async pushMemoriesToServer(): Promise<void> {
+    if (!this.nodeSession || !this._context) {
+      for (let cb of this._experiencePushCallbacks) { cb(false); }
+      this._experiencePushCallbacks = [];
+      return;
+    }
+    try {
+      let ctx = this._context;
+      let memSvc = MemoryService.getInstance();
+      let storage = ExperienceStorage.getInstance();
+      let allItems = await memSvc.loadAll(ctx);
+      let pack = await storage.ensureLoaded(ctx);
+
+      // Collect skills from experience pack
+      let allSkills: Skill[] = [];
+      for (let exp of pack.experiences) {
+        for (let sk of exp.skills) {
+          allSkills.push(sk);
+        }
+      }
+
+      if (allItems.length === 0 && allSkills.length === 0) {
+        this.log.info(TAG, 'Push: nothing to push');
+        for (let cb of this._experiencePushCallbacks) { cb(true); }
+        this._experiencePushCallbacks = [];
+        return;
+      }
+
+      // Group memories by source file if available, otherwise into MEMORY.md
+      let memoryLines: string[] = [];
+      let toolsLines: string[] = [];
+      let identityLines: string[] = [];
+      let userLines: string[] = [];
+      let soulLines: string[] = [];
+
+      for (let item of allItems) {
+        let content = item.content;
+        if (content.startsWith('[TOOLS]') || content.startsWith('[TOOLS.md]')) {
+          toolsLines.push(content);
+        } else if (content.startsWith('[IDENTITY]') || content.startsWith('[IDENTITY.md]')) {
+          identityLines.push(content);
+        } else if (content.startsWith('[USER]') || content.startsWith('[USER.md]')) {
+          userLines.push(content);
+        } else if (content.startsWith('[SOUL]') || content.startsWith('[SOUL.md]')) {
+          soulLines.push(content);
+        } else {
+          memoryLines.push('- ' + content);
+        }
+      }
+
+      let pushMessage = '[System: Experience push from mobile device]\n\n'
+        + 'The user\'s mobile device is pushing its local memories and skills to this server.\n'
+        + 'Please APPEND the following content to the appropriate workspace files.\n'
+        + 'Do NOT overwrite existing content — only append new information.\n'
+        + 'If a section header like "## Mobile Sync" doesn\'t exist in MEMORY.md, create it.\n\n';
+
+      if (memoryLines.length > 0) {
+        pushMessage += '=== APPEND TO MEMORY.md (under "## Mobile Sync" section) ===\n'
+          + memoryLines.join('\n') + '\n\n';
+      }
+
+      if (toolsLines.length > 0) {
+        pushMessage += '=== APPEND TO TOOLS.md ===\n'
+          + toolsLines.join('\n') + '\n\n';
+      }
+
+      if (identityLines.length > 0) {
+        pushMessage += '=== FOR REFERENCE (IDENTITY.md content from another server) ===\n'
+          + identityLines.join('\n') + '\n\n';
+      }
+
+      if (userLines.length > 0) {
+        pushMessage += '=== FOR REFERENCE (USER.md content from another server) ===\n'
+          + userLines.join('\n') + '\n\n';
+      }
+
+      if (soulLines.length > 0) {
+        pushMessage += '=== FOR REFERENCE (SOUL.md content from another server) ===\n'
+          + soulLines.join('\n') + '\n\n';
+      }
+
+      // Include skills
+      if (allSkills.length > 0) {
+        pushMessage += '=== SKILLS TO INSTALL ===\n'
+          + 'For each skill below, create a skill directory under ~/.openclaw/workspace/skills/<name>/ '
+          + 'and write the instructions as SKILL.md. Skip if the skill directory already exists.\n\n';
+        for (let sk of allSkills) {
+          pushMessage += `--- Skill: ${sk.name} ---\n`;
+          pushMessage += `Description: ${sk.description}\n`;
+          pushMessage += `SKILL.md content:\n\`\`\`\n${sk.instructions}\n\`\`\`\n\n`;
+        }
+      }
+
+      pushMessage += 'After writing, respond with exactly: <!--EXPERIENCE_PUSH_OK-->';
+
+      let pushPayload = JSON.stringify({
+        'message': pushMessage,
+        'sessionKey': 'main',
+        'deliver': false,
+      });
+      await this.nodeSession.sendNodeEvent('agent.request', pushPayload);
+      this.log.info(TAG, `Experience push sent: ${allItems.length} items, ${allSkills.length} skills`);
+    } catch (err) {
+      this.log.warn(TAG, `Experience push failed: ${(err as Error).message ?? ''}`);
+      for (let cb of this._experiencePushCallbacks) { cb(false); }
+      this._experiencePushCallbacks = [];
+    }
+  }
+
+  /** Detect push confirmation in chat stream */
+  detectExperiencePushConfirm(text: string): void {
+    if (text.indexOf('<!--EXPERIENCE_PUSH_OK-->') >= 0) {
+      this.log.info(TAG, 'Experience push confirmed by server');
+      for (let cb of this._experiencePushCallbacks) { cb(true); }
+      this._experiencePushCallbacks = [];
     }
   }
 }
