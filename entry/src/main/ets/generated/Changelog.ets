@@ -8,7 +8,7 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.42.2';
+export const APP_VERSION: string = '2.42.3';
 
 export const CHANGELOG: ChangelogEntry[] = [
   {

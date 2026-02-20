@@ -544,9 +544,15 @@ body{font-family:-apple-system,HarmonyOS Sans,sans-serif;background:#0F0F1A;colo
         case 'button':
           comp.component = 'Button';
           comp.text = child.text || 'Button';
-          comp.variant = child.style && child.style.backgroundColor ? 'primary' : 'default';
+          comp.variant = child.variant || (child.style && child.style.backgroundColor ? 'primary' : 'default');
           if (child.action) {
-            comp.action = {event: {name: child.action}};
+            if (typeof child.action === 'string') {
+              comp.action = {event: {name: child.action}};
+            } else if (child.action.event) {
+              comp.action = child.action;
+            } else {
+              comp.action = {event: {name: child.action}};
+            }
           } else {
             comp.action = {event: {name: 'button_click', context: {id: cid}}};
           }
