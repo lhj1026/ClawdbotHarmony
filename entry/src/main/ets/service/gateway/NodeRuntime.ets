@@ -52,7 +52,7 @@ import { ExperiencePack, Experience, Skill, Memory, ShareLevel, generateId } fro
 import { MemoryService } from '../MemoryService';
 import { Monitor } from '../ModuleMonitor';
 import { ContextAwarenessService, ContextRecommendation } from '../context/ContextAwarenessService';
-import { ContextEngineService, ContextSnapshot, MatchResult, GeofenceBinding } from '../context/ContextEngine';
+import { ContextEngineService, ContextSnapshot, ContextRule, ContextCondition, ContextAction, MatchResult, GeofenceBinding } from '../context/ContextEngine';
 import { GeofenceSuggestion } from '../context/LocationDiscoveryService';
 
 const TAG = 'NodeRuntime';
@@ -2031,6 +2031,21 @@ export class NodeRuntime {
           result = await this.handleContextSimulate(paramsJson);
           break;
         }
+        case Command.CONTEXT_ADD_RULE: {
+          this.log.info(TAG, 'Executing context.addRule...');
+          result = await this.handleContextAddRule(paramsJson);
+          break;
+        }
+        case Command.CONTEXT_REMOVE_RULE: {
+          this.log.info(TAG, 'Executing context.removeRule...');
+          result = await this.handleContextRemoveRule(paramsJson);
+          break;
+        }
+        case Command.CONTEXT_LIST_RULES: {
+          this.log.info(TAG, 'Executing context.listRules...');
+          result = await this.handleContextListRules();
+          break;
+        }
         default:
           this.log.warn(TAG, `Unsupported invoke command: ${command}`);
           this.dispatchInvoke(command, paramsStr, `unsupported command: ${command}`, true);
@@ -2223,6 +2238,110 @@ export class NodeRuntime {
     } catch (err) {
       let msg = (err as Error).message ?? 'unknown error';
       this.log.error(TAG, `context.simulate error: ${msg}`);
+      return `{"error":${JSON.stringify(msg)}}`;
+    }
+  }
+
+  /**
+   * Handle context.addRule: dynamically add a rule to the C++ engine and persist it.
+   * Params: { rule: ContextRule } or directly a ContextRule object
+   * The rule id should start with 'user_' for user-created rules.
+   */
+  private async handleContextAddRule(paramsJson: string | undefined): Promise<string> {
+    if (!paramsJson || paramsJson.length === 0) {
+      return '{"error":"missing params"}';
+    }
+    try {
+      let params = JSON.parse(paramsJson) as Record<string, Object>;
+      let ruleObj = (params['rule'] ?? params) as Record<string, Object>;
+
+      // Ensure the rule has an id starting with 'user_'
+      let ruleId = ruleObj['id'] as string;
+      if (!ruleId || ruleId.length === 0) {
+        ruleId = `user_${Date.now()}`;
+        ruleObj['id'] = ruleId as Object;
+      }
+      if (!ruleId.startsWith('user_')) {
+        ruleId = `user_${ruleId}`;
+        ruleObj['id'] = ruleId as Object;
+      }
+
+      let engine = ContextEngineService.getInstance();
+      if (this._context) {
+        await engine.init(this._context);
+      }
+
+      let rule: ContextRule = {
+        id: ruleObj['id'] as string,
+        name: (ruleObj['name'] as string) ?? ruleId,
+        conditions: ruleObj['conditions'] as ContextCondition[],
+        action: ruleObj['action'] as ContextAction,
+        priority: (ruleObj['priority'] as number) ?? 1.0,
+        cooldownMs: (ruleObj['cooldownMs'] as number) ?? 3600000,
+        enabled: (ruleObj['enabled'] as boolean) ?? true,
+      };
+
+      let ok = await engine.addRule(rule);
+      this.log.info(TAG, `context.addRule: id=${rule.id}, name=${rule.name}, ok=${ok}`);
+
+      return JSON.stringify({
+        'ok': ok,
+        'ruleId': rule.id,
+        'ruleCount': engine.getRuleCount()
+      });
+    } catch (err) {
+      let msg = (err as Error).message ?? 'unknown error';
+      this.log.error(TAG, `context.addRule error: ${msg}`);
+      return `{"error":${JSON.stringify(msg)}}`;
+    }
+  }
+
+  /**
+   * Handle context.removeRule: remove a user rule by id.
+   * Params: { ruleId: string }
+   */
+  private async handleContextRemoveRule(paramsJson: string | undefined): Promise<string> {
+    if (!paramsJson || paramsJson.length === 0) {
+      return '{"error":"missing params"}';
+    }
+    try {
+      let params = JSON.parse(paramsJson) as Record<string, Object>;
+      let ruleId = params['ruleId'] as string;
+      if (!ruleId || ruleId.length === 0) {
+        return '{"error":"missing ruleId"}';
+      }
+
+      let engine = ContextEngineService.getInstance();
+      let ok = await engine.removeRule(ruleId);
+      this.log.info(TAG, `context.removeRule: id=${ruleId}, ok=${ok}`);
+
+      return JSON.stringify({
+        'ok': ok,
+        'ruleId': ruleId,
+        'ruleCount': engine.getRuleCount()
+      });
+    } catch (err) {
+      let msg = (err as Error).message ?? 'unknown error';
+      this.log.error(TAG, `context.removeRule error: ${msg}`);
+      return `{"error":${JSON.stringify(msg)}}`;
+    }
+  }
+
+  /**
+   * Handle context.listRules: export all current rules from the C++ engine.
+   */
+  private async handleContextListRules(): Promise<string> {
+    try {
+      let engine = ContextEngineService.getInstance();
+      let rulesJson = engine.exportRules();
+      let rules: Object[] = JSON.parse(rulesJson) as Object[];
+      return JSON.stringify({
+        'ruleCount': rules.length,
+        'rules': rules
+      });
+    } catch (err) {
+      let msg = (err as Error).message ?? 'unknown error';
+      this.log.error(TAG, `context.listRules error: ${msg}`);
       return `{"error":${JSON.stringify(msg)}}`;
     }
   }
@@ -2673,6 +2792,9 @@ export class NodeRuntime {
     // Context engine test / simulate — always available
     commands.push(Command.CONTEXT_TEST);
     commands.push(Command.CONTEXT_SIMULATE);
+    commands.push(Command.CONTEXT_ADD_RULE);
+    commands.push(Command.CONTEXT_REMOVE_RULE);
+    commands.push(Command.CONTEXT_LIST_RULES);
 
     return {
       role: 'node',

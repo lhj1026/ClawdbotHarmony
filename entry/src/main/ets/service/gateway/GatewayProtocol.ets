@@ -64,4 +64,7 @@ export class Command {
   static readonly CONTEXT_TEST: string = 'context.test';
   // Context engine simulate (full UI delivery)
   static readonly CONTEXT_SIMULATE: string = 'context.simulate';
+  static readonly CONTEXT_ADD_RULE: string = 'context.addRule';
+  static readonly CONTEXT_REMOVE_RULE: string = 'context.removeRule';
+  static readonly CONTEXT_LIST_RULES: string = 'context.listRules';
 }

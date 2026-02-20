@@ -542,6 +542,17 @@ export class ContextEngineService {
         priority: 1.5, cooldownMs: 28800000, enabled: true
       },
       {
+        id: 'rule_leave_work_music',
+        name: '离开公司步行听音乐',
+        conditions: [
+          { key: 'geofence', op: 'neq', value: '{{work}}' },
+          { key: 'motionState', op: 'eq', value: 'walking' },
+          { key: 'isWeekend', op: 'eq', value: 'false' }
+        ],
+        action: { id: 'suggest_music', type: 'suggestion', payload: '走路中 🎵 打开音乐放松一下？' },
+        priority: 2.0, cooldownMs: 28800000, enabled: true
+      },
+      {
         id: 'rule_arrive_gym',
         name: '到达健身房',
         conditions: [
