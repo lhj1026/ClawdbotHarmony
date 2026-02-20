@@ -431,14 +431,14 @@ export class ContextAwarenessService {
   addGeofence(geofence: Geofence): void {
     this.geofenceMgr.addGeofence(geofence);
     if (this.context) {
-      this.geofenceMgr.saveGeofences(this.context);
+      
     }
   }
   
   removeGeofence(id: string): boolean {
     let result = this.geofenceMgr.removeGeofence(id);
     if (result && this.context) {
-      this.geofenceMgr.saveGeofences(this.context);
+      
     }
     return result;
   }

@@ -4,8 +4,8 @@
  * 管理地理围栏，检测用户进入/离开特定区域
  */
 import { geoLocationManager } from '@kit.LocationKit';
-import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
+import { fileIo } from '@kit.CoreFileKit';
 import { LogService } from '../../common/LogService';
 import { Geofence, GeofenceCategory, LocationState } from './ContextModels';
 import { ContextEngineService, GeofenceBinding } from './ContextEngine';
@@ -21,12 +21,14 @@ interface UserPlace {
 }
 interface UserPlacesConfig {
   version: number;
+  description: string;
   places: UserPlace[];
 }
 
+const CONFIG_FILENAME = 'user_places.json';
+
 const TAG = 'GeofenceManager';
-const PREFS_NAME = 'clawdbot_geofences';
-const KEY_GEOFENCES = 'geofence_list';
+// 围栏数据存储在 files/user_places.json
 
 export type GeofenceEventType = 'enter' | 'exit' | 'dwell';
 
@@ -61,16 +63,22 @@ export class GeofenceManager {
     return GeofenceManager.instance;
   }
   
+  private appFilesDir: string = '';
+
   async init(context: common.UIAbilityContext): Promise<void> {
     if (this.initialized) return;
     
-    // 加载保存的围栏
-    await this.loadGeofences(context);
+    this.appFilesDir = context.filesDir;
     
-    // 首次使用：从配置文件加载用户地点
-    if (this.geofences.size === 0) {
-      await this.loadPlacesFromConfig(context);
+    // 从 user_places.json 加载围栏
+    let loaded = await this.loadFromFile();
+    
+    // 首次使用：从 rawfile 拷贝默认配置到 files 目录
+    if (!loaded) {
+      await this.copyDefaultConfig(context);
+      await this.loadFromFile();
     }
+    
     // 初始化后绑定已有围栏到规则引擎
     this.rebindEngineRules();
     
@@ -79,10 +87,9 @@ export class GeofenceManager {
   }
   
   /**
-   * 从 rawfile/config/user_places.json 加载用户地点配置
-   * 首次使用时自动加载，之后用户可在管理页面编辑
+   * 从 rawfile 拷贝默认配置到 app files 目录（首次使用）
    */
-  private async loadPlacesFromConfig(context: common.UIAbilityContext): Promise<void> {
+  private async copyDefaultConfig(context: common.UIAbilityContext): Promise<void> {
     try {
       let resourceMgr = context.resourceManager;
       let rawData = await resourceMgr.getRawFileContent('config/user_places.json');
@@ -91,25 +98,14 @@ export class GeofenceManager {
       for (let i = 0; i < bytes.length; i++) {
         jsonStr += String.fromCharCode(bytes[i]);
       }
-      let parsed: Object = JSON.parse(jsonStr);
-      let config = parsed as UserPlacesConfig;
-      if (config.places) {
-        for (let place of config.places) {
-          let gf: Geofence = {
-            id: place.id,
-            name: place.name,
-            latitude: place.latitude,
-            longitude: place.longitude,
-            radiusMeters: place.radiusMeters,
-            category: place.category as GeofenceCategory,
-          };
-          this.geofences.set(gf.id, gf);
-        }
-        this.log.info(TAG, `Loaded ${config.places.length} places from config`);
-        await this.saveGeofences(context);
-      }
+      // 写入 files 目录
+      let filePath = this.appFilesDir + '/' + CONFIG_FILENAME;
+      let file = fileIo.openSync(filePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      fileIo.writeSync(file.fd, jsonStr);
+      fileIo.closeSync(file.fd);
+      this.log.info(TAG, `Copied default config to ${filePath}`);
     } catch (err) {
-      this.log.warn(TAG, `loadPlacesFromConfig error: ${(err as Error).message}`);
+      this.log.warn(TAG, `copyDefaultConfig error: ${(err as Error).message}`);
     }
   }
   
@@ -118,6 +114,7 @@ export class GeofenceManager {
   addGeofence(geofence: Geofence): void {
     this.geofences.set(geofence.id, geofence);
     this.log.info(TAG, `Added geofence: ${geofence.name} (${geofence.id})`);
+    this.saveToFile().catch(() => {});
     this.rebindEngineRules();
   }
   
@@ -126,6 +123,7 @@ export class GeofenceManager {
     this.currentlyInside.delete(id);
     if (removed) {
       this.log.info(TAG, `Removed geofence: ${id}`);
+      this.saveToFile().catch(() => {});
       this.rebindEngineRules();
     }
     return removed;
@@ -300,31 +298,80 @@ export class GeofenceManager {
     }
   }
   
-  // ==================== 持久化 ====================
+  // ==================== 文件持久化 (user_places.json) ====================
   
-  async saveGeofences(context: common.UIAbilityContext): Promise<void> {
+  /** 从 files/user_places.json 加载围栏 */
+  private async loadFromFile(): Promise<boolean> {
     try {
-      let store = await preferences.getPreferences(context, PREFS_NAME);
-      let data = JSON.stringify(this.getAllGeofences());
-      await store.put(KEY_GEOFENCES, data);
-      await store.flush();
-      this.log.info(TAG, `Saved ${this.geofences.size} geofences`);
+      let filePath = this.appFilesDir + '/' + CONFIG_FILENAME;
+      let stat = fileIo.statSync(filePath);
+      if (!stat) return false;
+      
+      let file = fileIo.openSync(filePath, fileIo.OpenMode.READ_ONLY);
+      let buf = new ArrayBuffer(stat.size);
+      fileIo.readSync(file.fd, buf);
+      fileIo.closeSync(file.fd);
+      
+      let bytes = new Uint8Array(buf);
+      let jsonStr = '';
+      for (let i = 0; i < bytes.length; i++) {
+        jsonStr += String.fromCharCode(bytes[i]);
+      }
+      
+      let parsed: Object = JSON.parse(jsonStr);
+      let config = parsed as UserPlacesConfig;
+      if (config.places && config.places.length > 0) {
+        for (let place of config.places) {
+          let gf: Geofence = {
+            id: place.id,
+            name: place.name,
+            latitude: place.latitude,
+            longitude: place.longitude,
+            radiusMeters: place.radiusMeters,
+            category: place.category as GeofenceCategory,
+          };
+          this.geofences.set(gf.id, gf);
+        }
+        this.log.info(TAG, `Loaded ${config.places.length} places from ${CONFIG_FILENAME}`);
+        return true;
+      }
+      return false;
     } catch (err) {
-      this.log.error(TAG, `Failed to save: ${(err as Error).message}`);
+      this.log.debug(TAG, `loadFromFile: ${(err as Error).message}`);
+      return false;
     }
   }
   
-  private async loadGeofences(context: common.UIAbilityContext): Promise<void> {
+  /** 将当前围栏保存到 files/user_places.json */
+  private async saveToFile(): Promise<void> {
     try {
-      let store = await preferences.getPreferences(context, PREFS_NAME);
-      let data = await store.get(KEY_GEOFENCES, '[]') as string;
-      let list = JSON.parse(data) as Geofence[];
-      for (const gf of list) {
-        this.geofences.set(gf.id, gf);
-      }
-      this.log.info(TAG, `Loaded ${list.length} geofences`);
+      let places: UserPlace[] = [];
+      this.geofences.forEach((gf: Geofence) => {
+        let place: UserPlace = {
+          id: gf.id,
+          name: gf.name,
+          latitude: gf.latitude,
+          longitude: gf.longitude,
+          radiusMeters: gf.radiusMeters,
+          category: gf.category,
+        };
+        places.push(place);
+      });
+      
+      let config: UserPlacesConfig = {
+        version: 1,
+        description: '用户常去地点配置',
+        places: places,
+      };
+      
+      let jsonStr = JSON.stringify(config, null, 2);
+      let filePath = this.appFilesDir + '/' + CONFIG_FILENAME;
+      let file = fileIo.openSync(filePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      fileIo.writeSync(file.fd, jsonStr);
+      fileIo.closeSync(file.fd);
+      this.log.info(TAG, `Saved ${places.length} places to ${CONFIG_FILENAME}`);
     } catch (err) {
-      this.log.warn(TAG, `Failed to load: ${(err as Error).message}`);
+      this.log.error(TAG, `saveToFile error: ${(err as Error).message}`);
     }
   }
   
