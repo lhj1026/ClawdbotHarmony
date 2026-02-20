@@ -51,6 +51,14 @@
       "category": "shopping"
     },
     {
+      "id": "work_huawei_edmonton",
+      "name": "Huawei Edmonton (College Plaza)",
+      "latitude": 53.5198,
+      "longitude": -113.5209,
+      "radiusMeters": 200,
+      "category": "work"
+    },
+    {
       "id": "superstore_metrotown",
       "name": "Superstore Metrotown",
       "latitude": 49.2254,

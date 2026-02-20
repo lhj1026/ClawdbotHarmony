@@ -53,7 +53,7 @@ import { Monitor } from '../ModuleMonitor';
 import { ContextAwarenessService, ContextRecommendation } from '../context/ContextAwarenessService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.35.0';
+const APP_VERSION = '2.35.1';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -1745,6 +1745,7 @@ export class NodeRuntime {
             let mdTitle = 'Document';
             let mdSlash = mdPath.lastIndexOf('/');
             if (mdSlash >= 0) mdTitle = mdPath.substring(mdSlash + 1);
+            try { mdTitle = decodeURIComponent(mdTitle); } catch { /* keep as-is */ }
             try {
               let fileResult = await this.requestFile(mdPath);
               this.log.info(TAG, `DocViewer: got file, data length=${fileResult.data.length}`);

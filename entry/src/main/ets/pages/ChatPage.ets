@@ -3362,6 +3362,7 @@ Respond ONLY with the JSON array.`;
       // Extract filename from URI
       let parts = uri.split('/');
       let fileName = parts[parts.length - 1] || 'shared_file.txt';
+      try { fileName = decodeURIComponent(fileName); } catch { /* keep as-is */ }
 
       this.pendingFileName = fileName;
       this.pendingFileContent = text;
@@ -3464,6 +3465,7 @@ Respond ONLY with the JSON array.`;
       // Extract filename from URI
       let parts = uri.split('/');
       let fileName = parts[parts.length - 1] || 'file';
+      try { fileName = decodeURIComponent(fileName); } catch { /* keep as-is */ }
 
       this.pendingFileName = fileName;
       this.pendingFileContent = text;
