@@ -8,9 +8,25 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.35.0';
+export const APP_VERSION: string = '2.35.1';
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '2.35.1',
+    date: '2026-02-19',
+    features: [
+      'DocViewerPage：Markdown 文档查看器，通过 canvas.navigate 自动打开 .md 文件',
+      '日志搜索：🔍 按钮展开搜索栏，实时过滤 + 黄色高亮匹配内容',
+      '跨频道过滤修复：空 runId 事件不再泄漏到手机（webchat/feishu 消息隔离）',
+      '头像 auto-connect 修复：首次连接时自动刷新头像，3秒延迟重试',
+      '中文文件名修复：URL 编码的文件名自动解码显示',
+    ],
+    fixes: [
+      '修复 auto-connect 后头像不显示的问题',
+      '修复飞书/webchat 消息串到手机聊天的问题',
+      '修复文件选择器和分享的中文文件名乱码',
+    ],
+  },
   {
     version: '2.35.0',
     date: '2026-02-19',
@@ -371,4 +387,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.35.0';
+export const LATEST_VERSION: string = '2.35.1';
