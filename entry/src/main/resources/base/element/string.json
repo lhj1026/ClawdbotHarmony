@@ -10,6 +10,7 @@
     { "name": "file_reason", "value": "AI assistant needs file access to read and write documents when requested." },
     { "name": "motion_reason", "value": "Context awareness needs motion sensors to detect walking, sitting, and activity changes for smart suggestions." },
     { "name": "calendar_reason", "value": "AI assistant needs calendar access to create events and reminders when requested." },
-    { "name": "notification_reason", "value": "AI assistant needs notification access to alert you when new messages arrive while the app is in the background." }
+    { "name": "notification_reason", "value": "AI assistant needs notification access to alert you when new messages arrive while the app is in the background." },
+    { "name": "bluetooth_reason", "value": "Context awareness needs Bluetooth access to detect connected audio devices and peripherals for smart suggestions." }
   ]
 }

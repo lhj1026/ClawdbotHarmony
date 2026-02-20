@@ -19,6 +19,9 @@ import { ScreenStatePlugin } from './plugins/ScreenStatePlugin';
 import { MediaStatePlugin } from './plugins/MediaStatePlugin';
 import { NotificationPlugin } from './plugins/NotificationPlugin';
 import { AppUsagePlugin } from './plugins/AppUsagePlugin';
+import { BluetoothPlugin } from './plugins/BluetoothPlugin';
+import { WifiPlugin } from './plugins/WifiPlugin';
+import { StepCounterPlugin } from './plugins/StepCounterPlugin';
 
 const TAG = 'DigitalWorld';
 const PREFS_NAME = 'digital_world_settings';
@@ -257,6 +260,24 @@ export class DigitalWorldService {
         privacyLevel: 'low',
         enabledByDefault: true,
         description: '追踪本应用使用时长和会话数'
+      },
+      {
+        plugin: new BluetoothPlugin(),
+        privacyLevel: 'low',
+        enabledByDefault: true,
+        description: '检测蓝牙开关状态和已连接设备'
+      },
+      {
+        plugin: new StepCounterPlugin(),
+        privacyLevel: 'low',
+        enabledByDefault: true,
+        description: '读取计步器数据，检测运动状态'
+      },
+      {
+        plugin: new WifiPlugin(),
+        privacyLevel: 'medium',
+        enabledByDefault: true,
+        description: '检测WiFi连接状态和网络信息'
       }
     ];
   }
