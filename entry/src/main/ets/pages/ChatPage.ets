@@ -1813,7 +1813,23 @@ Respond ONLY with the JSON array.`;
     try {
       let engine = ContextEngineService.getInstance();
       let count = engine.getRuleCount();
-      let text = '🧠 情景智能决策树\n\n规则数: ' + count.toString() + '\n\n';
+      
+      let text = '🧠 情景智能决策树\n\n';
+      
+      // 如果引擎还没加载规则，提示用户开启情景智能
+      if (count === 0) {
+        text += '⚠️ 规则未加载\n\n';
+        text += '请先在 设置 → 情景智能 中开启，\n';
+        text += '或输入 /情景智能 进入管理页面。\n\n';
+        text += '开启后引擎会自动加载 12 条内置规则模板。';
+        let msg = new ChatMessage('assistant', text);
+        this.messages.push(msg);
+        this.scrollToEnd();
+        this.saveHistory();
+        return;
+      }
+      
+      text += '规则数: ' + count.toString() + '\n\n';
 
       let rulesJson = engine.exportRules();
       if (rulesJson.length > 2) {

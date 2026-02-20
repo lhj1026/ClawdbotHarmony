@@ -8,9 +8,19 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.35.3';
+export const APP_VERSION: string = '2.35.5';
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '2.35.4',
+    date: '2026-02-19',
+    features: [
+      '/规则 命令: 引擎未初始化时提示开启情景智能',
+    ],
+    fixes: [
+
+    ],
+  },
   {
     version: '2.35.3',
     date: '2026-02-19',
@@ -399,4 +409,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.35.3';
+export const LATEST_VERSION: string = '2.35.4';
