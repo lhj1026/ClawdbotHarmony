@@ -1738,29 +1738,46 @@ export class NodeRuntime {
           }
           this.log.info(TAG, `canvas.navigate inline: url=${url.substring(0, 200)}`);
 
-          // Markdown files: fetch content and dispatch via A2UI for DocViewerPage
+          // Markdown files: check if content was passed in params, or try to fetch
           if (url.endsWith('.md')) {
-            this.log.info(TAG, `Markdown file detected, fetching for DocViewer`);
+            this.log.info(TAG, `Markdown file detected, opening DocViewer`);
             let mdPath = url.startsWith('file://') ? url.substring(7) : url;
             let mdTitle = 'Document';
             let mdSlash = mdPath.lastIndexOf('/');
             if (mdSlash >= 0) mdTitle = mdPath.substring(mdSlash + 1);
             try { mdTitle = decodeURIComponent(mdTitle); } catch { /* keep as-is */ }
-            try {
-              let fileResult = await this.requestFile(mdPath);
-              this.log.info(TAG, `DocViewer: got file, data length=${fileResult.data.length}`);
-              let rawStr = fileResult.data;
-              let commaIdx = rawStr.indexOf(',');
-              if (commaIdx >= 0 && commaIdx < 100) rawStr = rawStr.substring(commaIdx + 1);
-              let bytes = buffer.from(rawStr, 'base64');
-              let decoded = bytes.toString('utf-8');
+
+            // Check if content was passed directly in params (from server-side)
+            let mdContent = '';
+            if (paramsJson) {
+              try {
+                let mp = JSON.parse(paramsJson) as Record<string, string>;
+                if (mp['content'] !== undefined) mdContent = mp['content'];
+              } catch { /* ignore */ }
+            }
+
+            // If no content in params, try fetching via operator session
+            if (mdContent.length === 0) {
+              this.log.info(TAG, `DocViewer: no content in params, trying requestFile`);
+              try {
+                let fileResult = await this.requestFile(mdPath);
+                let rawStr = fileResult.data;
+                let commaIdx = rawStr.indexOf(',');
+                if (commaIdx >= 0 && commaIdx < 100) rawStr = rawStr.substring(commaIdx + 1);
+                let bytes = buffer.from(rawStr, 'base64');
+                mdContent = bytes.toString('utf-8');
+              } catch (mdErr) {
+                this.log.error(TAG, `DocViewer fetch error: ${(mdErr as Error).message ?? ''}`);
+              }
+            }
+
+            if (mdContent.length > 0) {
               this._pendingDocTitle = mdTitle;
-              this._pendingDocContent = decoded;
+              this._pendingDocContent = mdContent;
               this.dispatchA2UI('doc.open', mdTitle);
               result = '{"ok":true,"action":"doc_viewer"}';
-            } catch (mdErr) {
-              this.log.error(TAG, `DocViewer fetch error: ${(mdErr as Error).message ?? ''}`);
-              result = `{"ok":false,"error":"fetch failed"}`;
+            } else {
+              result = '{"ok":false,"error":"no content available"}';
             }
             break;
           }

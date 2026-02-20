@@ -149,12 +149,12 @@ export struct ChatPage {
     this.loadTtsAutoReadSetting();
     this.loadAutoMemoryInjectSetting();
     this.loadAssistantSettings();
-    this.gwConnected = NodeRuntime.getInstance().isOperatorConnected;
+    this.gwConnected = NodeRuntime.getInstance().isConnected;
     this.memSvc.setNodeMode(this.gwConnected);
     this.gwListener = (_state: ConnectionState, _text: string) => {
       let wasConnected = this.gwConnected;
-      // Use operator connection state for agent identity display
-      this.gwConnected = NodeRuntime.getInstance().isOperatorConnected;
+      // Use any connection state for agent identity display
+      this.gwConnected = NodeRuntime.getInstance().isConnected;
       this.memSvc.setNodeMode(this.gwConnected);
       // When gateway first connects, sync memories from server
       if (!wasConnected && this.gwConnected) {
@@ -1795,19 +1795,25 @@ Respond ONLY with the JSON array.`;
   private printContextRules(): void {
     try {
       let engine = ContextEngineService.getInstance();
-      let rulesJson = engine.exportRules();
       let count = engine.getRuleCount();
-      let stats = engine.getStats();
       let text = '🧠 情景智能决策树\n\n规则数: ' + count.toString() + '\n\n';
+
+      let rulesJson = engine.exportRules();
       if (rulesJson.length > 2) {
-        let parsed: Object = JSON.parse(rulesJson);
-        let rules = parsed as ContextRulePrint[];
-        for (let r of rules) {
-          text += (r.name || r.id);
+        // 安全解析：逐条提取规则信息，避免 for...of 在 ArkTS 上 stack overflow
+        let rules: ContextRulePrint[] = JSON.parse(rulesJson) as ContextRulePrint[];
+        let len = rules.length;
+        for (let i = 0; i < len; i++) {
+          let r = rules[i];
+          let name = r.name;
+          if (!name || name.length === 0) name = r.id;
+          text += name;
           if (!r.enabled) text += ' (已禁用)';
           text += '\n';
           if (r.conditions) {
-            for (let c of r.conditions) {
+            let condLen = r.conditions.length;
+            for (let j = 0; j < condLen; j++) {
+              let c = r.conditions[j];
               text += '  · ' + c.key + ' ' + c.op + ' ' + c.value + '\n';
             }
           }
@@ -1819,15 +1825,20 @@ Respond ONLY with the JSON array.`;
       } else {
         text += '(无规则)\n';
       }
+
+      let stats = engine.getStats();
       if (stats.length > 2) {
         text += '📊 MAB 统计: ' + stats;
       }
+
       let msg = new ChatMessage('assistant', text);
       this.messages.push(msg);
       this.scrollToEnd();
       this.saveHistory();
     } catch (err) {
-      let msg = new ChatMessage('assistant', '❌ 无法加载规则: ' + (err as Error).message);
+      let errMsg = '未知错误';
+      try { errMsg = (err as Error).message; } catch (e) {}
+      let msg = new ChatMessage('assistant', '❌ 无法加载规则: ' + errMsg);
       this.messages.push(msg);
       this.scrollToEnd();
     }

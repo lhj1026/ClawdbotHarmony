@@ -16,34 +16,34 @@ const log = LogService.getInstance();
 
 // Typed wrappers for native NAPI calls (ArkTS strict mode disallows implicit any)
 function nativeLoadRules(json: string): boolean {
-  return nativeLoadRules(json) as boolean;
+  return contextEngine.loadRules(json) as boolean;
 }
 function nativeAddRule(json: string): boolean {
-  return nativeAddRule(json) as boolean;
+  return contextEngine.addRule(json) as boolean;
 }
 function nativeRemoveRule(id: string): boolean {
-  return nativeRemoveRule(id) as boolean;
+  return contextEngine.removeRule(id) as boolean;
 }
 function nativeEvaluate(json: string, max: number): string {
-  return nativeEvaluate(json, max) as string;
+  return contextEngine.evaluate(json, max) as string;
 }
 function nativeUpdateReward(id: string, reward: number): void {
-  nativeUpdateReward(id, reward);
+  contextEngine.updateReward(id, reward);
 }
 function nativeSelectAction(json: string): number {
-  return nativeSelectAction(json) as number;
+  return contextEngine.selectAction(json) as number;
 }
 function nativeGetStats(): string {
-  return nativeGetStats() as string;
+  return contextEngine.getStats() as string;
 }
 function nativeLoadStats(json: string): void {
-  nativeLoadStats(json);
+  contextEngine.loadStats(json);
 }
 function nativeGetRuleCount(): number {
-  return nativeGetRuleCount() as number;
+  return contextEngine.getRuleCount() as number;
 }
 function nativeExportRules(): string {
-  return nativeExportRules() as string;
+  return contextEngine.exportRules() as string;
 }
 
 /** Rule definition for ArkTS side */
