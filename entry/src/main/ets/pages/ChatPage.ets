@@ -961,6 +961,10 @@ export struct ChatPage {
             this.showSessionDrawer = false;
             router.pushUrl({ url: 'pages/SettingsRoutePage' });
           },
+          onOpenContextSettings: () => {
+            this.showSessionDrawer = false;
+            router.pushUrl({ url: 'pages/ContextSettingsPage' });
+          },
           onOpenLogs: () => {
             this.showSessionDrawer = false;
             router.pushUrl({ url: 'pages/LogRoutePage' });

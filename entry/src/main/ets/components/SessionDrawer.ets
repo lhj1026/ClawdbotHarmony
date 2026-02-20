@@ -25,6 +25,7 @@ export struct SessionDrawer {
   onExit: () => void = () => {};
   onOpenConversations: () => void = () => {};
   onOpenSettings: () => void = () => {};
+  onOpenContextSettings: () => void = () => {};
   onOpenLogs: () => void = () => {};
   onOpenAbout: () => void = () => {};
   onClose: () => void = () => {};
@@ -406,6 +407,20 @@ export struct SessionDrawer {
         .padding({ left: 16, right: 16, top: 6, bottom: 6 })
         .onClick(() => {
           this.onOpenSettings();
+        })
+
+        Row() {
+          Text('🧠')
+            .fontSize(16)
+            .margin({ right: 8 })
+          Text('情景智能')
+            .fontSize(14)
+            .fontColor('#666666')
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 6, bottom: 6 })
+        .onClick(() => {
+          this.onOpenContextSettings();
         })
 
         Row() {
