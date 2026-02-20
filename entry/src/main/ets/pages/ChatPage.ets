@@ -19,6 +19,8 @@ import { LogService } from '../common/LogService';
 import { I18n } from '../common/I18n';
 import { ConversationLogger } from '../service/ConversationLogger';
 import { ContextEngineService } from '../service/context/ContextEngine';
+import { LocationDiscoveryService, GeofenceSuggestion } from '../service/context/LocationDiscoveryService';
+import { ContextAwarenessService } from '../service/context/ContextAwarenessService';
 import { promptAction, router } from '@kit.ArkUI';
 import { audio } from '@kit.AudioKit';
 import { fileIo, picker } from '@kit.CoreFileKit';
@@ -1781,6 +1783,11 @@ Respond ONLY with the JSON array.`;
       this.printContextRules();
       return true;
     }
+    if (has(['发现', 'discover', '位置发现'])) {
+      this.inputText = '';
+      this.printLocationDiscovery();
+      return true;
+    }
     if (s === '' || s === 'help' || s === '帮助' || s === '?') {
       this.inputText = '';
       this.printSlashHelp();
@@ -1797,6 +1804,7 @@ Respond ONLY with the JSON array.`;
       '/设置 — 打开设置页\n' +
       '/情景智能 — 围栏与规则管理\n' +
       '/规则 — 打印当前决策树\n' +
+      '/发现 — 位置自动发现\n' +
       '/经验 — 经验管理\n' +
       '/记忆 — 记忆管理\n' +
       '/技能 — 技能管理\n' +
@@ -1872,6 +1880,49 @@ Respond ONLY with the JSON array.`;
       let errMsg = '未知错误';
       try { errMsg = (err as Error).message; } catch (e) {}
       let msg = new ChatMessage('assistant', '❌ 无法加载规则: ' + errMsg);
+      this.messages.push(msg);
+      this.scrollToEnd();
+    }
+  }
+
+  private printLocationDiscovery(): void {
+    try {
+      let discovery = LocationDiscoveryService.getInstance();
+      let stats = discovery.getStats();
+      let suggestions = discovery.getSuggestions();
+
+      let text = '📍 位置自动发现\n\n';
+      text += '历史点: ' + stats.historyCount.toString() + '\n';
+      text += '聚类数: ' + stats.clusterCount.toString() + '\n';
+      text += '上次发现: ' + stats.lastDiscovery + '\n\n';
+
+      if (stats.historyCount < 10) {
+        text += '⚠️ GPS 历史不足（需要至少 10 个点）\n';
+        text += '开启情景智能后会自动收集位置数据。\n';
+        text += '积累一段时间后再运行发现。';
+      } else if (suggestions.length === 0) {
+        text += '暂未发现常去地点。\n';
+        text += '继续积累数据，系统每小时自动分析一次。';
+      } else {
+        text += '发现 ' + suggestions.length.toString() + ' 个常去地点：\n\n';
+        for (let i = 0; i < suggestions.length; i++) {
+          let s = suggestions[i];
+          let conf = Math.round(s.confidence * 100);
+          text += (i + 1).toString() + '. ' + s.name + ' (' + conf.toString() + '% 置信)\n';
+          text += '   ' + s.reason + '\n';
+          text += '   ' + s.latitude.toFixed(4) + ', ' + s.longitude.toFixed(4) + '  r=' + s.radiusMeters.toString() + 'm\n\n';
+        }
+        text += '💡 在 /情景智能 页面可以一键添加为围栏';
+      }
+
+      let msg = new ChatMessage('assistant', text);
+      this.messages.push(msg);
+      this.scrollToEnd();
+      this.saveHistory();
+    } catch (err) {
+      let errMsg = '未知错误';
+      try { errMsg = (err as Error).message; } catch (e) {}
+      let msg = new ChatMessage('assistant', '❌ 位置发现失败: ' + errMsg);
       this.messages.push(msg);
       this.scrollToEnd();
     }

@@ -49,6 +49,7 @@ export class GeofenceManager {
   private geofences: Map<string, Geofence> = new Map();
   private currentlyInside: Set<string> = new Set();
   private listeners: GeofenceListener[] = [];
+  private locationListeners: ((location: geoLocationManager.Location) => void)[] = [];
   private initialized: boolean = false;
   
   // 位置监听
@@ -245,6 +246,15 @@ export class GeofenceManager {
         // 更新并获取当前围栏
         this.updateLocation(state);
         state.insideGeofences = Array.from(this.currentlyInside);
+
+        // 通知位置监听器（位置发现等）
+        for (let i = 0; i < this.locationListeners.length; i++) {
+          try {
+            this.locationListeners[i](location);
+          } catch (e) {
+            // ignore
+          }
+        }
       };
       
       let request: geoLocationManager.LocationRequest = {
@@ -287,6 +297,11 @@ export class GeofenceManager {
   removeListener(listener: GeofenceListener): void {
     let idx = this.listeners.indexOf(listener);
     if (idx >= 0) this.listeners.splice(idx, 1);
+  }
+
+  /** 监听每次位置更新（用于位置发现等） */
+  addLocationListener(listener: (location: geoLocationManager.Location) => void): void {
+    this.locationListeners.push(listener);
   }
   
   private notifyListeners(event: GeofenceEvent): void {
@@ -341,7 +356,7 @@ export class GeofenceManager {
   }
   
   /** 将当前围栏保存到 files/user_places.json */
-  private async saveToFile(): Promise<void> {
+  async saveToFile(): Promise<void> {
     try {
       let places: UserPlace[] = [];
       this.geofences.forEach((gf: Geofence) => {

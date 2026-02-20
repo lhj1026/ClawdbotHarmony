@@ -7,6 +7,7 @@ import { LogService } from '../common/LogService';
 import { ContextAwarenessService } from '../service/context/ContextAwarenessService';
 import { ContextEngineService } from '../service/context/ContextEngine';
 import { Geofence, GeofenceCategory } from '../service/context/ContextModels';
+import { LocationDiscoveryService, GeofenceSuggestion } from '../service/context/LocationDiscoveryService';
 
 @Entry
 @Component
@@ -19,6 +20,8 @@ struct ContextSettingsPage {
   @State ruleCount: number = 0;
   @State mabStats: string = '';
   @State engineStatus: string = '';
+  @State suggestions: GeofenceSuggestion[] = [];
+  @State discoveryStats: string = '';
   @State showAddDialog: boolean = false;
   @State newName: string = '';
   @State newLat: string = '';
@@ -57,9 +60,14 @@ struct ContextSettingsPage {
       this.geofenceDetails = details;
       this.geofenceIds = ids;
       this.engineStatus = cas.getStatus();
+      this.suggestions = cas.getLocationSuggestions();
+      let stats = cas.getLocationDiscoveryStats();
+      this.discoveryStats = `历史点: ${stats.historyCount} | 聚类: ${stats.clusterCount} | 上次发现: ${stats.lastDiscovery}`;
     } catch (err) {
       this.log.warn('CtxSettings', 'refresh cas: ' + (err as Error).message);
       this.engineStatus = '情景智能未初始化';
+      this.discoveryStats = '';
+      this.suggestions = [];
     }
     try {
       this.ruleCount = ContextEngineService.getInstance().getRuleCount();
@@ -194,6 +202,69 @@ struct ContextSettingsPage {
             .padding(16)
             .backgroundColor(Color.White)
             .borderRadius(12)
+
+            // ===== 位置自动发现 =====
+            Column() {
+              Row() {
+                Text('📍 位置自动发现')
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor('#1A1A1A')
+                  .layoutWeight(1)
+                Text('立即发现')
+                  .fontSize(14)
+                  .fontColor('#007AFF')
+                  .onClick(() => { this.triggerDiscovery(); })
+              }
+              .width('100%')
+              .margin({ bottom: 8 })
+
+              Text(this.discoveryStats.length > 0 ? this.discoveryStats : '未启动')
+                .fontSize(12)
+                .fontColor('#999999')
+                .width('100%')
+                .margin({ bottom: 8 })
+
+              if (this.suggestions.length === 0) {
+                Text('暂无发现，GPS 历史积累后会自动发现常去地点')
+                  .fontSize(13)
+                  .fontColor('#999999')
+                  .width('100%')
+                  .textAlign(TextAlign.Center)
+                  .padding(16)
+              } else {
+                ForEach(this.suggestions, (s: GeofenceSuggestion) => {
+                  Row() {
+                    Column({ space: 2 }) {
+                      Text(this.getCatLabel(s.category) + ' ' + s.name)
+                        .fontSize(14)
+                        .fontColor('#1A1A1A')
+                      Text(s.reason)
+                        .fontSize(11)
+                        .fontColor('#999999')
+                      Text(s.latitude.toFixed(4) + ', ' + s.longitude.toFixed(4) + '  r=' + s.radiusMeters.toString() + 'm')
+                        .fontSize(11)
+                        .fontColor('#BBBBBB')
+                    }
+                    .layoutWeight(1)
+                    .alignItems(HorizontalAlign.Start)
+
+                    Text('添加')
+                      .fontSize(13)
+                      .fontColor('#007AFF')
+                      .padding(4)
+                      .onClick(() => { this.acceptSuggestion(s); })
+                  }
+                  .width('100%')
+                  .padding({ top: 8, bottom: 8 })
+                  Divider().color('#F0F0F0')
+                }, (s: GeofenceSuggestion) => s.id)
+              }
+            }
+            .width('100%')
+            .padding(16)
+            .backgroundColor(Color.White)
+            .borderRadius(12)
           }
           .padding({ left: 16, right: 16, top: 12, bottom: 40 })
         }
@@ -315,6 +386,38 @@ struct ContextSettingsPage {
     this.newRadius = '100';
     this.selectedCat = 6;
     this.refresh();
+  }
+
+  private triggerDiscovery(): void {
+    try {
+      let cas = ContextAwarenessService.getInstance();
+      let discovery = LocationDiscoveryService.getInstance();
+      discovery.runDiscovery().then((suggestions: GeofenceSuggestion[]) => {
+        this.suggestions = suggestions;
+        let stats = cas.getLocationDiscoveryStats();
+        this.discoveryStats = `历史点: ${stats.historyCount} | 聚类: ${stats.clusterCount} | 上次发现: ${stats.lastDiscovery}`;
+      });
+    } catch (err) {
+      this.log.error('CtxSettings', 'Discovery error: ' + (err as Error).message);
+    }
+  }
+
+  private acceptSuggestion(s: GeofenceSuggestion): void {
+    try {
+      let cas = ContextAwarenessService.getInstance();
+      let gf: Geofence = {
+        id: 'auto_' + Date.now().toString(),
+        name: s.name,
+        latitude: s.latitude,
+        longitude: s.longitude,
+        radiusMeters: s.radiusMeters,
+        category: s.category as GeofenceCategory,
+      };
+      cas.addGeofence(gf);
+      this.refresh();
+    } catch (err) {
+      this.log.error('CtxSettings', 'Accept suggestion error: ' + (err as Error).message);
+    }
   }
 
   private deleteGeofence(id: string): void {

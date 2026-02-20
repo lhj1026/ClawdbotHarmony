@@ -495,4 +495,239 @@ export class ExperienceStorage {
     }
     return new Date(this._pack.syncedAt).toLocaleString();
   }
+
+  // ==================== 去重 ====================
+
+  /**
+   * 对所有经验包内的 skills 和 memory 去重
+   * L1: 精确去重 — 同名 key/name（忽略大小写+trim），保留最新
+   * L2: 模糊去重 — value 相似度 > 80%，合并为最完整的版本
+   * 返回去重数量
+   */
+  async dedup(context: common.UIAbilityContext): Promise<number> {
+    let pack = await this.ensureLoaded(context);
+    let totalRemoved = 0;
+
+    for (let i = 0; i < pack.experiences.length; i++) {
+      let exp = pack.experiences[i];
+      let skillResult = this.dedupSkills(exp.skills);
+      let memResult = this.dedupMemory(exp.memory);
+      exp.skills = skillResult.items;
+      exp.memory = memResult.items;
+      totalRemoved += skillResult.removed + memResult.removed;
+    }
+
+    if (totalRemoved > 0) {
+      await this.save(context);
+      this.log.info(TAG, `Dedup: removed ${totalRemoved} duplicate entries`);
+    }
+    return totalRemoved;
+  }
+
+  /** L1+L2 去重 skills: 按 name 分组，保留最新最完整版本 */
+  private dedupSkills(skills: Skill[]): DedupResult<Skill> {
+    let groups = new Map<string, Skill[]>();
+    let removed = 0;
+
+    // L1: 按 name (lowercase+trim) 分组
+    for (let i = 0; i < skills.length; i++) {
+      let s = skills[i];
+      if (s.deletedAt && s.deletedAt > 0) continue; // skip tombstones
+      let key = s.name.toLowerCase().trim();
+      let group = groups.get(key);
+      if (!group) {
+        group = [];
+        groups.set(key, group);
+      }
+      group.push(s);
+    }
+
+    let result: Skill[] = [];
+    groups.forEach((group: Skill[]) => {
+      if (group.length === 1) {
+        result.push(group[0]);
+        return;
+      }
+      // 多个同名 skill → 保留最新最完整的
+      let best = group[0];
+      for (let j = 1; j < group.length; j++) {
+        let candidate = group[j];
+        best = this.pickBetterSkill(best, candidate);
+        removed++;
+      }
+      result.push(best);
+    });
+
+    // L2: 模糊去重 — 检查 instructions 相似度
+    let finalResult = this.fuzzyDedupSkills(result);
+    removed += finalResult.removed;
+
+    return { items: finalResult.items, removed: removed };
+  }
+
+  /** L1+L2 去重 memory: 按 key 分组，保留最新最完整版本 */
+  private dedupMemory(memory: Memory[]): DedupResult<Memory> {
+    let groups = new Map<string, Memory[]>();
+    let removed = 0;
+
+    // L1: 按 key (lowercase+trim) 分组
+    for (let i = 0; i < memory.length; i++) {
+      let m = memory[i];
+      if (m.deletedAt && m.deletedAt > 0) continue;
+      let key = m.key.toLowerCase().trim();
+      let group = groups.get(key);
+      if (!group) {
+        group = [];
+        groups.set(key, group);
+      }
+      group.push(m);
+    }
+
+    let result: Memory[] = [];
+    groups.forEach((group: Memory[]) => {
+      if (group.length === 1) {
+        result.push(group[0]);
+        return;
+      }
+      let best = group[0];
+      for (let j = 1; j < group.length; j++) {
+        let candidate = group[j];
+        best = this.pickBetterMemory(best, candidate);
+        removed++;
+      }
+      result.push(best);
+    });
+
+    // L2: 模糊去重 — 检查不同 key 但 value 高度相似
+    let finalResult = this.fuzzyDedupMemory(result);
+    removed += finalResult.removed;
+
+    return { items: finalResult.items, removed: removed };
+  }
+
+  /** 选择更好的 skill: 更新时间更晚 + 内容更完整 */
+  private pickBetterSkill(a: Skill, b: Skill): Skill {
+    let aTime = a.lastModified ?? 0;
+    let bTime = b.lastModified ?? 0;
+    // 内容更长的通常更完整
+    let aLen = (a.instructions?.length ?? 0) + (a.description?.length ?? 0);
+    let bLen = (b.instructions?.length ?? 0) + (b.description?.length ?? 0);
+    // 优先选更新的；如果时间相同，选内容更长的
+    if (bTime > aTime) return b;
+    if (aTime > bTime) return a;
+    return bLen >= aLen ? b : a;
+  }
+
+  /** 选择更好的 memory: 更新时间更晚 + 内容更完整 */
+  private pickBetterMemory(a: Memory, b: Memory): Memory {
+    let aTime = a.lastModified ?? 0;
+    let bTime = b.lastModified ?? 0;
+    let aLen = a.value?.length ?? 0;
+    let bLen = b.value?.length ?? 0;
+    if (bTime > aTime) return b;
+    if (aTime > bTime) return a;
+    return bLen >= aLen ? b : a;
+  }
+
+  /**
+   * 计算两个字符串的相似度 (Jaccard on bigrams)
+   * 返回 0~1，1 = 完全相同
+   */
+  private similarity(a: string, b: string): number {
+    if (a === b) return 1.0;
+    if (a.length === 0 || b.length === 0) return 0.0;
+
+    let al = a.toLowerCase();
+    let bl = b.toLowerCase();
+    if (al === bl) return 1.0;
+
+    // Bigram Jaccard
+    let bigramsA = new Set<string>();
+    let bigramsB = new Set<string>();
+    for (let i = 0; i < al.length - 1; i++) {
+      bigramsA.add(al.substring(i, i + 2));
+    }
+    for (let i = 0; i < bl.length - 1; i++) {
+      bigramsB.add(bl.substring(i, i + 2));
+    }
+
+    let intersection = 0;
+    bigramsA.forEach((bg: string) => {
+      if (bigramsB.has(bg)) intersection++;
+    });
+
+    let union = bigramsA.size + bigramsB.size - intersection;
+    return union > 0 ? intersection / union : 0;
+  }
+
+  /** L2 模糊去重: 不同 name 但 instructions 相似度 > 80% 的 skills */
+  private fuzzyDedupSkills(skills: Skill[]): DedupResult<Skill> {
+    let removed = 0;
+    let keep: boolean[] = [];
+    for (let i = 0; i < skills.length; i++) keep.push(true);
+
+    for (let i = 0; i < skills.length; i++) {
+      if (!keep[i]) continue;
+      for (let j = i + 1; j < skills.length; j++) {
+        if (!keep[j]) continue;
+        let instrA = skills[i].instructions ?? '';
+        let instrB = skills[j].instructions ?? '';
+        if (instrA.length > 0 && instrB.length > 0 && this.similarity(instrA, instrB) > 0.8) {
+          // 保留更完整的
+          let better = this.pickBetterSkill(skills[i], skills[j]);
+          if (better === skills[i]) {
+            keep[j] = false;
+          } else {
+            keep[i] = false;
+            break; // i is removed, no need to compare further
+          }
+          removed++;
+        }
+      }
+    }
+
+    let result: Skill[] = [];
+    for (let i = 0; i < skills.length; i++) {
+      if (keep[i]) result.push(skills[i]);
+    }
+    return { items: result, removed: removed };
+  }
+
+  /** L2 模糊去重: 不同 key 但 value 相似度 > 80% 的 memory */
+  private fuzzyDedupMemory(memory: Memory[]): DedupResult<Memory> {
+    let removed = 0;
+    let keep: boolean[] = [];
+    for (let i = 0; i < memory.length; i++) keep.push(true);
+
+    for (let i = 0; i < memory.length; i++) {
+      if (!keep[i]) continue;
+      for (let j = i + 1; j < memory.length; j++) {
+        if (!keep[j]) continue;
+        let valA = memory[i].value ?? '';
+        let valB = memory[j].value ?? '';
+        if (valA.length > 0 && valB.length > 0 && this.similarity(valA, valB) > 0.8) {
+          let better = this.pickBetterMemory(memory[i], memory[j]);
+          if (better === memory[i]) {
+            keep[j] = false;
+          } else {
+            keep[i] = false;
+            break;
+          }
+          removed++;
+        }
+      }
+    }
+
+    let result: Memory[] = [];
+    for (let i = 0; i < memory.length; i++) {
+      if (keep[i]) result.push(memory[i]);
+    }
+    return { items: result, removed: removed };
+  }
+}
+
+/** 去重结果 */
+interface DedupResult<T> {
+  items: T[];
+  removed: number;
 }

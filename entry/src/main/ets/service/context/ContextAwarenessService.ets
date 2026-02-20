@@ -10,6 +10,8 @@ import { common } from '@kit.AbilityKit';
 import { LogService } from '../../common/LogService';
 import { GeofenceManager, GeofenceEvent } from './GeofenceManager';
 import { BehaviorLogger } from './BehaviorLogger';
+import { ContextEngineService, ContextSnapshot, MatchResult, GeofenceBinding } from './ContextEngine';
+import { LocationDiscoveryService, GeofenceSuggestion } from './LocationDiscoveryService';
 import {
   EnvironmentContext,
   MotionState,
@@ -62,10 +64,20 @@ export class ContextAwarenessService {
   // 推荐监听器
   private recommendationListeners: RecommendationListener[] = [];
   
+  // C++ 规则引擎
+  private engine: ContextEngineService = ContextEngineService.getInstance();
+  private evaluationTimer: number = -1;
+  private static readonly EVALUATION_INTERVAL_MS = 5 * 60 * 1000;  // 5分钟评估一次
+  
   // 防抖：避免重复推荐
   private lastRecommendations: Map<string, number> = new Map();
   private static readonly RECOMMENDATION_COOLDOWN_MS = 5 * 60 * 1000;  // 5分钟冷却
   
+  // 位置自动发现
+  private locationDiscovery: LocationDiscoveryService = LocationDiscoveryService.getInstance();
+  private discoveryTimer: number = -1;
+  private static readonly DISCOVERY_INTERVAL_MS = 60 * 60 * 1000;  // 1小时发现一次
+
   private constructor() {
     this.geofenceMgr = GeofenceManager.getInstance();
     this.behaviorLog = BehaviorLogger.getInstance();
@@ -85,11 +97,21 @@ export class ContextAwarenessService {
     await this.geofenceMgr.init(context);
     await this.behaviorLog.init(context);
     
+    // 初始化 C++ 规则引擎
+    await this.engine.init(context);
+    if (this.engine.getRuleCount() === 0) {
+      await this.engine.loadDefaultRules();
+      this.log.info(TAG, `Loaded default rules: ${this.engine.getRuleCount()}`);
+    }
+    
+    // 初始化位置发现服务
+    await this.locationDiscovery.init(context);
+
     // 监听地理围栏事件
     this.geofenceMgr.addListener((event) => this.onGeofenceEvent(event));
     
     this.initialized = true;
-    this.log.info(TAG, 'Context Awareness Service initialized');
+    this.log.info(TAG, `Context Awareness Service initialized, rules: ${this.engine.getRuleCount()}`);
   }
   
   // ==================== 服务控制 ====================
@@ -108,6 +130,12 @@ export class ContextAwarenessService {
       // 启动传感器
       this.startMotionSensors();
       
+      // 启动定时规则评估
+      this.startPeriodicEvaluation();
+
+      // 启动位置自动发现（定时聚类）
+      this.startLocationDiscovery();
+      
       this.isRunning = true;
       this.log.info(TAG, 'Context Awareness Service started');
       return true;
@@ -122,6 +150,8 @@ export class ContextAwarenessService {
     
     this.geofenceMgr.stopMonitoring();
     this.stopMotionSensors();
+    this.stopPeriodicEvaluation();
+    this.stopLocationDiscovery();
     
     this.isRunning = false;
     this.log.info(TAG, 'Context Awareness Service stopped');
@@ -186,7 +216,77 @@ export class ContextAwarenessService {
       this.lastMotionState = newState;
     }
   }
-  
+
+  // ==================== 定时评估 ====================
+
+  private startPeriodicEvaluation(): void {
+    if (this.evaluationTimer !== -1) return;
+    this.evaluationTimer = setInterval(() => {
+      this.periodicEvaluate();
+    }, ContextAwarenessService.EVALUATION_INTERVAL_MS);
+    this.log.info(TAG, 'Started periodic evaluation');
+  }
+
+  private stopPeriodicEvaluation(): void {
+    if (this.evaluationTimer !== -1) {
+      clearInterval(this.evaluationTimer);
+      this.evaluationTimer = -1;
+      this.log.info(TAG, 'Stopped periodic evaluation');
+    }
+  }
+
+  private async periodicEvaluate(): Promise<void> {
+    if (!this.isRunning) return;
+    let ctx = await this.getCurrentContext();
+    let snapshot = this.buildSnapshot(ctx);
+    this.evaluateAndDeliver(snapshot);
+  }
+
+  // ==================== 位置自动发现 ====================
+
+  private startLocationDiscovery(): void {
+    if (this.discoveryTimer !== -1) return;
+
+    // 监听位置变化，记录到发现服务
+    this.geofenceMgr.addLocationListener((location) => {
+      this.locationDiscovery.recordLocation(location);
+    });
+
+    // 定时运行聚类发现
+    this.discoveryTimer = setInterval(() => {
+      this.runLocationDiscovery();
+    }, ContextAwarenessService.DISCOVERY_INTERVAL_MS);
+
+    this.log.info(TAG, 'Started location discovery');
+  }
+
+  private stopLocationDiscovery(): void {
+    if (this.discoveryTimer !== -1) {
+      clearInterval(this.discoveryTimer);
+      this.discoveryTimer = -1;
+      this.log.info(TAG, 'Stopped location discovery');
+    }
+  }
+
+  private async runLocationDiscovery(): Promise<void> {
+    if (!this.isRunning) return;
+    let suggestions = await this.locationDiscovery.runDiscovery();
+    if (suggestions.length > 0) {
+      this.log.info(TAG, `Location discovery found ${suggestions.length} suggestions`);
+      // TODO: 可以通过通知或聊天消息告知用户
+    }
+  }
+
+  /** 获取位置发现建议 */
+  getLocationSuggestions(): GeofenceSuggestion[] {
+    return this.locationDiscovery.getSuggestions();
+  }
+
+  /** 获取位置发现统计 */
+  getLocationDiscoveryStats(): { historyCount: number; clusterCount: number; lastDiscovery: string } {
+    return this.locationDiscovery.getStats();
+  }
+
   // ==================== 上下文构建 ====================
   
   /**
@@ -255,7 +355,62 @@ export class ContextAwarenessService {
     this.currentContext = ctx;
     return ctx;
   }
-  
+
+  /**
+   * 构建 C++ 规则引擎需要的快照格式
+   */
+  private buildSnapshot(ctx: EnvironmentContext): ContextSnapshot {
+    let now = new Date();
+    let hour = now.getHours();
+    let dayOfWeek = now.getDay();
+
+    return {
+      timeOfDay: ctx.timeOfDay,
+      hour: hour.toString(),
+      dayOfWeek: dayOfWeek.toString(),
+      isWeekend: ctx.isWeekend ? 'true' : 'false',
+      motionState: ctx.motionState || 'unknown',
+      batteryLevel: ctx.batteryLevel.toString(),
+      isCharging: ctx.isCharging ? 'true' : 'false',
+      networkType: ctx.networkType || 'none',
+      geofence: ctx.currentGeofence?.id,
+      latitude: ctx.location?.latitude?.toString(),
+      longitude: ctx.location?.longitude?.toString(),
+      stepCount: ctx.stepCount?.toString()
+    };
+  }
+
+  /**
+   * 评估并推送推荐
+   */
+  private evaluateAndDeliver(snapshot: ContextSnapshot): void {
+    let results = this.engine.evaluate(snapshot, 3);
+    if (results.length === 0) return;
+
+    let top = results[0];
+    if (this.isOnCooldown(top.ruleId)) return;
+
+    // 转换为推荐格式
+    let rec: ContextRecommendation = {
+      rule: {
+        id: top.ruleId,
+        trigger: {},
+        action: top.action as UserAction,
+        confidence: top.confidence,
+        triggerCount: 0,
+        acceptCount: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        enabled: true
+      },
+      action: top.action as UserAction,
+      reason: `基于当前情景推荐 (${Math.round(top.confidence * 100)}% 匹配)`
+    };
+
+    this.notifyRecommendation(rec);
+    this.setOnCooldown(top.ruleId);
+  }
+
   // ==================== 地理围栏事件 ====================
   
   private async onGeofenceEvent(event: GeofenceEvent): Promise<void> {
@@ -267,32 +422,26 @@ export class ContextAwarenessService {
     // 只处理进入事件
     if (event.type !== 'enter') return;
     
-    // 获取当前上下文
+    // 获取当前上下文并通过 C++ 规则引擎评估
     let ctx = await this.getCurrentContext();
+    let snapshot = this.buildSnapshot(ctx);
+    this.log.info(TAG, `Geofence trigger evaluate: geofence=${snapshot.geofence ?? 'none'}`);
+    this.evaluateAndDeliver(snapshot);
     
-    // 查找匹配的规则
+    // 同时尝试旧的 BehaviorLogger 匹配（兼容过渡）
     let rules = this.behaviorLog.getMatchingRules(ctx);
-    
     if (rules.length > 0) {
       let topRule = rules[0];
-      
-      // 检查冷却时间
-      if (this.isOnCooldown(topRule.id)) {
-        this.log.debug(TAG, `Rule ${topRule.id} on cooldown, skipping`);
-        return;
+      if (!this.isOnCooldown(topRule.id)) {
+        let rec: ContextRecommendation = {
+          rule: topRule,
+          action: topRule.action,
+          reason: this.buildRecommendationReason(topRule, event.geofence),
+        };
+        this.notifyRecommendation(rec);
+        this.setOnCooldown(topRule.id);
       }
-      
-      // 生成推荐
-      let rec: ContextRecommendation = {
-        rule: topRule,
-        action: topRule.action,
-        reason: this.buildRecommendationReason(topRule, event.geofence),
-      };
-      
-      this.notifyRecommendation(rec);
-      this.setOnCooldown(topRule.id);
     } else {
-      // 没有学习到的规则，检查是否应该主动推荐
       this.handleNewLocationWithoutRules(event.geofence, ctx);
     }
   }
@@ -430,17 +579,31 @@ export class ContextAwarenessService {
   
   addGeofence(geofence: Geofence): void {
     this.geofenceMgr.addGeofence(geofence);
-    if (this.context) {
-      
-    }
+    this.geofenceMgr.saveToFile();
+    this.rebindAfterGeofenceChange();
   }
   
   removeGeofence(id: string): boolean {
     let result = this.geofenceMgr.removeGeofence(id);
-    if (result && this.context) {
-      
+    if (result) {
+      this.geofenceMgr.saveToFile();
+      this.rebindAfterGeofenceChange();
     }
     return result;
+  }
+
+  private rebindAfterGeofenceChange(): void {
+    try {
+      let geofences = this.geofenceMgr.getAllGeofences();
+      let bindings: GeofenceBinding[] = [];
+      for (let i = 0; i < geofences.length; i++) {
+        bindings.push({ id: geofences[i].id, category: geofences[i].category });
+      }
+      this.engine.rebindGeofences(bindings);
+      this.log.info(TAG, `围栏变更后重新绑定规则，围栏数: ${geofences.length}`);
+    } catch (err) {
+      this.log.warn(TAG, `rebind failed: ${(err as Error).message}`);
+    }
   }
   
   getAllGeofences(): Geofence[] {
