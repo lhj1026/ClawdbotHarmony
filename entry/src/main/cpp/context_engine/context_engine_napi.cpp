@@ -11,12 +11,15 @@
  *   loadStats(statsJson: string): void
  *   getRuleCount(): number
  *   exportRules(): string
+ *   pushEvent(eventJson: string): void      // push event to buffer
+ *   setLimits(limitsJson: string): void      // configure rate limits
  */
 #include <napi/native_api.h>
 #include "context_engine.h"
 #include <string>
 #include <memory>
 #include <sstream>
+#include <chrono>
 
 // Simple JSON parsing helpers (no external deps)
 // For MVP we use a minimal approach — production could use nlohmann/json
@@ -389,6 +392,66 @@ static napi_value SelectAction(napi_env env, napi_callback_info info) {
     return val;
 }
 
+static napi_value PushEvent(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 1) {
+        napi_throw_error(env, nullptr, "pushEvent requires a JSON string");
+        return nullptr;
+    }
+
+    auto json = napiGetString(env, args[0]);
+
+    context_engine::ContextEvent event;
+    event.eventType = jsonGetStr(json, "eventType");
+    event.timestampMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+
+    // Parse context snapshot if present
+    auto ctxPos = json.find("\"context\"");
+    if (ctxPos != std::string::npos) {
+        auto bracePos = json.find('{', ctxPos);
+        if (bracePos != std::string::npos) {
+            int depth = 1;
+            size_t end = bracePos + 1;
+            while (end < json.size() && depth > 0) {
+                if (json[end] == '{') depth++;
+                else if (json[end] == '}') depth--;
+                end++;
+            }
+            std::string ctxJson = json.substr(bracePos, end - bracePos);
+            event.context = parseContextMap(ctxJson);
+        }
+    }
+
+    g_engine.pushEvent(event);
+    return nullptr;
+}
+
+static napi_value SetLimits(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 1) {
+        napi_throw_error(env, nullptr, "setLimits requires a JSON string");
+        return nullptr;
+    }
+
+    auto json = napiGetString(env, args[0]);
+
+    context_engine::RateLimits limits;
+    limits.categoryCooldownCount = static_cast<int>(
+        jsonGetNum(json, "categoryCooldownCount", 3));
+    limits.categoryCooldownWindowMs = static_cast<int64_t>(
+        jsonGetNum(json, "categoryCooldownWindowMs", 600000));
+    limits.globalMaxPerHour = static_cast<int>(
+        jsonGetNum(json, "globalMaxPerHour", 10));
+
+    g_engine.setLimits(limits);
+    return nullptr;
+}
+
 // ============================================================
 // Module registration
 // ============================================================
@@ -406,6 +469,8 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"loadStats",    nullptr, LoadStats,    nullptr, nullptr, nullptr, napi_default, nullptr},
         {"getRuleCount", nullptr, GetRuleCount, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"exportRules",  nullptr, ExportRules,  nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"pushEvent",    nullptr, PushEvent,    nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"setLimits",    nullptr, SetLimits,    nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     return exports;

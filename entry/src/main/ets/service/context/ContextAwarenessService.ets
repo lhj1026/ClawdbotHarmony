@@ -10,6 +10,7 @@ import { common } from '@kit.AbilityKit';
 import { LogService } from '../../common/LogService';
 import { GeofenceManager, GeofenceEvent } from './GeofenceManager';
 import { BehaviorLogger } from './BehaviorLogger';
+import { ContextEngineService } from './ContextEngine';
 import {
   EnvironmentContext,
   MotionState,
@@ -45,6 +46,7 @@ export class ContextAwarenessService {
   
   private geofenceMgr: GeofenceManager;
   private behaviorLog: BehaviorLogger;
+  private contextEngine: ContextEngineService = ContextEngineService.getInstance();
   
   private initialized: boolean = false;
   private isRunning: boolean = false;
@@ -183,6 +185,7 @@ export class ContextAwarenessService {
     
     if (newState !== this.lastMotionState) {
       this.log.debug(TAG, `Motion state: ${this.lastMotionState} -> ${newState}`);
+      this.contextEngine.pushEvent('motion_' + newState);
       this.lastMotionState = newState;
     }
   }
@@ -263,6 +266,10 @@ export class ContextAwarenessService {
     
     // 更新位置
     this.lastLocation = event.location;
+    
+    // Push event to engine buffer for temporal/sequence rules
+    let eventType = event.type === 'enter' ? 'geofence_enter' : 'geofence_exit';
+    this.contextEngine.pushEvent(eventType);
     
     // 只处理进入事件
     if (event.type !== 'enter') return;
