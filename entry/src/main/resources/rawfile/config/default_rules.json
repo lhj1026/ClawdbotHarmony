@@ -1,0 +1,178 @@
+[
+  {
+    "id": "rule_morning_workday",
+    "name": "工作日早出门",
+    "conditions": [
+      { "key": "timeOfDay", "op": "eq", "value": "morning" },
+      { "key": "isWeekend", "op": "eq", "value": "false" },
+      { "key": "motionState", "op": "in", "value": "walking,driving" }
+    ],
+    "action": { "id": "suggest_morning_commute", "type": "suggestion", "payload": "早上好！查看通勤路线和天气？" },
+    "priority": 2.0,
+    "cooldownMs": 14400000,
+    "enabled": true
+  },
+  {
+    "id": "rule_low_battery",
+    "name": "低电量提醒",
+    "conditions": [
+      { "key": "batteryLevel", "op": "lte", "value": "15" },
+      { "key": "isCharging", "op": "eq", "value": "false" }
+    ],
+    "action": { "id": "warn_low_battery", "type": "notification", "payload": "电量不足 15%，建议省电模式或充电" },
+    "priority": 3.0,
+    "cooldownMs": 1800000,
+    "enabled": true
+  },
+  {
+    "id": "rule_weekend_morning",
+    "name": "周末早上",
+    "conditions": [
+      { "key": "timeOfDay", "op": "eq", "value": "morning" },
+      { "key": "isWeekend", "op": "eq", "value": "true" }
+    ],
+    "action": { "id": "suggest_weekend", "type": "suggestion", "payload": "周末愉快！看看今天有什么好玩的？" },
+    "priority": 1.0,
+    "cooldownMs": 28800000,
+    "enabled": true
+  },
+  {
+    "id": "rule_long_stationary",
+    "name": "久坐提醒",
+    "conditions": [
+      { "key": "motionState", "op": "eq", "value": "stationary" },
+      { "key": "timeOfDay", "op": "in", "value": "morning,afternoon" }
+    ],
+    "action": { "id": "suggest_move", "type": "suggestion", "payload": "坐了很久了，起来活动一下吧 🏃" },
+    "priority": 1.0,
+    "cooldownMs": 5400000,
+    "enabled": true
+  },
+  {
+    "id": "rule_commuting",
+    "name": "通勤路上",
+    "conditions": [
+      { "key": "motionState", "op": "in", "value": "driving,transit" },
+      { "key": "isWeekend", "op": "eq", "value": "false" },
+      { "key": "timeOfDay", "op": "in", "value": "morning,evening" }
+    ],
+    "action": { "id": "suggest_commute_info", "type": "suggestion", "payload": "通勤中，要听播客或看新闻摘要吗？" },
+    "priority": 1.5,
+    "cooldownMs": 14400000,
+    "enabled": true
+  },
+  {
+    "id": "rule_bedtime",
+    "name": "睡前提醒",
+    "conditions": [
+      { "key": "hour", "op": "gte", "value": "22" },
+      { "key": "motionState", "op": "eq", "value": "stationary" }
+    ],
+    "action": { "id": "suggest_bedtime", "type": "suggestion", "payload": "夜深了，明天的日程已准备好，早点休息 🌙" },
+    "priority": 1.0,
+    "cooldownMs": 28800000,
+    "enabled": true
+  },
+  {
+    "id": "rule_evening_home",
+    "name": "到家放松",
+    "conditions": [
+      { "key": "timeOfDay", "op": "eq", "value": "evening" },
+      { "key": "geofence", "op": "eq", "value": "{{home}}" },
+      { "key": "motionState", "op": "eq", "value": "stationary" }
+    ],
+    "action": { "id": "suggest_evening_relax", "type": "suggestion", "payload": "到家了！听音乐或看新闻摘要？" },
+    "priority": 1.5,
+    "cooldownMs": 14400000,
+    "enabled": true
+  },
+  {
+    "id": "rule_leave_home_morning",
+    "name": "早上离家",
+    "conditions": [
+      { "key": "timeOfDay", "op": "eq", "value": "morning" },
+      { "key": "geofence", "op": "neq", "value": "{{home}}" },
+      { "key": "motionState", "op": "in", "value": "walking,driving" }
+    ],
+    "action": { "id": "suggest_morning_brief", "type": "suggestion", "payload": "出门了！今日天气和日程概览？" },
+    "priority": 2.0,
+    "cooldownMs": 14400000,
+    "enabled": true
+  },
+  {
+    "id": "rule_arrive_work",
+    "name": "到达公司",
+    "conditions": [
+      { "key": "geofence", "op": "eq", "value": "{{work}}" },
+      { "key": "isWeekend", "op": "eq", "value": "false" },
+      { "key": "motionState", "op": "eq", "value": "stationary" }
+    ],
+    "action": { "id": "suggest_work_mode", "type": "suggestion", "payload": "到公司了，开启工作模式？查看今日待办" },
+    "priority": 2.0,
+    "cooldownMs": 28800000,
+    "enabled": true
+  },
+  {
+    "id": "rule_leave_work",
+    "name": "下班离开公司（围栏）",
+    "conditions": [
+      { "key": "geofence", "op": "neq", "value": "{{work}}" },
+      { "key": "timeOfDay", "op": "in", "value": "evening,night" },
+      { "key": "isWeekend", "op": "eq", "value": "false" }
+    ],
+    "action": { "id": "suggest_leave_work", "type": "suggestion", "payload": "下班了！查看回家路线？" },
+    "priority": 1.5,
+    "cooldownMs": 28800000,
+    "enabled": true
+  },
+  {
+    "id": "rule_leave_work_wifi",
+    "name": "离开公司（WiFi丢失）",
+    "conditions": [
+      { "key": "wifiLostWork", "op": "eq", "value": "true" },
+      { "key": "timeOfDay", "op": "in", "value": "afternoon,evening,night" },
+      { "key": "isWeekend", "op": "eq", "value": "false" }
+    ],
+    "action": { "id": "suggest_leave_work", "type": "suggestion", "payload": "检测到离开公司WiFi，下班了？查看回家路线？" },
+    "priority": 2.0,
+    "cooldownMs": 28800000,
+    "enabled": true
+  },
+  {
+    "id": "rule_leave_work_music",
+    "name": "离开公司步行听音乐（围栏）",
+    "conditions": [
+      { "key": "geofence", "op": "neq", "value": "{{work}}" },
+      { "key": "motionState", "op": "eq", "value": "walking" },
+      { "key": "isWeekend", "op": "eq", "value": "false" }
+    ],
+    "action": { "id": "suggest_music", "type": "suggestion", "payload": "走路中 🎵 打开音乐放松一下？" },
+    "priority": 2.0,
+    "cooldownMs": 28800000,
+    "enabled": true
+  },
+  {
+    "id": "rule_leave_work_music_wifi",
+    "name": "离开公司步行听音乐（WiFi丢失）",
+    "conditions": [
+      { "key": "wifiLostWork", "op": "eq", "value": "true" },
+      { "key": "motionState", "op": "eq", "value": "walking" },
+      { "key": "isWeekend", "op": "eq", "value": "false" }
+    ],
+    "action": { "id": "suggest_music", "type": "suggestion", "payload": "走路中 🎵 打开音乐放松一下？" },
+    "priority": 2.5,
+    "cooldownMs": 28800000,
+    "enabled": true
+  },
+  {
+    "id": "rule_arrive_gym",
+    "name": "到达健身房",
+    "conditions": [
+      { "key": "geofence", "op": "eq", "value": "{{gym}}" }
+    ],
+    "action": { "id": "suggest_workout", "type": "suggestion", "payload": "到健身房了💪 开始今天的训练计划？" },
+    "priority": 1.5,
+    "cooldownMs": 14400000,
+    "enabled": true
+  }
+]
