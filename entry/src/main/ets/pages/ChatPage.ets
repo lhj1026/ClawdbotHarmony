@@ -18,6 +18,7 @@ import { NotificationInfo } from '../service/gateway/NotificationCapability';
 import { LogService } from '../common/LogService';
 import { I18n } from '../common/I18n';
 import { ConversationLogger } from '../service/ConversationLogger';
+import { ContextEngineService } from '../service/context/ContextEngine';
 import { promptAction, router } from '@kit.ArkUI';
 import { audio } from '@kit.AudioKit';
 import { fileIo, picker } from '@kit.CoreFileKit';
@@ -31,6 +32,10 @@ import { FeishuBotService } from '../service/FeishuBotService';
 import { LocalAsrService } from '../service/LocalAsrService';
 import { detectMood, MoodResult } from '../service/MoodDetector';
 import { VadService } from '../service/VadService';
+
+interface ContextConditionPrint { key: string; op: string; value: string; }
+interface ContextActionPrint { id: string; type: string; payload: string; }
+interface ContextRulePrint { id: string; name: string; enabled: boolean; conditions: ContextConditionPrint[]; action: ContextActionPrint; }
 
 // Interface for file info from gateway
 interface GatewayFileInfo {
@@ -1735,8 +1740,83 @@ Respond ONLY with the JSON array.`;
       router.pushUrl({ url: 'pages/LogRoutePage' });
       return true;
     }
+    if (has(['情景智能', 'context', '围栏', 'geofence'])) {
+      this.inputText = '';
+      router.pushUrl({ url: 'pages/ContextSettingsPage' });
+      return true;
+    }
+    if (has(['决策树', '规则', 'rules', 'tree'])) {
+      this.inputText = '';
+      this.printContextRules();
+      return true;
+    }
+    if (s === '' || s === 'help' || s === '帮助' || s === '?') {
+      this.inputText = '';
+      this.printSlashHelp();
+      return true;
+    }
 
     return false;
+  }
+
+  private printSlashHelp(): void {
+    let helpText =
+      '📋 可用命令\n\n' +
+      '/help — 显示此帮助\n' +
+      '/设置 — 打开设置页\n' +
+      '/情景智能 — 围栏与规则管理\n' +
+      '/规则 — 打印当前决策树\n' +
+      '/经验 — 经验管理\n' +
+      '/记忆 — 记忆管理\n' +
+      '/技能 — 技能管理\n' +
+      '/对话记录 — 历史对话\n' +
+      '/日志 — 查看日志\n' +
+      '/关于 — 关于页面';
+    let msg = new ChatMessage('assistant', helpText);
+    this.messages.push(msg);
+    this.scrollToEnd();
+    this.saveHistory();
+  }
+
+  private printContextRules(): void {
+    try {
+      let engine = ContextEngineService.getInstance();
+      let rulesJson = engine.exportRules();
+      let count = engine.getRuleCount();
+      let stats = engine.getStats();
+      let text = '🧠 情景智能决策树\n\n规则数: ' + count.toString() + '\n\n';
+      if (rulesJson.length > 2) {
+        let parsed: Object = JSON.parse(rulesJson);
+        let rules = parsed as ContextRulePrint[];
+        for (let r of rules) {
+          text += (r.name || r.id);
+          if (!r.enabled) text += ' (已禁用)';
+          text += '\n';
+          if (r.conditions) {
+            for (let c of r.conditions) {
+              text += '  · ' + c.key + ' ' + c.op + ' ' + c.value + '\n';
+            }
+          }
+          if (r.action) {
+            text += '  → ' + r.action.type + ': ' + r.action.payload + '\n';
+          }
+          text += '\n';
+        }
+      } else {
+        text += '(无规则)\n';
+      }
+      if (stats.length > 2) {
+        text += '📊 MAB 统计: ' + stats;
+      }
+      let msg = new ChatMessage('assistant', text);
+      this.messages.push(msg);
+      this.scrollToEnd();
+      this.saveHistory();
+    } catch (err) {
+      let msg = new ChatMessage('assistant', '❌ 无法加载规则: ' + (err as Error).message);
+      this.messages.push(msg);
+      this.scrollToEnd();
+    }
   }
 
   /** Export logs to file (triggered from chat command) */

@@ -1,0 +1,6 @@
+{
+  "name": "libcontext_engine",
+  "types": "./index.d.ts",
+  "version": "1.0.0",
+  "description": "Native context engine module for context-aware rule matching and MAB"
+}

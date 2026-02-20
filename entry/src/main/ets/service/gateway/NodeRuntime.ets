@@ -53,7 +53,7 @@ import { Monitor } from '../ModuleMonitor';
 import { ContextAwarenessService, ContextRecommendation } from '../context/ContextAwarenessService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.34.1';
+const APP_VERSION = '2.35.0';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
