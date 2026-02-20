@@ -8,9 +8,21 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.35.2';
+export const APP_VERSION: string = '2.35.3';
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '2.35.3',
+    date: '2026-02-19',
+    features: [
+      '围栏持久化改为 user_places.json 文件',
+      '12条内置规则模板+围栏占位符自动绑定',
+      '预置8个用户地点配置',
+    ],
+    fixes: [
+      '修复 /规则 命令 stack overflow',
+    ],
+  },
   {
     version: '2.35.2',
     date: '2026-02-19',
@@ -387,4 +399,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.35.2';
+export const LATEST_VERSION: string = '2.35.3';
