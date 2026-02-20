@@ -6,6 +6,7 @@
 import { geoLocationManager } from '@kit.LocationKit';
 import { common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
+import { util } from '@kit.ArkTS';
 import { LogService } from '../../common/LogService';
 import { Geofence, GeofenceCategory, LocationState } from './ContextModels';
 import { ContextEngineService, GeofenceBinding } from './ContextEngine';
@@ -93,11 +94,8 @@ export class GeofenceManager {
     try {
       let resourceMgr = context.resourceManager;
       let rawData = await resourceMgr.getRawFileContent('config/user_places.json');
-      let bytes = new Uint8Array(rawData.buffer);
-      let jsonStr = '';
-      for (let i = 0; i < bytes.length; i++) {
-        jsonStr += String.fromCharCode(bytes[i]);
-      }
+      let decoder = util.TextDecoder.create('utf-8');
+      let jsonStr = decoder.decodeToString(new Uint8Array(rawData.buffer));
       // 写入 files 目录
       let filePath = this.appFilesDir + '/' + CONFIG_FILENAME;
       let file = fileIo.openSync(filePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
@@ -312,11 +310,8 @@ export class GeofenceManager {
       fileIo.readSync(file.fd, buf);
       fileIo.closeSync(file.fd);
       
-      let bytes = new Uint8Array(buf);
-      let jsonStr = '';
-      for (let i = 0; i < bytes.length; i++) {
-        jsonStr += String.fromCharCode(bytes[i]);
-      }
+      let decoder = util.TextDecoder.create('utf-8');
+      let jsonStr = decoder.decodeToString(new Uint8Array(buf));
       
       let parsed: Object = JSON.parse(jsonStr);
       let config = parsed as UserPlacesConfig;
