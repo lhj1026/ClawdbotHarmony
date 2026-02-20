@@ -8,11 +8,11 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.35.1';
+export const APP_VERSION: string = '2.35.2';
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    version: '2.35.1',
+    version: '2.35.2',
     date: '2026-02-19',
     features: [
       'DocViewerPage：Markdown 文档查看器，通过 canvas.navigate 自动打开 .md 文件',
@@ -387,4 +387,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.35.1';
+export const LATEST_VERSION: string = '2.35.2';

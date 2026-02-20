@@ -1,6 +1,6 @@
 [
   {
-    "version": "2.35.1",
+    "version": "2.35.2",
     "date": "2026-02-19",
     "features": [
       "DocViewerPage：Markdown 文档查看器，通过 canvas.navigate 自动打开 .md 文件",

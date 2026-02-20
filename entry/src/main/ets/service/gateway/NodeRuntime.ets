@@ -53,7 +53,7 @@ import { Monitor } from '../ModuleMonitor';
 import { ContextAwarenessService, ContextRecommendation } from '../context/ContextAwarenessService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.35.1';
+const APP_VERSION = '2.35.2';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -1034,8 +1034,15 @@ export class NodeRuntime {
 
   /** Download avatar image from URL and cache locally. Dispatches identity again with updated avatar. */
   async downloadAndCacheAvatar(): Promise<void> {
-    // Skip if already cached
-    if (this._cachedAvatarPath.length > 0) return;
+    // Skip if already cached and file still exists
+    if (this._cachedAvatarPath.length > 0) {
+      try {
+        fileIo.accessSync(this._cachedAvatarPath);
+        return; // file exists, skip download
+      } catch {
+        this._cachedAvatarPath = ''; // file gone, re-download
+      }
+    }
     let ep = this._endpoint;
     if (!ep) return;
     let identity = this._agentIdentity;
@@ -1572,7 +1579,7 @@ export class NodeRuntime {
       this._operatorState = ConnectionState.Disconnected;
       if (this._agentIdentity) {
         this._agentIdentity = undefined;
-        this._cachedAvatarPath = '';
+        // Keep cached avatar path — file is still on disk, will be reused on reconnect
         this.dispatchIdentity(undefined);
       }
     }
