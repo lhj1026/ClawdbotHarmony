@@ -74,10 +74,13 @@ export class GeofenceManager {
     // 从 user_places.json 加载围栏
     let loaded = await this.loadFromFile();
     
-    // 首次使用：从 rawfile 拷贝默认配置到 files 目录
+    // 没有数据时：先尝试从外部备份恢复，再尝试从 rawfile 默认配置
     if (!loaded) {
-      await this.copyDefaultConfig(context);
-      await this.loadFromFile();
+      let restored = await this.restoreFromBackup();
+      if (!restored) {
+        await this.copyDefaultConfig(context);
+        await this.loadFromFile();
+      }
     }
     
     // 初始化后绑定已有围栏到规则引擎
@@ -365,8 +368,59 @@ export class GeofenceManager {
       fileIo.writeSync(file.fd, jsonStr);
       fileIo.closeSync(file.fd);
       this.log.info(TAG, `Saved ${places.length} places to ${CONFIG_FILENAME}`);
+      // 同时备份到外部目录（重装后可恢复）
+      this.backupToExternal(jsonStr);
     } catch (err) {
       this.log.error(TAG, `saveToFile error: ${(err as Error).message}`);
+    }
+  }
+
+  /** 从外部备份恢复围栏数据（重装后自动恢复） */
+  private async restoreFromBackup(): Promise<boolean> {
+    try {
+      let externalDir = this.appFilesDir.split('/haps/')[0] + '/files';
+      let backupPath = externalDir + '/user_places_backup.json';
+      let stat = fileIo.statSync(backupPath);
+      if (!stat) return false;
+
+      let file = fileIo.openSync(backupPath, fileIo.OpenMode.READ_ONLY);
+      let buf = new ArrayBuffer(stat.size);
+      fileIo.readSync(file.fd, buf);
+      fileIo.closeSync(file.fd);
+
+      let decoder = util.TextDecoder.create('utf-8');
+      let jsonStr = decoder.decodeToString(new Uint8Array(buf));
+
+      // 拷贝到 files 目录
+      let filePath = this.appFilesDir + '/' + CONFIG_FILENAME;
+      let outFile = fileIo.openSync(filePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      fileIo.writeSync(outFile.fd, jsonStr);
+      fileIo.closeSync(outFile.fd);
+
+      // 重新加载
+      let ok = await this.loadFromFile();
+      if (ok) {
+        this.log.info(TAG, `Restored ${this.geofences.size} geofences from backup`);
+      }
+      return ok;
+    } catch (err) {
+      this.log.debug(TAG, `restoreFromBackup: ${(err as Error).message}`);
+      return false;
+    }
+  }
+
+  /** 备份围栏数据到 app 外部目录 */
+  private backupToExternal(jsonStr: string): void {
+    try {
+      let externalDir = this.appFilesDir.split('/haps/')[0] + '/files';
+      try { fileIo.mkdirSync(externalDir); } catch (e) { /* already exists */ }
+      let backupPath = externalDir + '/user_places_backup.json';
+      let file = fileIo.openSync(backupPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      fileIo.writeSync(file.fd, jsonStr);
+      fileIo.closeSync(file.fd);
+      this.log.debug(TAG, `Backup saved to ${backupPath}`);
+    } catch (err) {
+      this.log.debug(TAG, `Backup failed: ${(err as Error).message}`);
     }
   }
   
