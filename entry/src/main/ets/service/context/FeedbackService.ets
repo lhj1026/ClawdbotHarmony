@@ -20,8 +20,14 @@ import {
   FeedbackType,
   EnvironmentContext,
   ActionOutcome,
+  UserAction,
 } from './ContextModels';
 import { ContextRecommendation } from './ContextAwarenessService';
+
+interface RuleAggData {
+  total: number;
+  count: number;
+}
 
 const TAG = 'FeedbackService';
 const PREFS_NAME = 'clawdbot_feedback';
@@ -136,10 +142,11 @@ export class FeedbackService {
     }
 
     // 5 分钟后给 dismiss 惩罚
+    let dismissCard = card;
     card.dismissTimerId = setTimeout(() => {
-      if (!card.resolved) {
+      if (!dismissCard.resolved) {
         this.recordFeedback(ruleId, 'dismissed', REWARD_DISMISSED);
-        card.resolved = true;
+        dismissCard.resolved = true;
         this.activeCards.delete(ruleId);
       }
     }, DISMISS_TIMEOUT_MS) as number;
@@ -185,7 +192,7 @@ export class FeedbackService {
     let ignoreCount = 0;
 
     // 按 ruleId 聚合
-    let ruleAgg: Map<string, { total: number; count: number }> = new Map();
+    let ruleAgg: Map<string, RuleAggData> = new Map();
 
     for (let i = 0; i < this.records.length; i++) {
       let r = this.records[i];
@@ -204,13 +211,14 @@ export class FeedbackService {
         agg.total += r.reward;
         agg.count++;
       } else {
-        ruleAgg.set(r.ruleId, { total: r.reward, count: 1 });
+        let newAgg: RuleAggData = { total: r.reward, count: 1 };
+        ruleAgg.set(r.ruleId, newAgg);
       }
     }
 
     // 排序 top rules by avg reward
     let ruleEntries: FeedbackRuleStat[] = [];
-    ruleAgg.forEach((val: { total: number; count: number }, key: string) => {
+    ruleAgg.forEach((val: RuleAggData, key: string) => {
       ruleEntries.push({
         ruleId: key,
         ruleName: this.ruleNames.get(key) ?? key,
@@ -292,7 +300,7 @@ export class FeedbackService {
   ): Promise<void> {
     if (!envContext) return;
     let card = this.activeCards.get(ruleId);
-    let action = card ? card.rec.action : { type: 'dismiss' as const };
+    let action = card ? card.rec.action : { type: 'dismiss', target: '' } as UserAction;
     let outcome: ActionOutcome = {
       accepted: accepted,
       feedback: accepted ? 1 : -1,

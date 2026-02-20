@@ -21,6 +21,7 @@ import {
   UserAction,
   ActionOutcome,
   ContextRule,
+  RuleTrigger,
   Geofence,
   LocationState,
   FeedbackStats,
@@ -395,7 +396,7 @@ export class ContextAwarenessService {
     let rec: ContextRecommendation = {
       rule: {
         id: top.ruleId,
-        trigger: {},
+        trigger: {} as RuleTrigger,
         action: top.action as UserAction,
         confidence: top.confidence,
         triggerCount: 0,

@@ -50,6 +50,7 @@ function nativeExportLinUCB(): string {
 }
 function nativeImportLinUCB(json: string): void {
   contextEngine.importLinUCB(json);
+}
 function nativePushEvent(json: string): void {
   contextEngine.pushEvent(json);
 }

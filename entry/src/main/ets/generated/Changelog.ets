@@ -8,9 +8,25 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.35.7';
+export const APP_VERSION: string = '2.36.0';
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '2.36.0',
+    date: '2026-02-20',
+    features: [
+      'LinUCB 上下文强盗算法替代 epsilon-greedy MAB',
+      '推荐卡片添加 👍/👎 反馈按钮',
+      '反馈统计面板 (情景设置页)',
+      '时序/序列规则 (event:X recent/sequence)',
+      '事件缓冲区 (100 事件, 24h 自动过期)',
+      '增强冷却: 类别限流 + 全局速率限制',
+      'FeedbackService 隐式反馈采集',
+    ],
+    fixes: [
+
+    ],
+  },
   {
     version: '2.35.7',
     date: '2026-02-19',
@@ -423,4 +439,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.35.7';
+export const LATEST_VERSION: string = '2.36.0';
