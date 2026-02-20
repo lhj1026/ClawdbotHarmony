@@ -10,6 +10,7 @@ export class Constants {
   static readonly PREFS_FEISHU: string = 'clawdbot_feishu';
   static readonly PREFS_CUSTOM_SKILLS: string = 'clawdbot_custom_skills';
   static readonly PREFS_EXPERIENCE: string = 'clawdbot_experience';
+  static readonly PREFS_GEOFENCE_SUGGEST: string = 'clawdbot_geofence_suggest';
 
   // Session persistence
   static readonly PREFS_SESSIONS: string = 'chat_sessions';

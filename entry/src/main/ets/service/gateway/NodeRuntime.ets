@@ -52,6 +52,7 @@ import { ExperiencePack, Experience, Skill, Memory, ShareLevel, generateId } fro
 import { MemoryService } from '../MemoryService';
 import { Monitor } from '../ModuleMonitor';
 import { ContextAwarenessService, ContextRecommendation } from '../context/ContextAwarenessService';
+import { GeofenceSuggestion } from '../context/LocationDiscoveryService';
 
 const TAG = 'NodeRuntime';
 const APP_VERSION = '2.36.0';
@@ -369,6 +370,33 @@ export class NodeRuntime {
           // Also send system notification if in background
           if (!this._isInForeground) {
             NotificationHelper.getInstance().send('💡 情景智能', rec.reason).catch(() => { /* ignore */ });
+          }
+        });
+
+        // Listen for geofence suggestions from location discovery
+        cas.addSuggestionListener((suggestions: GeofenceSuggestion[]) => {
+          for (let i = 0; i < suggestions.length; i++) {
+            let s = suggestions[i];
+            let text = `📍 发现你经常去这里：${s.name}\n${s.reason}\n前往"情景智能设置"查看并添加围栏`;
+            this.log.info(TAG, `围栏建议: ${s.name}`);
+            let event: GatewayChatEvent = {
+              runId: `suggest-${Date.now()}-${i}`,
+              sessionKey: '',
+              seq: 0,
+              state: 'final',
+              message: {
+                role: 'assistant',
+                content: [{ type: 'text', text: text }],
+              },
+            };
+            this.dispatchChatEvent(event);
+          }
+          // Notification for first suggestion if in background
+          if (!this._isInForeground && suggestions.length > 0) {
+            let first = suggestions[0];
+            NotificationHelper.getInstance()
+              .send('📍 发现常去地点', `${first.name} — ${first.reason}`)
+              .catch(() => { /* ignore */ });
           }
         });
       } else {

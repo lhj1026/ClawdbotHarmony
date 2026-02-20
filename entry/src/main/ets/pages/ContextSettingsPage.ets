@@ -9,6 +9,7 @@ import { ContextEngineService } from '../service/context/ContextEngine';
 import { Geofence, GeofenceCategory, FeedbackStats, FeedbackRuleStat } from '../service/context/ContextModels';
 import { LocationDiscoveryService, GeofenceSuggestion } from '../service/context/LocationDiscoveryService';
 import { LearnedSignalsSummary } from '../service/context/LocationFusionService';
+import { GeofenceSuggestionCard } from '../components/GeofenceSuggestionCard';
 
 @Entry
 @Component
@@ -74,6 +75,7 @@ struct ContextSettingsPage {
       this.engineStatus = cas.getStatus();
       this.learnedSignals = cas.getLearnedSignalsSummaries();
       this.suggestions = cas.getLocationSuggestions();
+      this.suggestions = cas.getFilteredSuggestions();
       let stats = cas.getLocationDiscoveryStats();
       this.discoveryStats = `历史点: ${stats.historyCount} | 聚类: ${stats.clusterCount} | 上次发现: ${stats.lastDiscovery}`;
     } catch (err) {
@@ -444,30 +446,26 @@ struct ContextSettingsPage {
                   .padding(16)
               } else {
                 ForEach(this.suggestions, (s: GeofenceSuggestion) => {
-                  Row() {
-                    Column({ space: 2 }) {
-                      Text(this.getCatLabel(s.category) + ' ' + s.name)
-                        .fontSize(14)
-                        .fontColor('#1A1A1A')
-                      Text(s.reason)
-                        .fontSize(11)
-                        .fontColor('#999999')
-                      Text(s.latitude.toFixed(4) + ', ' + s.longitude.toFixed(4) + '  r=' + s.radiusMeters.toString() + 'm')
-                        .fontSize(11)
-                        .fontColor('#BBBBBB')
-                    }
-                    .layoutWeight(1)
-                    .alignItems(HorizontalAlign.Start)
-
-                    Text('添加')
-                      .fontSize(13)
-                      .fontColor('#007AFF')
-                      .padding(4)
-                      .onClick(() => { this.acceptSuggestion(s); })
-                  }
-                  .width('100%')
-                  .padding({ top: 8, bottom: 8 })
-                  Divider().color('#F0F0F0')
+                  GeofenceSuggestionCard({
+                    suggestionId: s.id,
+                    name: s.name,
+                    category: s.category,
+                    reason: s.reason,
+                    confidence: s.confidence,
+                    latitude: s.latitude,
+                    longitude: s.longitude,
+                    radiusMeters: s.radiusMeters,
+                    onAccept: (id: string, name: string, category: string) => {
+                      this.handleAcceptSuggestion(id, name, category);
+                    },
+                    onIgnore: (id: string) => {
+                      this.handleIgnoreSuggestion(id);
+                    },
+                    onDefer: (id: string) => {
+                      this.handleDeferSuggestion(id);
+                    },
+                  })
+                    .margin({ bottom: 8 })
                 }, (s: GeofenceSuggestion) => s.id)
               }
             }
@@ -602,8 +600,8 @@ struct ContextSettingsPage {
     try {
       let cas = ContextAwarenessService.getInstance();
       let discovery = LocationDiscoveryService.getInstance();
-      discovery.runDiscovery().then((suggestions: GeofenceSuggestion[]) => {
-        this.suggestions = suggestions;
+      discovery.runDiscovery().then(() => {
+        this.suggestions = cas.getFilteredSuggestions();
         let stats = cas.getLocationDiscoveryStats();
         this.discoveryStats = `历史点: ${stats.historyCount} | 聚类: ${stats.clusterCount} | 上次发现: ${stats.lastDiscovery}`;
       });
@@ -612,22 +610,46 @@ struct ContextSettingsPage {
     }
   }
 
-  private acceptSuggestion(s: GeofenceSuggestion): void {
+  private handleAcceptSuggestion(clusterId: string, name: string, category: string): void {
     try {
       let cas = ContextAwarenessService.getInstance();
-      let gf: Geofence = {
-        id: 'auto_' + Date.now().toString(),
-        name: s.name,
-        latitude: s.latitude,
-        longitude: s.longitude,
-        radiusMeters: s.radiusMeters,
-        category: s.category as GeofenceCategory,
-      };
-      cas.addGeofence(gf);
+      let raw = this.locationDiscovery().getSuggestions();
+      let match: GeofenceSuggestion | undefined = undefined;
+      for (let i = 0; i < raw.length; i++) {
+        if (raw[i].id === clusterId) {
+          match = raw[i];
+          break;
+        }
+      }
+      if (match) {
+        cas.acceptSuggestion(match, name, category);
+      }
       this.refresh();
     } catch (err) {
       this.log.error('CtxSettings', 'Accept suggestion error: ' + (err as Error).message);
     }
+  }
+
+  private handleIgnoreSuggestion(clusterId: string): void {
+    try {
+      ContextAwarenessService.getInstance().ignoreSuggestion(clusterId);
+      this.refresh();
+    } catch (err) {
+      this.log.error('CtxSettings', 'Ignore suggestion error: ' + (err as Error).message);
+    }
+  }
+
+  private handleDeferSuggestion(clusterId: string): void {
+    try {
+      ContextAwarenessService.getInstance().deferSuggestion(clusterId);
+      this.refresh();
+    } catch (err) {
+      this.log.error('CtxSettings', 'Defer suggestion error: ' + (err as Error).message);
+    }
+  }
+
+  private locationDiscovery(): LocationDiscoveryService {
+    return LocationDiscoveryService.getInstance();
   }
 
   private deleteGeofence(id: string): void {

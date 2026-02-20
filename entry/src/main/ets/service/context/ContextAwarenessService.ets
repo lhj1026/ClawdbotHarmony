@@ -7,7 +7,9 @@ import { sensor } from '@kit.SensorServiceKit';
 import { batteryInfo } from '@kit.BasicServicesKit';
 import { wifiManager } from '@kit.ConnectivityKit';
 import { common } from '@kit.AbilityKit';
+import { preferences } from '@kit.ArkData';
 import { LogService } from '../../common/LogService';
+import { Constants } from '../../common/Constants';
 import { GeofenceManager, GeofenceEvent } from './GeofenceManager';
 import { BehaviorLogger } from './BehaviorLogger';
 import { ContextEngineService, ContextSnapshot, MatchResult, GeofenceBinding } from './ContextEngine';
@@ -39,6 +41,21 @@ export interface ContextRecommendation {
 }
 
 type RecommendationListener = (rec: ContextRecommendation) => void;
+type SuggestionListener = (suggestions: GeofenceSuggestion[]) => void;
+
+/** Persisted state for geofence suggestion filtering */
+interface GeofenceSuggestionState {
+  /** Cluster IDs the user permanently ignored */
+  blacklist: string[];
+  /** Cluster ID → timestamp when deferred ("以后再说"), resurface after 7 days */
+  deferred: Record<string, number>;
+  /** Cluster ID → timestamp of last suggestion shown, max once per day */
+  lastShown: Record<string, number>;
+}
+
+const SUGGEST_PREFS_KEY = 'geofence_suggestion_state';
+const DEFER_DURATION_MS = 7 * 24 * 3600 * 1000;     // 7 days
+const DAILY_COOLDOWN_MS = 24 * 3600 * 1000;          // 24 hours
 
 /** 加速度传感器数据接口 */
 interface AccelerometerData {
@@ -89,6 +106,10 @@ export class ContextAwarenessService {
   private llmFallback: LLMFallbackService = LLMFallbackService.getInstance();
   // 多源位置融合
   private locationFusion: LocationFusionService = LocationFusionService.getInstance();
+  // 围栏建议管理
+  private suggestionListeners: SuggestionListener[] = [];
+  private suggestionState: GeofenceSuggestionState = { blacklist: [], deferred: {}, lastShown: {} };
+  private suggestionStateLoaded: boolean = false;
 
   private constructor() {
     this.geofenceMgr = GeofenceManager.getInstance();
@@ -123,6 +144,7 @@ export class ContextAwarenessService {
     // 初始化位置发现服务
     await this.locationDiscovery.init(context);
     await this.feedbackSvc.init(context);
+    await this.loadSuggestionState();
 
     // 初始化 LLM 兜底服务
     this.llmFallback.init(context);
@@ -287,11 +309,24 @@ export class ContextAwarenessService {
 
   private async runLocationDiscovery(): Promise<void> {
     if (!this.isRunning) return;
-    let suggestions = await this.locationDiscovery.runDiscovery();
-    if (suggestions.length > 0) {
-      this.log.info(TAG, `Location discovery found ${suggestions.length} suggestions`);
-      // TODO: 可以通过通知或聊天消息告知用户
+    let allSuggestions = await this.locationDiscovery.runDiscovery();
+    if (allSuggestions.length === 0) return;
+
+    let filtered = this.filterSuggestions(allSuggestions);
+    if (filtered.length === 0) {
+      this.log.info(TAG, `Discovery found ${allSuggestions.length} raw, all filtered out`);
+      return;
     }
+
+    // Mark as shown today
+    let now = Date.now();
+    for (let i = 0; i < filtered.length; i++) {
+      this.suggestionState.lastShown[filtered[i].id] = now;
+    }
+    this.saveSuggestionState();
+
+    this.log.info(TAG, `Emitting ${filtered.length} geofence suggestions`);
+    this.notifySuggestionListeners(filtered);
   }
 
   /** 获取位置发现建议 */
@@ -718,7 +753,6 @@ export class ContextAwarenessService {
   }
   
   
-  // ==================== 位置融合 ====================
 
   /** 获取所有围栏的已学习信号摘要（用于设置页展示） */
   getLearnedSignalsSummaries(): LearnedSignalsSummary[] {
@@ -734,6 +768,160 @@ export class ContextAwarenessService {
   async clearAllLearnedSignals(): Promise<void> {
     await this.locationFusion.clearAllLearnedSignals();
   }
+
+
+
+  addSuggestionListener(listener: SuggestionListener): void {
+    this.suggestionListeners.push(listener);
+  }
+
+  removeSuggestionListener(listener: SuggestionListener): void {
+    let idx = this.suggestionListeners.indexOf(listener);
+    if (idx >= 0) this.suggestionListeners.splice(idx, 1);
+  }
+
+  private notifySuggestionListeners(suggestions: GeofenceSuggestion[]): void {
+    for (let i = 0; i < this.suggestionListeners.length; i++) {
+      try {
+        this.suggestionListeners[i](suggestions);
+      } catch (err) {
+        this.log.warn(TAG, 'Suggestion listener error: ' + (err as Error).message);
+      }
+    }
+  }
+
+  /**
+   * Filter raw suggestions: remove blacklisted, deferred (< 7 days), daily-cooled,
+   * and clusters that already have a matching geofence.
+   */
+  private filterSuggestions(raw: GeofenceSuggestion[]): GeofenceSuggestion[] {
+    let now = Date.now();
+    let existingGeofences = this.geofenceMgr.getAllGeofences();
+    let result: GeofenceSuggestion[] = [];
+
+    for (let i = 0; i < raw.length; i++) {
+      let s = raw[i];
+
+      // Skip blacklisted
+      if (this.suggestionState.blacklist.indexOf(s.id) >= 0) continue;
+
+      // Skip deferred (within 7 days)
+      let deferredAt = this.suggestionState.deferred[s.id];
+      if (deferredAt !== undefined && (now - deferredAt) < DEFER_DURATION_MS) continue;
+
+      // Skip daily cooldown (already shown today)
+      let lastShown = this.suggestionState.lastShown[s.id];
+      if (lastShown !== undefined && (now - lastShown) < DAILY_COOLDOWN_MS) continue;
+
+      // Skip if a geofence already covers this cluster (within 200m)
+      let alreadyCovered = false;
+      for (let gi = 0; gi < existingGeofences.length; gi++) {
+        let gf = existingGeofences[gi];
+        let dist = this.haversineDistance(s.latitude, s.longitude, gf.latitude, gf.longitude);
+        if (dist < 200) {
+          alreadyCovered = true;
+          break;
+        }
+      }
+      if (alreadyCovered) continue;
+
+      result.push(s);
+    }
+
+    return result;
+  }
+
+  /**
+   * Accept a suggestion: create geofence with the user's chosen name/category.
+   */
+  acceptSuggestion(suggestion: GeofenceSuggestion, name: string, category: string): void {
+    let gf: Geofence = {
+      id: 'auto_' + Date.now().toString(),
+      name: name,
+      latitude: suggestion.latitude,
+      longitude: suggestion.longitude,
+      radiusMeters: suggestion.radiusMeters,
+      category: category as GeofenceCategory,
+    };
+    this.addGeofence(gf);
+    this.log.info(TAG, `Accepted suggestion "${name}" as geofence ${gf.id}`);
+  }
+
+  /**
+   * Ignore a suggestion permanently (blacklist).
+   */
+  ignoreSuggestion(clusterId: string): void {
+    if (this.suggestionState.blacklist.indexOf(clusterId) < 0) {
+      this.suggestionState.blacklist.push(clusterId);
+    }
+    // Clean up deferred/lastShown entries
+    delete this.suggestionState.deferred[clusterId];
+    delete this.suggestionState.lastShown[clusterId];
+    this.saveSuggestionState();
+    this.log.info(TAG, `Blacklisted suggestion: ${clusterId}`);
+  }
+
+  /**
+   * Defer a suggestion ("以后再说") — may resurface after 7 days.
+   */
+  deferSuggestion(clusterId: string): void {
+    this.suggestionState.deferred[clusterId] = Date.now();
+    this.saveSuggestionState();
+    this.log.info(TAG, `Deferred suggestion: ${clusterId}`);
+  }
+
+  /**
+   * Get currently actionable suggestions (filtered).
+   */
+  getFilteredSuggestions(): GeofenceSuggestion[] {
+    let raw = this.locationDiscovery.getSuggestions();
+    return this.filterSuggestions(raw);
+  }
+
+
+  private async loadSuggestionState(): Promise<void> {
+    if (!this.context) return;
+    try {
+      let store = await preferences.getPreferences(this.context, Constants.PREFS_GEOFENCE_SUGGEST);
+      let json = (await store.get(SUGGEST_PREFS_KEY, '')) as string;
+      if (json.length > 0) {
+        let parsed = JSON.parse(json) as GeofenceSuggestionState;
+        this.suggestionState = {
+          blacklist: parsed.blacklist || [],
+          deferred: parsed.deferred || {},
+          lastShown: parsed.lastShown || {},
+        };
+      }
+      this.suggestionStateLoaded = true;
+      this.log.info(TAG, `Loaded suggestion state: ${this.suggestionState.blacklist.length} blacklisted`);
+    } catch (err) {
+      this.log.warn(TAG, `Failed to load suggestion state: ${(err as Error).message}`);
+      this.suggestionStateLoaded = true;
+    }
+  }
+
+  private saveSuggestionState(): void {
+    if (!this.context) return;
+    let json = JSON.stringify(this.suggestionState);
+    preferences.getPreferences(this.context, Constants.PREFS_GEOFENCE_SUGGEST).then((store) => {
+      return store.put(SUGGEST_PREFS_KEY, json).then(() => store.flush());
+    }).catch((err: Error) => {
+      this.log.warn(TAG, `Failed to save suggestion state: ${err.message}`);
+    });
+  }
+
+
+  private haversineDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
+    let R = 6371000;
+    let dLat = (lat2 - lat1) * Math.PI / 180;
+    let dLng = (lng2 - lng1) * Math.PI / 180;
+    let a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    let c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  }
+
 
   getStatus(): string {
     let stats = this.behaviorLog.getStats();
