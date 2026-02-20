@@ -2567,22 +2567,67 @@ export struct SettingsPage {
 
   // ============ Profiles ============
 
+  /** 配置方案存储路径: app files 目录 + 外部 Documents 双写 */
+  private getProfilePath(): string {
+    let ctx = getContext(this) as common.UIAbilityContext;
+    return ctx.filesDir + '/clawdbot_profiles.json';
+  }
+
   private async loadProfiles(): Promise<void> {
+    try {
+      // 先尝试从 files 目录加载
+      let filePath = this.getProfilePath();
+      let stat = fileIo.statSync(filePath);
+      if (stat) {
+        let file = fileIo.openSync(filePath, fileIo.OpenMode.READ_ONLY);
+        let buf = new ArrayBuffer(stat.size);
+        fileIo.readSync(file.fd, buf);
+        fileIo.closeSync(file.fd);
+        let bytes = new Uint8Array(buf);
+        let json = '';
+        for (let i = 0; i < bytes.length; i++) {
+          json += String.fromCharCode(bytes[i]);
+        }
+        let arr: SettingsProfile[] = JSON.parse(json) as SettingsProfile[];
+        this.profiles = arr;
+        return;
+      }
+    } catch { /* ignore */ }
+    // Fallback: 从旧的 preferences 迁移
     try {
       let ctx = getContext(this) as common.UIAbilityContext;
       let store = await preferences.getPreferences(ctx, 'clawdbot_profiles');
       let json = (await store.get('profiles', '[]')) as string;
       let arr: SettingsProfile[] = JSON.parse(json) as SettingsProfile[];
-      this.profiles = arr;
+      if (arr.length > 0) {
+        this.profiles = arr;
+        await this.persistProfiles(); // 迁移到文件
+      }
     } catch { /* ignore */ }
   }
 
   private async persistProfiles(): Promise<void> {
     try {
+      let json = JSON.stringify(this.profiles);
+      // 写入 app files 目录
+      let filePath = this.getProfilePath();
+      let file = fileIo.openSync(filePath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      fileIo.writeSync(file.fd, json);
+      fileIo.closeSync(file.fd);
+      // 同时导出到外部 Documents 目录（重装后可恢复）
+      await this.exportProfilesToDocuments(json);
+    } catch { /* ignore */ }
+  }
+
+  private async exportProfilesToDocuments(json: string): Promise<void> {
+    try {
       let ctx = getContext(this) as common.UIAbilityContext;
-      let store = await preferences.getPreferences(ctx, 'clawdbot_profiles');
-      await store.put('profiles', JSON.stringify(this.profiles));
-      await store.flush();
+      let docsDir = ctx.filesDir.split('/haps/')[0] + '/files';
+      let exportPath = docsDir + '/clawdbot_profiles_backup.json';
+      try { fileIo.mkdirSync(docsDir); } catch { /* already exists */ }
+      let file = fileIo.openSync(exportPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      fileIo.writeSync(file.fd, json);
+      fileIo.closeSync(file.fd);
     } catch { /* ignore */ }
   }
 
