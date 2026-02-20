@@ -13,6 +13,7 @@ import { BehaviorLogger } from './BehaviorLogger';
 import { ContextEngineService, ContextSnapshot, MatchResult, GeofenceBinding } from './ContextEngine';
 import { LocationDiscoveryService, GeofenceSuggestion, DiscoveryStatsInfo } from './LocationDiscoveryService';
 import { FeedbackService } from './FeedbackService';
+import { DigitalWorldService } from './DigitalWorldService';
 import {
   EnvironmentContext,
   MotionState,
@@ -82,6 +83,9 @@ export class ContextAwarenessService {
   private discoveryTimer: number = -1;
   private static readonly DISCOVERY_INTERVAL_MS = 60 * 60 * 1000;  // 1小时发现一次
 
+  // 数字世界感知
+  private digitalWorld: DigitalWorldService = DigitalWorldService.getInstance();
+
   private constructor() {
     this.geofenceMgr = GeofenceManager.getInstance();
     this.behaviorLog = BehaviorLogger.getInstance();
@@ -113,9 +117,15 @@ export class ContextAwarenessService {
     await this.locationDiscovery.init(context);
     await this.feedbackSvc.init(context);
 
+    // 初始化数字世界感知服务
+    // TODO [Digital World Integration]: DigitalWorldService provides digital context
+    // (calendar events, screen state, audio scene, etc.) that enriches the ContextSnapshot.
+    // Currently initialized and polled independently; data is merged in buildSnapshot().
+    await this.digitalWorld.init(context);
+
     // 监听地理围栏事件
     this.geofenceMgr.addListener((event) => this.onGeofenceEvent(event));
-    
+
     this.initialized = true;
     this.log.info(TAG, `Context Awareness Service initialized, rules: ${this.engine.getRuleCount()}`);
   }
@@ -140,7 +150,10 @@ export class ContextAwarenessService {
 
       // 启动位置自动发现（定时聚类）
       this.startLocationDiscovery();
-      
+
+      // 启动数字世界感知
+      this.digitalWorld.start();
+
       this.isRunning = true;
       this.log.info(TAG, 'Context Awareness Service started');
       return true;
@@ -157,7 +170,8 @@ export class ContextAwarenessService {
     this.stopMotionSensors();
     this.stopPeriodicEvaluation();
     this.stopLocationDiscovery();
-    
+    this.digitalWorld.stop();
+
     this.isRunning = false;
     this.log.info(TAG, 'Context Awareness Service stopped');
   }
@@ -360,13 +374,28 @@ export class ContextAwarenessService {
 
   /**
    * 构建 C++ 规则引擎需要的快照格式
+   *
+   * TODO [Digital World Integration Point]:
+   * Digital world data from DigitalWorldService is merged into the snapshot here.
+   * The C++ engine's ContextSnapshot currently uses a fixed set of keys (timeOfDay,
+   * hour, motionState, etc.), but the evaluate() method passes JSON so additional
+   * digital-world keys (cal_hasUpcoming, audio_inCall, screen_locked, etc.) can be
+   * matched by rules that reference these keys. New rules can use conditions like:
+   *   { key: 'cal_inMeeting', op: 'eq', value: 'true' }
+   *   { key: 'audio_inCall', op: 'eq', value: 'true' }
+   *   { key: 'screen_locked', op: 'eq', value: 'true' }
+   *
+   * To fully wire this up:
+   * 1. Extend ContextSnapshot interface in ContextEngine.ets with optional digital fields
+   * 2. Add built-in rules that reference digital-world keys
+   * 3. Connect DigitalWorldService lifecycle to this service (done — see init/start/stop)
    */
   private buildSnapshot(ctx: EnvironmentContext): ContextSnapshot {
     let now = new Date();
     let hour = now.getHours();
     let dayOfWeek = now.getDay();
 
-    return {
+    let snapshot: ContextSnapshot = {
       timeOfDay: ctx.timeOfDay,
       hour: hour.toString(),
       dayOfWeek: dayOfWeek.toString(),
@@ -380,6 +409,18 @@ export class ContextAwarenessService {
       longitude: ctx.location?.longitude?.toString(),
       stepCount: ctx.stepCount?.toString()
     };
+
+    // TODO [Digital World Integration]: Merge digital world data into snapshot.
+    // When ContextSnapshot interface is extended with an index signature or
+    // digital-specific fields, uncomment the following to enrich the snapshot:
+    //
+    // let digitalData = this.digitalWorld.getDigitalData();
+    // let digitalKeys = Object.keys(digitalData);
+    // for (let i = 0; i < digitalKeys.length; i++) {
+    //   (snapshot as Record<string, string | undefined>)[digitalKeys[i]] = digitalData[digitalKeys[i]];
+    // }
+
+    return snapshot;
   }
 
   /**
@@ -669,5 +710,10 @@ export class ContextAwarenessService {
   
   isActive(): boolean {
     return this.isRunning;
+  }
+
+  /** Access digital world service for plugin status/control */
+  getDigitalWorldService(): DigitalWorldService {
+    return this.digitalWorld;
   }
 }
