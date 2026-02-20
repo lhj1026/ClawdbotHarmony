@@ -56,7 +56,7 @@ import { ContextEngineService, ContextSnapshot, ContextRule, ContextCondition, C
 import { GeofenceSuggestion } from '../context/LocationDiscoveryService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.42.0';
+const APP_VERSION = '2.42.1';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -972,9 +972,76 @@ export class NodeRuntime {
 
   /** Send A2UI action (user interaction) back to gateway. */
   sendA2UIAction(actionJson: string): void {
+    // Handle context feedback locally before forwarding
+    this.handleA2UIAction(actionJson);
+
     if (this.nodeSession) {
       this.nodeSession.sendNodeEvent('canvas.a2ui.action', actionJson);
     }
+  }
+
+  private handleA2UIAction(actionJson: string): void {
+    try {
+      let action = JSON.parse(actionJson) as Record<string, Object>;
+      let name = action['name'] as string;
+      if (name !== 'context_feedback') return;
+
+      let ctx = action['context'] as Record<string, string>;
+      if (!ctx) return;
+      let ruleId = ctx['ruleId'] ?? '';
+      let feedback = ctx['feedback'] ?? '';
+
+      this.log.info(TAG, `Context feedback: ruleId=${ruleId}, feedback=${feedback}`);
+
+      // Update rule based on feedback
+      let engine = ContextEngineService.getInstance();
+      if (feedback === 'accept') {
+        // Positive: increase priority slightly
+        this.adjustRulePriority(engine, ruleId, 0.2);
+        this.sendFeedbackResponse('✅ 感谢反馈！已记录，此规则权重已提升');
+      } else if (feedback === 'reject') {
+        // Negative: decrease priority
+        this.adjustRulePriority(engine, ruleId, -0.3);
+        this.sendFeedbackResponse('❌ 已记录，此规则权重已降低，会减少类似推荐');
+      } else if (feedback === 'dismiss') {
+        this.sendFeedbackResponse('🙈 已忽略');
+      }
+    } catch (err) {
+      this.log.warn(TAG, `handleA2UIAction error: ${(err as Error).message}`);
+    }
+  }
+
+  private async adjustRulePriority(engine: ContextEngineService, ruleId: string, delta: number): Promise<void> {
+    try {
+      let rulesJson = engine.exportRules();
+      let rules: ContextRule[] = JSON.parse(rulesJson) as ContextRule[];
+      for (let i = 0; i < rules.length; i++) {
+        if (rules[i].id === ruleId) {
+          let currentPriority = rules[i].priority ?? 1.0;
+          let newPriority = Math.max(0.1, Math.min(5.0, currentPriority + delta));
+          rules[i].priority = newPriority;
+          let ok = await engine.addRule(rules[i]);
+          this.log.info(TAG, `Rule ${ruleId} priority: ${currentPriority} → ${newPriority}, ok=${ok}`);
+          break;
+        }
+      }
+    } catch (err) {
+      this.log.warn(TAG, `adjustRulePriority error: ${(err as Error).message}`);
+    }
+  }
+
+  private sendFeedbackResponse(text: string): void {
+    let event: GatewayChatEvent = {
+      runId: `feedback-${Date.now()}`,
+      sessionKey: '',
+      seq: 0,
+      state: 'final',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: text }],
+      },
+    };
+    this.dispatchChatEvent(event);
   }
 
   addIdentityListener(listener: (identity: AgentIdentity | undefined) => void): void {
