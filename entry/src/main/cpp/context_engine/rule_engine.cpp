@@ -95,6 +95,9 @@ RuleEngine::~RuleEngine() = default;
 bool RuleEngine::loadRules(const std::vector<Rule>& rules) {
     std::lock_guard<std::mutex> lock(mu_);
     rules_ = rules;
+    lastFired_.clear();
+    categoryFirings_.clear();
+    globalFirings_.clear();
     compileTree();
     return true;
 }
