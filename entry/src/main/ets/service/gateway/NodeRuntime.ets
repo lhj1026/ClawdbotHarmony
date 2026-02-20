@@ -56,7 +56,7 @@ import { ContextEngineService, ContextSnapshot, ContextRule, ContextCondition, C
 import { GeofenceSuggestion } from '../context/LocationDiscoveryService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.42.1';
+const APP_VERSION = '2.42.2';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -359,8 +359,22 @@ export class NodeRuntime {
           let ruleId = rec.rule.id;
           let confidence = Math.round((rec.rule.confidence ?? 1) * 100);
 
+          // Look up rule name from engine
+          let ruleName = ruleId;
+          try {
+            let engine = ContextEngineService.getInstance();
+            let allRulesJson = engine.exportRules();
+            let allRules: ContextRule[] = JSON.parse(allRulesJson) as ContextRule[];
+            for (let i = 0; i < allRules.length; i++) {
+              if (allRules[i].id === ruleId) {
+                ruleName = allRules[i].name;
+                break;
+              }
+            }
+          } catch { /* use ruleId as fallback */ }
+
           // Build A2UI card JSONL for the recommendation
-          let a2uiJsonl = this.buildContextRecommendationA2UI(ruleId, ruleId, rec.reason, confidence);
+          let a2uiJsonl = this.buildContextRecommendationA2UI(ruleId, ruleName, rec.reason, confidence);
 
           // Send as a chat message (text fallback)
           let event: GatewayChatEvent = {
@@ -2431,12 +2445,13 @@ export class NodeRuntime {
     // Escape strings for JSON embedding
     let safeReason = reason.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     let safeRuleId = ruleId.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    let safeRuleName = ruleName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 
     // Use simplified A2UI format: {"type":"form","children":[...]}
     let jsonl = `{"type":"form","id":"ctx_rec_${Date.now()}","children":[` +
       `{"type":"text","text":"💡 情景智能推荐","style":{"fontSize":20,"fontWeight":"bold"}},` +
       `{"type":"text","text":"${safeReason}","style":{"fontSize":15}},` +
-      `{"type":"text","text":"📋 规则: ${safeRuleId}  |  置信度: ${confidence}%","style":{"fontSize":12,"color":"#888"}},` +
+      `{"type":"text","text":"📋 ${safeRuleName}  |  置信度: ${confidence}%","style":{"fontSize":12,"color":"#888"}},` +
       `{"type":"button","text":"✅ 有用","variant":"primary","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"accept"}}}},` +
       `{"type":"button","text":"❌ 不准","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"reject"}}}},` +
       `{"type":"button","text":"🙈 忽略","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"dismiss"}}}}` +
