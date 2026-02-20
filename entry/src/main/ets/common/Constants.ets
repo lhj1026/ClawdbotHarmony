@@ -103,6 +103,7 @@ export class Constants {
   static readonly AUTO_MEMORY_SEARCH_TIMEOUT_MS: number = 3000;
 
   // Silent mode
+  static readonly PREFS_LOCATION_FUSION: string = 'location_fusion';
   static readonly PREFS_SILENT_MODE: string = 'clawdbot_silent_mode';
   // SILENT_MODE_VAD_THRESHOLD is deprecated - now using Silero VAD neural network
   // Kept for RMS fallback when Silero VAD fails to initialize

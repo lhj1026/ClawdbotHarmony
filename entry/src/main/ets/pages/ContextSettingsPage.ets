@@ -8,6 +8,7 @@ import { ContextAwarenessService } from '../service/context/ContextAwarenessServ
 import { ContextEngineService } from '../service/context/ContextEngine';
 import { Geofence, GeofenceCategory, FeedbackStats, FeedbackRuleStat } from '../service/context/ContextModels';
 import { LocationDiscoveryService, GeofenceSuggestion } from '../service/context/LocationDiscoveryService';
+import { LearnedSignalsSummary } from '../service/context/LocationFusionService';
 
 @Entry
 @Component
@@ -36,6 +37,9 @@ struct ContextSettingsPage {
   @State fbRatioText: string = '--';
   @State fbTopRuleNames: string[] = [];
   @State fbTopRuleScores: string[] = [];
+
+  // 已学习的位置信号
+  @State learnedSignals: LearnedSignalsSummary[] = [];
 
   private catIds: string[] = ['home', 'work', 'transit', 'shopping', 'restaurant', 'gym', 'custom'];
   private catLabels: string[] = ['🏠 家', '🏢 公司', '🚇 交通', '🛒 购物', '🍜 餐饮', '💪 健身', '📍 自定义'];
@@ -68,6 +72,7 @@ struct ContextSettingsPage {
       this.geofenceDetails = details;
       this.geofenceIds = ids;
       this.engineStatus = cas.getStatus();
+      this.learnedSignals = cas.getLearnedSignalsSummaries();
       this.suggestions = cas.getLocationSuggestions();
       let stats = cas.getLocationDiscoveryStats();
       this.discoveryStats = `历史点: ${stats.historyCount} | 聚类: ${stats.clusterCount} | 上次发现: ${stats.lastDiscovery}`;
@@ -205,6 +210,79 @@ struct ContextSettingsPage {
                     Divider().color('#F0F0F0')
                   }
                 }, (gfId: string) => gfId)
+              }
+            }
+            .width('100%')
+            .padding(16)
+            .backgroundColor(Color.White)
+            .borderRadius(12)
+
+            // ===== 已学习的位置信号 =====
+            Column() {
+              Row() {
+                Text('位置信号学习')
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor('#1A1A1A')
+                  .layoutWeight(1)
+                Text('清除全部')
+                  .fontSize(13)
+                  .fontColor('#FF3B30')
+                  .onClick(() => { this.clearAllSignals(); })
+              }
+              .width('100%')
+              .margin({ bottom: 8 })
+
+              Text('GPS 高精度时自动学习 WiFi/蓝牙信号，用于室内定位增强')
+                .fontSize(12)
+                .fontColor('#999999')
+                .width('100%')
+                .margin({ bottom: 8 })
+
+              if (this.learnedSignals.length === 0) {
+                Text('暂无已学习信号，进入围栏区域后会自动学习')
+                  .fontSize(13)
+                  .fontColor('#999999')
+                  .width('100%')
+                  .textAlign(TextAlign.Center)
+                  .padding(16)
+              } else {
+                ForEach(this.learnedSignals, (sig: LearnedSignalsSummary) => {
+                  Column() {
+                    Row() {
+                      Column({ space: 2 }) {
+                        Text(sig.geofenceName)
+                          .fontSize(14)
+                          .fontWeight(FontWeight.Medium)
+                          .fontColor('#1A1A1A')
+                        if (sig.wifiSsids.length > 0) {
+                          Text('WiFi: ' + sig.wifiSsids.join(', '))
+                            .fontSize(12)
+                            .fontColor('#007AFF')
+                        }
+                        if (sig.btDevices.length > 0) {
+                          Text('BT: ' + sig.btDevices.join(', '))
+                            .fontSize(12)
+                            .fontColor('#5856D6')
+                        }
+                        Text('观测 ' + sig.totalObservations.toString() + ' 次')
+                          .fontSize(11)
+                          .fontColor('#999999')
+                      }
+                      .layoutWeight(1)
+                      .alignItems(HorizontalAlign.Start)
+
+                      Text('清除')
+                        .fontSize(13)
+                        .fontColor('#FF3B30')
+                        .padding(4)
+                        .onClick(() => { this.clearSignalsForGeofence(sig.geofenceId); })
+                    }
+                    .width('100%')
+                    .padding({ top: 8, bottom: 8 })
+                    Divider().color('#F0F0F0')
+                  }
+                }, (sig: LearnedSignalsSummary) => sig.geofenceId)
               }
             }
             .width('100%')
@@ -559,5 +637,25 @@ struct ContextSettingsPage {
       this.log.error('CtxSettings', 'Del error: ' + (err as Error).message);
     }
     this.refresh();
+  }
+
+  private clearSignalsForGeofence(geofenceId: string): void {
+    try {
+      ContextAwarenessService.getInstance().clearLearnedSignals(geofenceId).then(() => {
+        this.refresh();
+      });
+    } catch (err) {
+      this.log.error('CtxSettings', 'Clear signals error: ' + (err as Error).message);
+    }
+  }
+
+  private clearAllSignals(): void {
+    try {
+      ContextAwarenessService.getInstance().clearAllLearnedSignals().then(() => {
+        this.refresh();
+      });
+    } catch (err) {
+      this.log.error('CtxSettings', 'Clear all signals error: ' + (err as Error).message);
+    }
   }
 }

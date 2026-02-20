@@ -13,6 +13,7 @@ import { BehaviorLogger } from './BehaviorLogger';
 import { ContextEngineService, ContextSnapshot, MatchResult, GeofenceBinding } from './ContextEngine';
 import { LocationDiscoveryService, GeofenceSuggestion, DiscoveryStatsInfo } from './LocationDiscoveryService';
 import { FeedbackService } from './FeedbackService';
+import { LocationFusionService, LearnedSignalsSummary } from './LocationFusionService';
 import {
   EnvironmentContext,
   MotionState,
@@ -86,6 +87,8 @@ export class ContextAwarenessService {
 
   // LLM 兜底服务
   private llmFallback: LLMFallbackService = LLMFallbackService.getInstance();
+  // 多源位置融合
+  private locationFusion: LocationFusionService = LocationFusionService.getInstance();
 
   private constructor() {
     this.geofenceMgr = GeofenceManager.getInstance();
@@ -114,6 +117,9 @@ export class ContextAwarenessService {
       this.log.info(TAG, `Loaded default rules: ${this.engine.getRuleCount()}`);
     }
     
+    // 初始化多源位置融合
+    await this.locationFusion.init(context);
+
     // 初始化位置发现服务
     await this.locationDiscovery.init(context);
     await this.feedbackSvc.init(context);
@@ -337,14 +343,21 @@ export class ContextAwarenessService {
       // ignore
     }
     
-    // 当前围栏
+    // 当前围栏（多源融合）
     let currentGeofence: Geofence | undefined;
-    if (this.lastLocation) {
-      let geofences = this.geofenceMgr.getGeofencesAtLocation(
+    let allGeofences = this.geofenceMgr.getAllGeofences();
+    let fusionResult = this.locationFusion.getBestMatch(allGeofences, this.lastLocation);
+    if (fusionResult) {
+      currentGeofence = this.geofenceMgr.getGeofence(fusionResult.geofenceId);
+      this.log.debug(TAG,
+        `Fused location: ${fusionResult.geofenceId} conf=${fusionResult.confidence.toFixed(2)} src=${fusionResult.source}`);
+    } else if (this.lastLocation) {
+      // 降级：融合无结果时用原始 GPS
+      let gpsGeofences = this.geofenceMgr.getGeofencesAtLocation(
         this.lastLocation.latitude,
         this.lastLocation.longitude
       );
-      currentGeofence = geofences[0];  // 取第一个
+      currentGeofence = gpsGeofences[0];
     }
     
     let ctx: EnvironmentContext = {
@@ -458,14 +471,19 @@ export class ContextAwarenessService {
   
   private async onGeofenceEvent(event: GeofenceEvent): Promise<void> {
     this.log.info(TAG, `Geofence ${event.type}: ${event.geofence.name}`);
-    
+
     // 更新位置
     this.lastLocation = event.location;
-    
+
     // Push event to engine buffer for temporal/sequence rules
     let eventType = event.type === 'enter' ? 'geofence_enter' : 'geofence_exit';
     this.engine.pushEvent(eventType);
-    
+
+    // GPS 高精度进入围栏时，学习 WiFi/BT 信号
+    if (event.type === 'enter') {
+      this.locationFusion.learnSignals(event.geofence.id, event.location);
+    }
+
     // 只处理进入事件
     if (event.type !== 'enter') return;
     
@@ -700,6 +718,23 @@ export class ContextAwarenessService {
   }
   
   
+  // ==================== 位置融合 ====================
+
+  /** 获取所有围栏的已学习信号摘要（用于设置页展示） */
+  getLearnedSignalsSummaries(): LearnedSignalsSummary[] {
+    return this.locationFusion.getLearnedSignalsSummaries(this.geofenceMgr.getAllGeofences());
+  }
+
+  /** 清除某个围栏的已学习信号 */
+  async clearLearnedSignals(geofenceId: string): Promise<void> {
+    await this.locationFusion.clearLearnedSignals(geofenceId);
+  }
+
+  /** 清除所有已学习信号 */
+  async clearAllLearnedSignals(): Promise<void> {
+    await this.locationFusion.clearAllLearnedSignals();
+  }
+
   getStatus(): string {
     let stats = this.behaviorLog.getStats();
     return `Running: ${this.isRunning}, ` +
