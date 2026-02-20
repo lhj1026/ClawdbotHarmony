@@ -10,6 +10,7 @@
 import contextEngine from 'libcontext_engine.so';
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
+import { util } from '@kit.ArkTS';
 import { LogService } from '../../common/LogService';
 
 const TAG = 'ContextEngine';
@@ -117,6 +118,7 @@ export class ContextEngineService {
   private static instance: ContextEngineService | null = null;
   private initialized: boolean = false;
   private prefsStore: preferences.Preferences | null = null;
+  private appContext: common.UIAbilityContext | null = null;
 
   static getInstance(): ContextEngineService {
     if (!ContextEngineService.instance) {
@@ -125,31 +127,52 @@ export class ContextEngineService {
     return ContextEngineService.instance;
   }
 
-  /** Initialize engine: load persisted rules (builtin + user) and MAB stats */
+  /**
+   * Initialize engine: load rules from unified storage and MAB stats.
+   *
+   * Rule loading strategy:
+   * 1. Try loading from preferences ('all_rules') — this is the single source of truth
+   * 2. If empty (first run), load from rawfile default_rules.json template
+   * 3. All rules (default + user-added + LLM-learned) are stored together in 'all_rules'
+   */
   async init(context: Context): Promise<void> {
     if (this.initialized) return;
 
     try {
+      this.appContext = context as common.UIAbilityContext;
       this.prefsStore = await preferences.getPreferences(context, 'context_engine');
 
-      // Load persisted rules (builtin from native 'rules' key)
-      let rulesJson: string = String(await this.prefsStore.get('rules', '[]'));
-      let ok = nativeLoadRules(rulesJson);
-      log.info(TAG, `Engine init: loaded ${nativeGetRuleCount()} builtin rules, success=${ok}`);
+      // Load all rules from unified storage
+      let allRulesJson: string = String(await this.prefsStore.get('all_rules', ''));
 
-      // Load user custom rules and add them to the engine
-      let userRulesJson: string = String(await this.prefsStore.get('user_rules', '[]'));
-      try {
-        let userRules: ContextRule[] = JSON.parse(userRulesJson) as ContextRule[];
-        for (let i = 0; i < userRules.length; i++) {
-          nativeAddRule(JSON.stringify(userRules[i]));
+      if (allRulesJson.length === 0 || allRulesJson === '[]') {
+        // First run or migration: load from default_rules.json rawfile
+        log.info(TAG, 'No persisted rules found, loading from default_rules.json');
+        allRulesJson = await this.loadDefaultRulesFromFile();
+
+        // Also migrate any legacy user rules
+        let legacyUserJson: string = String(await this.prefsStore.get('user_rules', '[]'));
+        try {
+          let legacyUsers: ContextRule[] = JSON.parse(legacyUserJson) as ContextRule[];
+          if (legacyUsers.length > 0) {
+            let allRules: ContextRule[] = JSON.parse(allRulesJson) as ContextRule[];
+            for (let i = 0; i < legacyUsers.length; i++) {
+              allRules.push(legacyUsers[i]);
+            }
+            allRulesJson = JSON.stringify(allRules);
+            log.info(TAG, `Migrated ${legacyUsers.length} legacy user rules`);
+          }
+        } catch (e) {
+          log.warn(TAG, `Legacy user_rules migration failed: ${(e as Error).message}`);
         }
-        if (userRules.length > 0) {
-          log.info(TAG, `Loaded ${userRules.length} user rules`);
-        }
-      } catch (e) {
-        log.warn(TAG, `Failed to parse user_rules: ${(e as Error).message}`);
+
+        // Persist the initial ruleset
+        await this.prefsStore.put('all_rules', allRulesJson);
+        await this.prefsStore.flush();
       }
+
+      let ok = nativeLoadRules(allRulesJson);
+      log.info(TAG, `Engine init: loaded ${nativeGetRuleCount()} rules from unified storage, success=${ok}`);
 
       // Load MAB stats
       let statsJson: string = String(await this.prefsStore.get('mab_stats', '{}'));
@@ -169,6 +192,22 @@ export class ContextEngineService {
     }
   }
 
+  /** Load default rules from rawfile config/default_rules.json */
+  private async loadDefaultRulesFromFile(): Promise<string> {
+    try {
+      if (!this.appContext) return '[]';
+      let resourceMgr = this.appContext.resourceManager;
+      let rawData = await resourceMgr.getRawFileContent('config/default_rules.json');
+      let decoder = new util.TextDecoder('utf-8');
+      let json = decoder.decodeToString(rawData);
+      log.info(TAG, `Loaded default rules from rawfile, length=${json.length}`);
+      return json;
+    } catch (err) {
+      log.error(TAG, `Failed to load default_rules.json: ${(err as Error).message}`);
+      return '[]';
+    }
+  }
+
   /** Load rules (replaces all). Persists to preferences. */
   async loadRules(rules: ContextRule[]): Promise<boolean> {
     let json = JSON.stringify(rules);
@@ -181,28 +220,20 @@ export class ContextEngineService {
     return ok;
   }
 
-  /** Add or update a single rule. User rules (id starts with 'user_') are persisted separately. */
+  /** Add or update a single rule. Persisted to unified storage. */
   async addRule(rule: ContextRule): Promise<boolean> {
     let json = JSON.stringify(rule);
     let ok = nativeAddRule(json);
     if (ok) {
-      if (this.isUserRule(rule.id)) {
-        await this.persistUserRules();
-      }
       await this.persistRules();
     }
     return ok;
   }
 
-  /** Remove a rule by id. Only user rules (id starts with 'user_') can be removed. */
+  /** Remove a rule by id. Any rule can be removed (will be re-added on next loadDefaultRules if it's a template rule). */
   async removeRule(ruleId: string): Promise<boolean> {
-    if (!this.isUserRule(ruleId)) {
-      log.warn(TAG, `Cannot remove builtin rule: ${ruleId}`);
-      return false;
-    }
     let ok = nativeRemoveRule(ruleId);
     if (ok) {
-      await this.persistUserRules();
       await this.persistRules();
     }
     return ok;
@@ -366,26 +397,30 @@ export class ContextEngineService {
    *
    * 含占位符的规则：如果用户没有对应围栏，该规则自动 disabled
    */
+  /** Reload all rules from persisted storage (or default file if empty) */
   async loadDefaultRules(): Promise<void> {
-    // Save user rules before reloading
+    // Save user-added rules (id starts with 'user_')
     let savedUserRules = this.getUserRules();
-    let rules = this.getBuiltinRuleTemplates();
-    await this.loadRules(rules);
+
+    // Load template rules from rawfile
+    let templateJson = await this.loadDefaultRulesFromFile();
+    let templateRules: ContextRule[] = JSON.parse(templateJson) as ContextRule[];
+    await this.loadRules(templateRules);
+
     // Re-add user rules
     for (let i = 0; i < savedUserRules.length; i++) {
       nativeAddRule(JSON.stringify(savedUserRules[i]));
     }
-    if (savedUserRules.length > 0) {
-      await this.persistRules();
-    }
-    log.info(TAG, `Loaded ${rules.length} built-in rules + ${savedUserRules.length} user rules`);
+    await this.persistRules();
+    log.info(TAG, `Reloaded ${templateRules.length} template rules + ${savedUserRules.length} user rules`);
   }
 
   /** 当用户添加/删除围栏后调用，重新绑定规则中的占位符（保留用户规则） */
   async rebindGeofences(geofences: GeofenceBinding[]): Promise<void> {
-    // Save user rules before reloading builtin templates
+    // Save user rules before reloading templates
     let savedUserRules = this.getUserRules();
-    let rules = this.getBuiltinRuleTemplates();
+    let templateJson = await this.loadDefaultRulesFromFile();
+    let rules: ContextRule[] = JSON.parse(templateJson) as ContextRule[];
 
     // 按类别找到第一个围栏 ID
     let homeId = '';
@@ -433,143 +468,17 @@ export class ContextEngineService {
     log.info(TAG, `Rules rebound: ${rules.filter(r => r.enabled).length} builtin enabled, ${savedUserRules.length} user rules preserved`);
   }
 
-  private getBuiltinRuleTemplates(): ContextRule[] {
-    return [
-      // ===== 不依赖围栏的通用规则（开箱即用）=====
-      {
-        id: 'rule_morning_workday',
-        name: '工作日早出门',
-        conditions: [
-          { key: 'timeOfDay', op: 'eq', value: 'morning' },
-          { key: 'isWeekend', op: 'eq', value: 'false' },
-          { key: 'motionState', op: 'in', value: 'walking,driving' }
-        ],
-        action: { id: 'suggest_morning_commute', type: 'suggestion', payload: '早上好！查看通勤路线和天气？' },
-        priority: 2.0, cooldownMs: 14400000, enabled: true
-      },
-      {
-        id: 'rule_low_battery',
-        name: '低电量提醒',
-        conditions: [
-          { key: 'batteryLevel', op: 'lte', value: '15' },
-          { key: 'isCharging', op: 'eq', value: 'false' }
-        ],
-        action: { id: 'warn_low_battery', type: 'notification', payload: '电量不足 15%，建议省电模式或充电' },
-        priority: 3.0, cooldownMs: 1800000, enabled: true
-      },
-      {
-        id: 'rule_weekend_morning',
-        name: '周末早上',
-        conditions: [
-          { key: 'timeOfDay', op: 'eq', value: 'morning' },
-          { key: 'isWeekend', op: 'eq', value: 'true' }
-        ],
-        action: { id: 'suggest_weekend', type: 'suggestion', payload: '周末愉快！看看今天有什么好玩的？' },
-        priority: 1.0, cooldownMs: 28800000, enabled: true
-      },
-      {
-        id: 'rule_long_stationary',
-        name: '久坐提醒',
-        conditions: [
-          { key: 'motionState', op: 'eq', value: 'stationary' },
-          { key: 'timeOfDay', op: 'in', value: 'morning,afternoon' }
-        ],
-        action: { id: 'suggest_move', type: 'suggestion', payload: '坐了很久了，起来活动一下吧 🏃' },
-        priority: 1.0, cooldownMs: 5400000, enabled: true
-      },
-      {
-        id: 'rule_commuting',
-        name: '通勤路上',
-        conditions: [
-          { key: 'motionState', op: 'in', value: 'driving,transit' },
-          { key: 'isWeekend', op: 'eq', value: 'false' },
-          { key: 'timeOfDay', op: 'in', value: 'morning,evening' }
-        ],
-        action: { id: 'suggest_commute_info', type: 'suggestion', payload: '通勤中，要听播客或看新闻摘要吗？' },
-        priority: 1.5, cooldownMs: 14400000, enabled: true
-      },
-      {
-        id: 'rule_bedtime',
-        name: '睡前提醒',
-        conditions: [
-          { key: 'hour', op: 'gte', value: '22' },
-          { key: 'motionState', op: 'eq', value: 'stationary' }
-        ],
-        action: { id: 'suggest_bedtime', type: 'suggestion', payload: '夜深了，明天的日程已准备好，早点休息 🌙' },
-        priority: 1.0, cooldownMs: 28800000, enabled: true
-      },
-
-      // ===== 依赖围栏的规则（自动绑定，缺围栏则禁用）=====
-      {
-        id: 'rule_evening_home',
-        name: '到家放松',
-        conditions: [
-          { key: 'timeOfDay', op: 'eq', value: 'evening' },
-          { key: 'geofence', op: 'eq', value: '{{home}}' },
-          { key: 'motionState', op: 'eq', value: 'stationary' }
-        ],
-        action: { id: 'suggest_evening_relax', type: 'suggestion', payload: '到家了！听音乐或看新闻摘要？' },
-        priority: 1.5, cooldownMs: 14400000, enabled: true
-      },
-      {
-        id: 'rule_leave_home_morning',
-        name: '早上离家',
-        conditions: [
-          { key: 'timeOfDay', op: 'eq', value: 'morning' },
-          { key: 'geofence', op: 'neq', value: '{{home}}' },
-          { key: 'motionState', op: 'in', value: 'walking,driving' }
-        ],
-        action: { id: 'suggest_morning_brief', type: 'suggestion', payload: '出门了！今日天气和日程概览？' },
-        priority: 2.0, cooldownMs: 14400000, enabled: true
-      },
-      {
-        id: 'rule_arrive_work',
-        name: '到达公司',
-        conditions: [
-          { key: 'geofence', op: 'eq', value: '{{work}}' },
-          { key: 'isWeekend', op: 'eq', value: 'false' },
-          { key: 'motionState', op: 'eq', value: 'stationary' }
-        ],
-        action: { id: 'suggest_work_mode', type: 'suggestion', payload: '到公司了，开启工作模式？查看今日待办' },
-        priority: 2.0, cooldownMs: 28800000, enabled: true
-      },
-      {
-        id: 'rule_leave_work',
-        name: '下班离开公司',
-        conditions: [
-          { key: 'geofence', op: 'neq', value: '{{work}}' },
-          { key: 'timeOfDay', op: 'in', value: 'evening,night' },
-          { key: 'isWeekend', op: 'eq', value: 'false' }
-        ],
-        action: { id: 'suggest_leave_work', type: 'suggestion', payload: '下班了！查看回家路线？' },
-        priority: 1.5, cooldownMs: 28800000, enabled: true
-      },
-      {
-        id: 'rule_arrive_gym',
-        name: '到达健身房',
-        conditions: [
-          { key: 'geofence', op: 'eq', value: '{{gym}}' }
-        ],
-        action: { id: 'suggest_workout', type: 'suggestion', payload: '到健身房了💪 开始今天的训练计划？' },
-        priority: 1.5, cooldownMs: 14400000, enabled: true
-      }
-    ];
-  }
-
+  /** Persist all rules to unified storage */
   private async persistRules(): Promise<void> {
     if (!this.prefsStore) return;
     let json = nativeExportRules();
-    await this.prefsStore.put('rules', json);
+    await this.prefsStore.put('all_rules', json);
     await this.prefsStore.flush();
   }
 
-  /** Persist only user rules to a separate preferences key */
+  /** @deprecated — kept for backward compatibility, now just calls persistRules */
   private async persistUserRules(): Promise<void> {
-    if (!this.prefsStore) return;
-    let userRules = this.getUserRules();
-    await this.prefsStore.put('user_rules', JSON.stringify(userRules));
-    await this.prefsStore.flush();
-    log.info(TAG, `Persisted ${userRules.length} user rules`);
+    await this.persistRules();
   }
 
   private async persistStats(): Promise<void> {
