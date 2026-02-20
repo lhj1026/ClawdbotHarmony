@@ -119,7 +119,6 @@ export class ContextAwarenessService {
     this.log.info(TAG, `Context Awareness Service initialized, rules: ${this.engine.getRuleCount()}`);
   }
   
-  // ==================== 服务控制 ====================
   
   async start(): Promise<boolean> {
     if (this.isRunning) return true;
@@ -162,7 +161,6 @@ export class ContextAwarenessService {
     this.log.info(TAG, 'Context Awareness Service stopped');
   }
   
-  // ==================== 传感器 ====================
   
   private startMotionSensors(): void {
     try {
@@ -218,11 +216,11 @@ export class ContextAwarenessService {
     
     if (newState !== this.lastMotionState) {
       this.log.debug(TAG, `Motion state: ${this.lastMotionState} -> ${newState}`);
+      this.engine.pushEvent('motion_' + newState);
       this.lastMotionState = newState;
     }
   }
 
-  // ==================== 定时评估 ====================
 
   private startPeriodicEvaluation(): void {
     if (this.evaluationTimer !== -1) return;
@@ -247,7 +245,6 @@ export class ContextAwarenessService {
     this.evaluateAndDeliver(snapshot);
   }
 
-  // ==================== 位置自动发现 ====================
 
   private startLocationDiscovery(): void {
     if (this.discoveryTimer !== -1) return;
@@ -292,7 +289,6 @@ export class ContextAwarenessService {
     return this.locationDiscovery.getStats();
   }
 
-  // ==================== 上下文构建 ====================
   
   /**
    * 获取当前完整的环境上下文
@@ -416,13 +412,16 @@ export class ContextAwarenessService {
     this.setOnCooldown(top.ruleId);
   }
 
-  // ==================== 地理围栏事件 ====================
   
   private async onGeofenceEvent(event: GeofenceEvent): Promise<void> {
     this.log.info(TAG, `Geofence ${event.type}: ${event.geofence.name}`);
     
     // 更新位置
     this.lastLocation = event.location;
+    
+    // Push event to engine buffer for temporal/sequence rules
+    let eventType = event.type === 'enter' ? 'geofence_enter' : 'geofence_exit';
+    this.engine.pushEvent(eventType);
     
     // 只处理进入事件
     if (event.type !== 'enter') return;
@@ -513,7 +512,6 @@ export class ContextAwarenessService {
     }
   }
   
-  // ==================== 推荐冷却 ====================
   
   private isOnCooldown(ruleId: string): boolean {
     let lastTime = this.lastRecommendations.get(ruleId);
@@ -525,7 +523,6 @@ export class ContextAwarenessService {
     this.lastRecommendations.set(ruleId, Date.now());
   }
   
-  // ==================== 推荐反馈 ====================
 
   /**
    * 用户对推荐的反馈（保留旧 API 兼容性）
@@ -592,7 +589,6 @@ export class ContextAwarenessService {
     return this.feedbackSvc.getStats();
   }
   
-  // ==================== 监听器 ====================
   
   addRecommendationListener(listener: RecommendationListener): void {
     this.recommendationListeners.push(listener);
@@ -616,7 +612,6 @@ export class ContextAwarenessService {
     }
   }
   
-  // ==================== 手动记录 ====================
   
   /**
    * 手动记录用户行为（用于学习用户习惯）
@@ -627,7 +622,6 @@ export class ContextAwarenessService {
     await this.behaviorLog.logBehavior(ctx, action, outcome);
   }
   
-  // ==================== 地理围栏管理 ====================
   
   addGeofence(geofence: Geofence): void {
     this.geofenceMgr.addGeofence(geofence);
@@ -662,7 +656,6 @@ export class ContextAwarenessService {
     return this.geofenceMgr.getAllGeofences();
   }
   
-  // ==================== 状态查询 ====================
   
   getStatus(): string {
     let stats = this.behaviorLog.getStats();

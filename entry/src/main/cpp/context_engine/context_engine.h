@@ -5,7 +5,8 @@
  *   - Flat rules → compiled decision tree
  *   - Soft matching (0~1 confidence per condition)
  *   - Multi-Armed Bandit (epsilon-greedy) for action selection
- *   - Event buffer for recent context
+ *   - Event buffer for temporal/sequence conditions
+ *   - Enhanced cooldown (per-rule, per-category, global rate limit)
  */
 #pragma once
 
@@ -17,6 +18,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <deque>
 
 namespace context_engine {
 
@@ -27,8 +29,13 @@ namespace context_engine {
 /** A single condition in a rule: key op value */
 struct Condition {
     std::string key;       // e.g. "timeOfDay", "motionState", "geofence"
-    std::string op;        // "eq", "neq", "gt", "lt", "gte", "lte", "in", "range"
-    std::string value;     // single value or JSON array for "in", "lo,hi" for "range"
+                           // For recent: "event:<eventType>" e.g. "event:geofence_enter"
+                           // For sequence: "sequence:<typeA>,<typeB>"
+    std::string op;        // "eq", "neq", "gt", "lt", "gte", "lte", "in", "range",
+                           // "recent" (event happened within N ms),
+                           // "within" (sequence A→B within N ms)
+    std::string value;     // single value, JSON array for "in", "lo,hi" for "range",
+                           // milliseconds string for "recent"/"within"
 };
 
 /** An action to recommend when a rule fires */
@@ -58,6 +65,53 @@ struct MatchResult {
 
 /** Context snapshot — key-value pairs from sensors */
 using ContextMap = std::unordered_map<std::string, std::string>;
+
+// ============================================================
+// Event buffer (temporal context)
+// ============================================================
+
+/** A context event pushed from ArkTS when something notable happens */
+struct ContextEvent {
+    ContextMap context;       // snapshot at the time
+    int64_t timestampMs;      // when it happened (steady_clock ms)
+    std::string eventType;    // e.g. "geofence_enter", "motion_change", "app_open"
+};
+
+/** Rate limiting configuration */
+struct RateLimits {
+    int categoryCooldownCount = 3;          // suppress after N same-type firings
+    int64_t categoryCooldownWindowMs = 600000;  // within this window (10 min)
+    int globalMaxPerHour = 10;              // max total recommendations per hour
+};
+
+/** Thread-safe circular event buffer with auto-expiry */
+class EventBuffer {
+public:
+    explicit EventBuffer(size_t maxSize = 100);
+
+    /** Push a new event. Automatically expires events older than 24 hours. */
+    void push(const ContextEvent& event);
+
+    /** Check if an event of given type happened within the last withinMs. */
+    bool hasRecent(const std::string& eventType, int64_t withinMs) const;
+
+    /**
+     * Check if eventA happened before eventB, both within withinMs of now,
+     * and eventA.timestamp < eventB.timestamp.
+     */
+    bool hasSequence(const std::string& eventA, const std::string& eventB,
+                     int64_t withinMs) const;
+
+    size_t size() const;
+
+private:
+    void expireOld();
+
+    std::deque<ContextEvent> events_;
+    size_t maxSize_;
+    static constexpr int64_t MAX_AGE_MS = 86400000;  // 24 hours
+    mutable std::mutex mu_;
+};
 
 // ============================================================
 // Decision tree (compiled from flat rules)
@@ -174,6 +228,12 @@ public:
     /** Evaluate context against all rules. Returns matches sorted by confidence × priority. */
     std::vector<MatchResult> evaluate(const ContextMap& ctx, int maxResults = 5);
 
+    /** Push a context event into the event buffer (for recent/sequence conditions) */
+    void pushEvent(const ContextEvent& event);
+
+    /** Configure rate limits (category cooldown, global rate limit) */
+    void setLimits(const RateLimits& limits);
+
     /** Get the MAB for external reward updates */
     MAB& mab() { return mab_; }
 
@@ -191,11 +251,28 @@ private:
     void evaluateNode(int nodeIdx, const ContextMap& ctx,
                       std::vector<MatchResult>& results);
 
+    /** Evaluate a single condition, handling "recent"/"within" via event buffer */
+    double matchCondition(const Condition& cond, const ContextMap& ctx);
+
+    /** Check enhanced cooldown: category throttle + global rate limit */
+    bool isRateLimited(const Action& action, int64_t now);
+
+    /** Record a firing for rate limit tracking */
+    void recordFiring(const Action& action, int64_t now);
+
     std::vector<Rule> rules_;
     std::vector<TreeNode> tree_;
     MAB mab_;
     LinUCB linucb_;
     std::unordered_map<std::string, int64_t> lastFired_;  // ruleId → timestamp
+    EventBuffer eventBuffer_;
+    RateLimits rateLimits_;
+
+    // Category cooldown: action.type → list of firing timestamps
+    std::unordered_map<std::string, std::deque<int64_t>> categoryFirings_;
+    // Global rate limit: all firing timestamps in the last hour
+    std::deque<int64_t> globalFirings_;
+
     mutable std::mutex mu_;
 };
 

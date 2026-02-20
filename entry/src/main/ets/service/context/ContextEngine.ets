@@ -50,6 +50,11 @@ function nativeExportLinUCB(): string {
 }
 function nativeImportLinUCB(json: string): void {
   contextEngine.importLinUCB(json);
+function nativePushEvent(json: string): void {
+  contextEngine.pushEvent(json);
+}
+function nativeSetLimits(json: string): void {
+  contextEngine.setLimits(json);
 }
 
 /** Rule definition for ArkTS side */
@@ -225,6 +230,39 @@ export class ContextEngineService {
   /** Export rules as JSON */
   exportRules(): string {
     return nativeExportRules();
+  }
+
+  /**
+   * Push a context event into the event buffer (for recent/sequence conditions).
+   * Call this when notable events happen: geofence enter/exit, motion change, etc.
+   */
+  pushEvent(eventType: string, context?: ContextSnapshot): void {
+    let eventObj: Record<string, Object> = { 'eventType': eventType as Object };
+    if (context) {
+      eventObj['context'] = context as Object;
+    }
+    try {
+      nativePushEvent(JSON.stringify(eventObj));
+    } catch (e) {
+      log.error(TAG, `pushEvent failed: ${JSON.stringify(e)}`);
+    }
+  }
+
+  /**
+   * Configure rate limits (category cooldown, global rate limit).
+   */
+  setLimits(categoryCooldownCount: number, categoryCooldownWindowMs: number, globalMaxPerHour: number): void {
+    let limits: Record<string, number> = {
+      'categoryCooldownCount': categoryCooldownCount,
+      'categoryCooldownWindowMs': categoryCooldownWindowMs,
+      'globalMaxPerHour': globalMaxPerHour
+    };
+    try {
+      nativeSetLimits(JSON.stringify(limits));
+      log.info(TAG, `Rate limits set: cat=${categoryCooldownCount}/${categoryCooldownWindowMs}ms, global=${globalMaxPerHour}/h`);
+    } catch (e) {
+      log.error(TAG, `setLimits failed: ${JSON.stringify(e)}`);
+    }
   }
 
   /**
