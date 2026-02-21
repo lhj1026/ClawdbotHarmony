@@ -223,6 +223,22 @@ export class FeedbackService {
       }
     }
 
+    // Try to populate missing rule names from ContextEngine
+    try {
+      let engineRulesJson = this.engine.exportRules();
+      if (engineRulesJson.length > 2) {
+        let engineRules: Array<Record<string, Object>> = JSON.parse(engineRulesJson) as Array<Record<string, Object>>;
+        for (let i = 0; i < engineRules.length; i++) {
+          let r = engineRules[i];
+          let id = r['id'] as string;
+          let name = r['name'] as string;
+          if (id && name && !this.ruleNames.has(id)) {
+            this.ruleNames.set(id, name);
+          }
+        }
+      }
+    } catch { /* ignore */ }
+
     // 排序 top rules by avg reward
     let ruleEntries: FeedbackRuleStat[] = [];
     ruleAgg.forEach((val: RuleAggData, key: string) => {
