@@ -57,7 +57,7 @@ import { FeedbackService } from '../context/FeedbackService';
 import { GeofenceSuggestion } from '../context/LocationDiscoveryService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.44.0';
+const APP_VERSION = '2.45.0';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -1060,6 +1060,10 @@ export class NodeRuntime {
         let scene = ctx['scene'] ?? '';
         let location = ctx['location'] ?? '';
         this.log.info(TAG, `Scene correction: ruleId=${ruleId} scene=${scene} location=${location}`);
+
+        // Boost rules that match the user's actual scene
+        let boostedCount = this.boostRulesMatchingScene(engine, location, scene);
+
         let detail = '';
         if (location.length > 0 && scene.length > 0) {
           detail = `在${location}，${scene}`;
@@ -1068,12 +1072,14 @@ export class NodeRuntime {
         } else if (scene.length > 0) {
           detail = `${scene}`;
         }
+        let boostText = boostedCount > 0
+          ? `\n📈 已提升 ${boostedCount} 条相关规则的权重`
+          : '';
         this.sendFeedbackResponse(
           `📝 场景已纠正\n\n` +
           `🎯 实际场景：${detail}\n` +
-          `🧠 系统会学习这个模式，优化未来推荐`
+          `🧠 系统会学习这个模式，优化未来推荐${boostText}`
         );
-        // TODO: use this data to auto-generate/adjust rules based on actual user patterns
       } else if (feedback === 'dismiss') {
         // Dismiss is a mild negative signal, don't record as thumbs_down
         this.sendFeedbackResponse('🙈 已忽略，不会影响未来推荐');
@@ -1081,6 +1087,93 @@ export class NodeRuntime {
     } catch (err) {
       this.log.warn(TAG, `handleA2UIAction error: ${(err as Error).message}`);
     }
+  }
+
+  /**
+   * Boost rules that match the user's actual scene after correction.
+   * Returns count of rules boosted.
+   */
+  private boostRulesMatchingScene(engine: ContextEngineService, location: string, scene: string): number {
+    // Map location/scene to keywords for matching
+    let keywords: string[] = [];
+    if (location.length > 0) {
+      // location: 家, 公司, 路上, 商场, 餐厅
+      let locKeywords: Record<string, string[]> = {
+        '家': ['家', 'home', 'evening', 'night'],
+        '公司': ['公司', 'work', '工作', 'office'],
+        '路上': ['路上', 'transit', '通勤', 'commute', 'driving'],
+        '商场': ['商场', 'shopping', '购物'],
+        '餐厅': ['餐厅', 'restaurant', '吃饭', 'dining'],
+      };
+      if (locKeywords[location]) {
+        for (let i = 0; i < locKeywords[location].length; i++) {
+          keywords.push(locKeywords[location][i].toLowerCase());
+        }
+      }
+    }
+    if (scene.length > 0) {
+      // scene: 工作, 休息, 运动, 吃饭, 通勤, 睡觉
+      let sceneKeywords: Record<string, string[]> = {
+        '工作': ['工作', 'work', 'office', '公司'],
+        '休息': ['休息', 'relax', 'home', 'evening', '家'],
+        '运动': ['运动', 'gym', '健身', 'exercise', '健身房'],
+        '吃饭': ['吃饭', 'dining', '餐厅', 'restaurant', 'lunch', 'dinner'],
+        '通勤': ['通勤', 'commute', 'transit', 'driving', '路上'],
+        '睡觉': ['睡觉', 'sleep', 'bedtime', 'night', '家'],
+      };
+      if (sceneKeywords[scene]) {
+        for (let i = 0; i < sceneKeywords[scene].length; i++) {
+          keywords.push(sceneKeywords[scene][i].toLowerCase());
+        }
+      }
+    }
+
+    if (keywords.length === 0) return 0;
+
+    // Find and boost matching rules
+    let rulesJson = engine.exportRules();
+    let rules: ContextRule[] = JSON.parse(rulesJson) as ContextRule[];
+    let boosted = 0;
+
+    for (let i = 0; i < rules.length; i++) {
+      let rule = rules[i];
+      if (!rule.enabled) continue;
+
+      // Match by rule name
+      let ruleNameLower = (rule.name ?? '').toLowerCase();
+      let matches = false;
+      for (let j = 0; j < keywords.length; j++) {
+        if (ruleNameLower.includes(keywords[j])) {
+          matches = true;
+          break;
+        }
+      }
+
+      // Also check condition values
+      if (!matches && rule.conditions) {
+        for (let k = 0; k < rule.conditions.length; k++) {
+          let condValue = (rule.conditions[k].value ?? '').toLowerCase();
+          for (let j = 0; j < keywords.length; j++) {
+            if (condValue.includes(keywords[j])) {
+              matches = true;
+              break;
+            }
+          }
+          if (matches) break;
+        }
+      }
+
+      if (matches) {
+        let currentPriority = rule.priority ?? 1.0;
+        let newPriority = Math.min(5.0, currentPriority + 0.15);
+        rule.priority = newPriority;
+        engine.addRule(rule);
+        boosted++;
+        this.log.info(TAG, `Boosted rule ${rule.id} (${rule.name}) priority: ${currentPriority} → ${newPriority}`);
+      }
+    }
+
+    return boosted;
   }
 
   private async adjustRulePriority(engine: ContextEngineService, ruleId: string, delta: number): Promise<void> {
