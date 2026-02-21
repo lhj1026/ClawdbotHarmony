@@ -496,13 +496,7 @@ export struct MessageBubble {
               this.a2uiHeight = Math.min(h + 24, 600);
             }
           } else if (msg.startsWith('A2UI_ACTION:')) {
-            console.info('[A2UI-Console] Detected action, calling callback...');
-            console.error('[A2UI-DEBUG] ACTION RECEIVED: ' + msg.substring(12, 100));
-            try { promptAction.showToast({ message: '按钮已点击: ' + msg.substring(12, 60), duration: 2000 }); } catch {}
             this.onA2UIAction(msg.substring(12));
-          } else {
-            // Debug: log ALL console messages from WebView
-            console.error('[A2UI-ALL] ' + msg.substring(0, 300));
           }
         }
         return false;

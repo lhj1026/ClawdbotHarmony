@@ -57,7 +57,7 @@ import { FeedbackService } from '../context/FeedbackService';
 import { GeofenceSuggestion } from '../context/LocationDiscoveryService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.45.0';
+const APP_VERSION = '2.46.0';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -999,7 +999,7 @@ export class NodeRuntime {
       // WebView sends {"action":{"name":"...","context":{...}}} — unwrap
       let action = (parsed['action'] ?? parsed) as Record<string, Object>;
       let name = action['name'] as string;
-      if (name !== 'context_feedback') return;
+      if (name !== 'context_feedback' && name !== 'view_snapshot') return;
 
       let ctx = action['context'] as Record<string, string>;
       if (!ctx) return;
@@ -1080,6 +1080,9 @@ export class NodeRuntime {
           `🎯 实际场景：${detail}\n` +
           `🧠 系统会学习这个模式，优化未来推荐${boostText}`
         );
+      } else if (feedback === 'view_snapshot') {
+        // Show current scene snapshot with all sensor data
+        this.showSceneSnapshotCard();
       } else if (feedback === 'dismiss') {
         // Dismiss is a mild negative signal, don't record as thumbs_down
         this.sendFeedbackResponse('🙈 已忽略，不会影响未来推荐');
@@ -1230,6 +1233,103 @@ export class NodeRuntime {
       `{"type":"button","text":"🚶 通勤中","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"scene_correct","scene":"通勤","location":""}}}},` +
       `{"type":"button","text":"😴 要睡了","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"scene_correct","scene":"睡觉","location":""}}}},` +
       `{"type":"button","text":"🙅 跳过","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"dismiss"}}}}` +
+      `]}`;
+
+    this.dispatchA2UI('push', jsonl);
+  }
+
+  private showSceneSnapshotCard(): void {
+    let cas = ContextAwarenessService.getInstance();
+    // Use both sources: digital world service for latest + cached data
+    let digitalService = cas.getDigitalWorldService();
+    let digitalData = digitalService.getDigitalData();
+
+    // Build sensor data lines
+    let lines: string[] = [];
+
+    // Time
+    let now = new Date();
+    let dayNames = ['日', '一', '二', '三', '四', '五', '六'];
+    let h = now.getHours();
+    let m = now.getMinutes();
+    lines.push(`⏰ 时间: ${h}:${m < 10 ? '0' + m : m} 周${dayNames[now.getDay()]} ${h >= 9 && h < 18 && now.getDay() > 0 && now.getDay() < 6 ? '(工作时间)' : ''}`);
+
+    // Location / Geofence
+    let geofence = digitalData['geofence'] ?? '';
+    let wifiSsid = digitalData['wifi_ssid'] ?? digitalData['ssid'] ?? '';
+    if (geofence.length > 0) {
+      lines.push(`📍 位置: ${geofence}`);
+    }
+    if (wifiSsid.length > 0) {
+      lines.push(`📶 WiFi: ${wifiSsid}`);
+    }
+
+    // Motion & Steps
+    let stepCount = digitalData['step_count_today'] ?? '';
+    let isActive = digitalData['is_active'] ?? '';
+    if (stepCount.length > 0) {
+      lines.push(`🚶 步数: 今日 ${stepCount} 步 | ${isActive === 'true' ? '活动中' : '静止'}`);
+    }
+
+    // Heart rate (wearable)
+    let heartRate = digitalData['heart_rate'] ?? '';
+    let hrStatus = digitalData['heart_rate_status'] ?? '';
+    let wearing = digitalData['wearing_state'] ?? '';
+    if (heartRate.length > 0 && heartRate !== '0') {
+      let statusMap: Record<string, string> = {
+        'resting': '休息', 'active': '活跃', 'exercise': '运动',
+        'low': '偏低', 'unknown': '未知'
+      };
+      lines.push(`❤️ 心率: ${heartRate} bpm | ${statusMap[hrStatus] ?? hrStatus}`);
+    }
+    if (wearing.length > 0) {
+      lines.push(`⌚ 穿戴: ${wearing === 'on_wrist' ? '佩戴中' : '未佩戴'}`);
+    }
+
+    // Bluetooth
+    let btDevices = digitalData['connected_devices'] ?? digitalData['bt_connected'] ?? '';
+    let btState = digitalData['bluetooth_state'] ?? '';
+    if (btDevices.length > 0) {
+      lines.push(`🔵 蓝牙: ${btDevices}`);
+    } else if (btState.length > 0) {
+      lines.push(`🔵 蓝牙: ${btState === 'on' ? '开启' : '关闭'}`);
+    }
+
+    // Screen
+    let screenState = digitalData['screen_state'] ?? '';
+    if (screenState.length > 0) {
+      lines.push(`📱 屏幕: ${screenState === 'on' ? '亮屏' : '息屏'}`);
+    }
+
+    // Calendar
+    let calEvent = digitalData['cal_nextEvent'] ?? digitalData['next_event'] ?? '';
+    let inMeeting = digitalData['cal_inMeeting'] ?? '';
+    if (calEvent.length > 0) {
+      lines.push(`📅 日历: ${calEvent}`);
+    }
+    if (inMeeting === 'true') {
+      lines.push(`📅 状态: 会议中`);
+    }
+
+    // Battery
+    let battery = digitalData['battery_level'] ?? '';
+    let charging = digitalData['is_charging'] ?? '';
+    if (battery.length > 0) {
+      lines.push(`🔋 电量: ${battery}% ${charging === 'true' ? '(充电中)' : ''}`);
+    }
+
+    // Media
+    let mediaState = digitalData['media_playing'] ?? '';
+    if (mediaState === 'true') {
+      lines.push(`🎵 媒体: 播放中`);
+    }
+
+    // Build A2UI card
+    let linesText = lines.join('\\n');
+    let jsonl = `{"type":"form","id":"snapshot_${Date.now()}","children":[` +
+      `{"type":"text","text":"🔍 场景快照","style":{"fontSize":18,"fontWeight":"bold"}},` +
+      `{"type":"text","text":"当前系统感知到的所有信号：","style":{"fontSize":13,"color":"#888"}},` +
+      `{"type":"text","text":"${linesText}","style":{"fontSize":14}}` +
       `]}`;
 
     this.dispatchA2UI('push', jsonl);
@@ -2553,6 +2653,7 @@ export class NodeRuntime {
         id: ruleObj['id'] as string,
         name: (ruleObj['name'] as string) ?? ruleId,
         conditions: ruleObj['conditions'] as ContextCondition[],
+        excludeConditions: ruleObj['excludeConditions'] as ContextCondition[][] | undefined,
         action: ruleObj['action'] as ContextAction,
         priority: (ruleObj['priority'] as number) ?? 1.0,
         cooldownMs: (ruleObj['cooldownMs'] as number) ?? 3600000,
@@ -2641,7 +2742,8 @@ export class NodeRuntime {
       `{"type":"text","text":"📋 ${safeRuleName}  |  置信度: ${confidence}%","style":{"fontSize":12,"color":"#888"}},` +
       `{"type":"button","text":"✅ 有用","variant":"primary","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"accept"}}}},` +
       `{"type":"button","text":"❌ 不准","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"reject"}}}},` +
-      `{"type":"button","text":"🙈 忽略","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"dismiss"}}}}` +
+      `{"type":"button","text":"🙈 忽略","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"dismiss"}}}},` +
+      `{"type":"button","text":"🔍 查看详情","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"view_snapshot"}}}}` +
       `]}`;
 
     return jsonl;

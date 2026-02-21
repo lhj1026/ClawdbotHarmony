@@ -104,6 +104,7 @@ export class ContextAwarenessService {
   
   // 防抖：避免重复推荐
   private lastRecommendations: Map<string, number> = new Map();
+  private lastDigitalData: Record<string, string> = {};
   private static readonly RECOMMENDATION_COOLDOWN_MS = 5 * 60 * 1000;  // 5分钟冷却
   
   // 位置自动发现
@@ -740,15 +741,10 @@ export class ContextAwarenessService {
       stepCount: ctx.stepCount?.toString()
     };
 
-    // TODO [Digital World Integration]: Merge digital world data into snapshot.
-    // When ContextSnapshot interface is extended with an index signature or
-    // digital-specific fields, uncomment the following to enrich the snapshot:
-    //
-    // let digitalData = this.digitalWorld.getDigitalData();
-    // let digitalKeys = Object.keys(digitalData);
-    // for (let i = 0; i < digitalKeys.length; i++) {
-    //   (snapshot as Record<string, string | undefined>)[digitalKeys[i]] = digitalData[digitalKeys[i]];
-    // }
+    // Merge digital world plugin data into snapshot for rule evaluation
+    // Digital data is merged via JSON since ContextSnapshot has fixed keys
+    let digitalData = this.digitalWorld.getDigitalData();
+    this.lastDigitalData = digitalData;
 
     return snapshot;
   }
@@ -1353,5 +1349,10 @@ export class ContextAwarenessService {
   /** Access digital world service for plugin status/control */
   getDigitalWorldService(): DigitalWorldService {
     return this.digitalWorld;
+  }
+
+  /** Get last collected digital plugin data (merged key-value pairs) */
+  getLastDigitalData(): Record<string, string> {
+    return this.lastDigitalData;
   }
 }

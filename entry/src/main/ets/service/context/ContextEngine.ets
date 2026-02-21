@@ -65,6 +65,7 @@ export interface ContextRule {
   id: string;
   name: string;
   conditions: ContextCondition[];
+  excludeConditions?: ContextCondition[][];  // Array of condition groups; if ANY group fully matches, rule is excluded
   action: ContextAction;
   priority: number;
   cooldownMs: number;
@@ -310,17 +311,112 @@ export class ContextEngineService {
   }
 
   /** Evaluate current context and return ranked matches */
+  private _cachedRules: ContextRule[] | null = null;
+
   evaluate(snapshot: ContextSnapshot, maxResults: number = 5): MatchResult[] {
+    this._cachedRules = null; // Clear cache for fresh data
     let contextJson = JSON.stringify(snapshot);
-    let resultJson = nativeEvaluate(contextJson, maxResults);
+    // Request extra results so we still have enough after exclude filtering
+    let resultJson = nativeEvaluate(contextJson, maxResults + 5);
 
     try {
       let parsed: Object = JSON.parse(resultJson);
       let results: MatchResult[] = parsed as MatchResult[];
-      return results;
+
+      // Post-filter: remove results whose excludeConditions match
+      let filtered: MatchResult[] = [];
+      for (let i = 0; i < results.length; i++) {
+        let result = results[i];
+        if (!this.isExcluded(result.ruleId, snapshot)) {
+          filtered.push(result);
+          if (filtered.length >= maxResults) break;
+        } else {
+          log.debug(TAG, `Rule ${result.ruleId} excluded by excludeConditions`);
+        }
+      }
+      return filtered;
     } catch (err) {
       log.debug(TAG, `evaluate parse error: ${resultJson}`);
       return [];
+    }
+  }
+
+  /**
+   * Check if a rule should be excluded based on its excludeConditions.
+   * Each element in excludeConditions is a group of conditions (AND);
+   * if ANY group fully matches, the rule is excluded (OR between groups).
+   */
+  private isExcluded(ruleId: string, snapshot: ContextSnapshot): boolean {
+    // Cache rules for the duration of one evaluate call
+    if (!this._cachedRules) {
+      let rulesJson = nativeExportRules();
+      this._cachedRules = JSON.parse(rulesJson) as ContextRule[];
+    }
+    let rule: ContextRule | undefined;
+    for (let i = 0; i < this._cachedRules.length; i++) {
+      if (this._cachedRules[i].id === ruleId) {
+        rule = this._cachedRules[i];
+        break;
+      }
+    }
+    if (!rule || !rule.excludeConditions || rule.excludeConditions.length === 0) {
+      return false;
+    }
+
+    // Check each exclusion group (OR logic between groups)
+    for (let g = 0; g < rule.excludeConditions.length; g++) {
+      let group = rule.excludeConditions[g];
+      let groupMatch = true;
+      // All conditions in a group must match (AND logic)
+      for (let c = 0; c < group.length; c++) {
+        if (!this.matchCondition(group[c], snapshot)) {
+          groupMatch = false;
+          break;
+        }
+      }
+      if (groupMatch) return true;
+    }
+    return false;
+  }
+
+  /** Get a snapshot field value by key name */
+  private getSnapshotValue(snapshot: ContextSnapshot, key: string): string {
+    if (key === 'timeOfDay') return snapshot.timeOfDay;
+    if (key === 'hour') return snapshot.hour;
+    if (key === 'dayOfWeek') return snapshot.dayOfWeek;
+    if (key === 'isWeekend') return snapshot.isWeekend;
+    if (key === 'motionState') return snapshot.motionState;
+    if (key === 'batteryLevel') return snapshot.batteryLevel;
+    if (key === 'isCharging') return snapshot.isCharging;
+    if (key === 'networkType') return snapshot.networkType;
+    if (key === 'geofence') return snapshot.geofence ?? '';
+    if (key === 'wifiSsid') return snapshot.wifiSsid ?? '';
+    if (key === 'wifiGeofence') return snapshot.wifiGeofence ?? '';
+    if (key === 'wifiLost') return snapshot.wifiLost ?? '';
+    if (key === 'wifiLostWork') return snapshot.wifiLostWork ?? '';
+    if (key === 'wifiLostCategory') return snapshot.wifiLostCategory ?? '';
+    if (key === 'latitude') return snapshot.latitude ?? '';
+    if (key === 'longitude') return snapshot.longitude ?? '';
+    if (key === 'stepCount') return snapshot.stepCount ?? '';
+    if (key === 'speed') return snapshot.speed ?? '';
+    if (key === 'transportMode') return snapshot.transportMode ?? '';
+    return '';
+  }
+
+  /** Match a single condition against snapshot */
+  private matchCondition(cond: ContextCondition, snapshot: ContextSnapshot): boolean {
+    let actual = this.getSnapshotValue(snapshot, cond.key);
+    let expected = cond.value;
+    switch (cond.op) {
+      case 'eq': return actual === expected;
+      case 'neq': return actual !== expected;
+      case 'gt': return parseFloat(actual) > parseFloat(expected);
+      case 'lt': return parseFloat(actual) < parseFloat(expected);
+      case 'gte': return parseFloat(actual) >= parseFloat(expected);
+      case 'lte': return parseFloat(actual) <= parseFloat(expected);
+      case 'in': return expected.split(',').indexOf(actual) >= 0;
+      case 'contains': return actual.indexOf(expected) >= 0;
+      default: return actual === expected;
     }
   }
 

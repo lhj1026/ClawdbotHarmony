@@ -23,6 +23,9 @@ import { BluetoothPlugin } from './plugins/BluetoothPlugin';
 import { WifiPlugin } from './plugins/WifiPlugin';
 import { StepCounterPlugin } from './plugins/StepCounterPlugin';
 import { WearablePlugin } from './plugins/WearablePlugin';
+import { PosturePlugin } from './plugins/PosturePlugin';
+import { AmbientSoundPlugin } from './plugins/AmbientSoundPlugin';
+import { ForegroundAppPlugin } from './plugins/ForegroundAppPlugin';
 
 const TAG = 'DigitalWorld';
 const PREFS_NAME = 'digital_world_settings';
@@ -285,6 +288,24 @@ export class DigitalWorldService {
         privacyLevel: 'medium',
         enabledByDefault: true,
         description: '读取穿戴设备心率数据，检测运动和身体状态'
+      },
+      {
+        plugin: new PosturePlugin(),
+        privacyLevel: 'high',
+        enabledByDefault: false,
+        description: '通过前置摄像头判断手机姿态（使用中/桌上/口袋）'
+      },
+      {
+        plugin: new AmbientSoundPlugin(),
+        privacyLevel: 'critical',
+        enabledByDefault: false,
+        description: '分析环境音判断场景（安静/办公/嘈杂/交通），不保存录音'
+      },
+      {
+        plugin: new ForegroundAppPlugin(),
+        privacyLevel: 'medium',
+        enabledByDefault: true,
+        description: '检测前台应用类型，推断用户活动'
       }
     ];
   }
