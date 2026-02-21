@@ -372,9 +372,11 @@ export class ContextAwarenessService {
     try {
       let atManager = abilityAccessCtrl.createAtManager();
       let result = await atManager.requestPermissionsFromUser(this.context as common.UIAbilityContext,
-        ['ohos.permission.ACTIVITY_MOTION']);
-      let granted = result.authResults[0] === 0;
-      this.log.info(TAG, `ACTIVITY_MOTION permission: ${granted ? 'granted' : 'denied'}`);
+        ['ohos.permission.ACTIVITY_MOTION', 'ohos.permission.READ_HEALTH_DATA']);
+      let motionGranted = result.authResults[0] === 0;
+      let healthGranted = result.authResults.length > 1 && result.authResults[1] === 0;
+      this.log.info(TAG, `ACTIVITY_MOTION permission: ${motionGranted ? 'granted' : 'denied'}, READ_HEALTH_DATA: ${healthGranted ? 'granted' : 'denied'}`);
+      let granted = motionGranted;
       return granted;
     } catch (err) {
       this.log.warn(TAG, `Motion permission request failed: ${(err as Error).message}`);

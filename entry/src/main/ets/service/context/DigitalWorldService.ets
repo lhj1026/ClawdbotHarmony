@@ -22,6 +22,7 @@ import { AppUsagePlugin } from './plugins/AppUsagePlugin';
 import { BluetoothPlugin } from './plugins/BluetoothPlugin';
 import { WifiPlugin } from './plugins/WifiPlugin';
 import { StepCounterPlugin } from './plugins/StepCounterPlugin';
+import { WearablePlugin } from './plugins/WearablePlugin';
 
 const TAG = 'DigitalWorld';
 const PREFS_NAME = 'digital_world_settings';
@@ -278,6 +279,12 @@ export class DigitalWorldService {
         privacyLevel: 'medium',
         enabledByDefault: true,
         description: '检测WiFi连接状态和网络信息'
+      },
+      {
+        plugin: new WearablePlugin(),
+        privacyLevel: 'medium',
+        enabledByDefault: true,
+        description: '读取穿戴设备心率数据，检测运动和身体状态'
       }
     ];
   }
