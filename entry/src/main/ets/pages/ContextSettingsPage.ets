@@ -2,10 +2,11 @@
  * ContextSettingsPage — 情景智能管理页面
  * 功能：地理围栏管理 / 规则引擎状态 / MAB 统计
  */
-import { router } from '@kit.ArkUI';
+import { router, promptAction } from '@kit.ArkUI';
 import { LogService } from '../common/LogService';
 import { ContextAwarenessService } from '../service/context/ContextAwarenessService';
 import { ContextEngineService } from '../service/context/ContextEngine';
+import { FeedbackService } from '../service/context/FeedbackService';
 import { Geofence, GeofenceCategory, FeedbackStats, FeedbackRuleStat } from '../service/context/ContextModels';
 import { LocationDiscoveryService, GeofenceSuggestion } from '../service/context/LocationDiscoveryService';
 import { LearnedSignalsSummary } from '../service/context/LocationFusionService';
@@ -114,8 +115,8 @@ struct ContextSettingsPage {
 
   private refreshFeedbackStats(): void {
     try {
-      let cas = ContextAwarenessService.getInstance();
-      let stats: FeedbackStats = cas.getFeedbackStats();
+      // Use FeedbackService directly to get latest stats (including A2UI button feedback)
+      let stats: FeedbackStats = FeedbackService.getInstance().getStats();
       this.fbTotal = stats.totalCount;
       this.fbPositive = stats.positiveCount;
       this.fbNegative = stats.negativeCount;
@@ -424,7 +425,10 @@ struct ContextSettingsPage {
                 Text('刷新')
                   .fontSize(14)
                   .fontColor('#007AFF')
-                  .onClick(() => { this.refreshFeedbackStats(); })
+                  .onClick(() => {
+                    this.refreshFeedbackStats();
+                    try { promptAction.showToast({ message: '反馈统计已刷新', duration: 1500 }); } catch {}
+                  })
               }
               .width('100%')
               .margin({ bottom: 12 })

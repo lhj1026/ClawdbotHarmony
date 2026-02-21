@@ -57,7 +57,7 @@ import { FeedbackService } from '../context/FeedbackService';
 import { GeofenceSuggestion } from '../context/LocationDiscoveryService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.43.8';
+const APP_VERSION = '2.43.9';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
