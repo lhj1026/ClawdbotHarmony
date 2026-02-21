@@ -165,6 +165,10 @@ export class NodeRuntime {
   private _agentIdentity: AgentIdentity | undefined = undefined;
   private _agentId: string = 'main';  // agent ID from config (for avatar URL)
   private _cachedAvatarPath: string = '';  // local file path of downloaded avatar
+  private _lastRecRuleId: string = '';
+  private _lastRecRuleName: string = '';
+  private _lastRecReason: string = '';
+  private _lastRecConfidence: number = 0;
   private _identityListeners: Array<(identity: AgentIdentity | undefined) => void> = [];
 
   // App foreground/background state and chat page visibility for message notifications
@@ -376,6 +380,12 @@ export class NodeRuntime {
 
           // Build A2UI card JSONL for the recommendation
           let a2uiJsonl = this.buildContextRecommendationA2UI(ruleId, ruleName, rec.reason, confidence);
+
+          // Store last recommendation for "back" functionality
+          this._lastRecRuleId = ruleId;
+          this._lastRecRuleName = ruleName;
+          this._lastRecReason = rec.reason;
+          this._lastRecConfidence = confidence;
 
           // Send as a chat message (text fallback)
           let event: GatewayChatEvent = {
@@ -1083,6 +1093,13 @@ export class NodeRuntime {
       } else if (feedback === 'view_snapshot') {
         // Show current scene snapshot with all sensor data
         this.showSceneSnapshotCard();
+      } else if (feedback === 'back_to_rec') {
+        // Return from snapshot to recommendation card
+        if (this._lastRecRuleId.length > 0) {
+          let a2uiJsonl = this.buildContextRecommendationA2UI(
+            this._lastRecRuleId, this._lastRecRuleName, this._lastRecReason, this._lastRecConfidence);
+          this.dispatchA2UI('push', a2uiJsonl);
+        }
       } else if (feedback === 'dismiss') {
         // Dismiss is a mild negative signal, don't record as thumbs_down
         this.sendFeedbackResponse('🙈 已忽略，不会影响未来推荐');
@@ -1324,12 +1341,19 @@ export class NodeRuntime {
       lines.push(`🎵 媒体: 播放中`);
     }
 
-    // Build A2UI card
+    // App category
+    let appCat = digitalData['app_category'] ?? '';
+    if (appCat.length > 0 && appCat !== 'unknown') {
+      lines.push(`📱 前台App: ${appCat}`);
+    }
+
+    // Build A2UI card with back button
     let linesText = lines.join('\\n');
     let jsonl = `{"type":"form","id":"snapshot_${Date.now()}","children":[` +
       `{"type":"text","text":"🔍 场景快照","style":{"fontSize":18,"fontWeight":"bold"}},` +
       `{"type":"text","text":"当前系统感知到的所有信号：","style":{"fontSize":13,"color":"#888"}},` +
-      `{"type":"text","text":"${linesText}","style":{"fontSize":14}}` +
+      `{"type":"text","text":"${linesText}","style":{"fontSize":14}},` +
+      `{"type":"button","text":"← 返回","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"feedback":"back_to_rec"}}}}` +
       `]}`;
 
     this.dispatchA2UI('push', jsonl);

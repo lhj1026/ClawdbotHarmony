@@ -2321,8 +2321,22 @@ Respond ONLY with the JSON array.`;
     this.log.info('ChatPage', `A2UI event: type=${type} contentLen=${content.length}`);
     if (type === 'push') {
       // A2UI JSONL push
+      // First try to find the gw assistant message (normal chat flow)
       let idx = this.findGwAssistantIndex();
       if (idx < 0) {
+        // No gwAssistantMsgId — find the LAST assistant message
+        // This handles unsolicited context recommendations where the text message
+        // was just added by handleUnsolicitedAgentEvent
+        for (let i = this.messages.length - 1; i >= 0; i--) {
+          if (this.messages[i].role === 'assistant') {
+            idx = i;
+            this.gwAssistantMsgId = this.messages[i].id;
+            break;
+          }
+        }
+      }
+      if (idx < 0) {
+        // Still not found — create a new message
         let msg = new ChatMessage('assistant', '');
         this.messages.push(msg);
         idx = this.messages.length - 1;
