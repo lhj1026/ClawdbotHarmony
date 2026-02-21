@@ -57,7 +57,7 @@ import { FeedbackService } from '../context/FeedbackService';
 import { GeofenceSuggestion } from '../context/LocationDiscoveryService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.43.5';
+const APP_VERSION = '2.43.6';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -1004,13 +1004,18 @@ export class NodeRuntime {
       let ctx = action['context'] as Record<string, string>;
       if (!ctx) return;
       let ruleId = ctx['ruleId'] ?? '';
+      let ruleName = ctx['ruleName'] ?? '';
       let feedback = ctx['feedback'] ?? '';
 
-      this.log.info(TAG, `Context feedback: ruleId=${ruleId}, feedback=${feedback}`);
+      this.log.info(TAG, `Context feedback: ruleId=${ruleId}, ruleName=${ruleName}, feedback=${feedback}`);
 
       // Update rule based on feedback
       let engine = ContextEngineService.getInstance();
       let fbService = FeedbackService.getInstance();
+      // Register rule name for stats display
+      if (ruleName.length > 0) {
+        fbService.setRuleName(ruleId, ruleName);
+      }
       if (feedback === 'accept') {
         // Positive: increase priority slightly
         this.adjustRulePriority(engine, ruleId, 0.2);
@@ -2489,9 +2494,9 @@ export class NodeRuntime {
       `{"type":"text","text":"💡 情景智能推荐","style":{"fontSize":20,"fontWeight":"bold"}},` +
       `{"type":"text","text":"${safeReason}","style":{"fontSize":15}},` +
       `{"type":"text","text":"📋 ${safeRuleName}  |  置信度: ${confidence}%","style":{"fontSize":12,"color":"#888"}},` +
-      `{"type":"button","text":"✅ 有用","variant":"primary","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"accept"}}}},` +
-      `{"type":"button","text":"❌ 不准","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"reject"}}}},` +
-      `{"type":"button","text":"🙈 忽略","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"dismiss"}}}}` +
+      `{"type":"button","text":"✅ 有用","variant":"primary","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"accept"}}}},` +
+      `{"type":"button","text":"❌ 不准","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"reject"}}}},` +
+      `{"type":"button","text":"🙈 忽略","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"dismiss"}}}}` +
       `]}`;
 
     return jsonl;

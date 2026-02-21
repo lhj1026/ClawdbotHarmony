@@ -70,6 +70,13 @@ export class FeedbackService {
   // 规则名称缓存（用于统计显示）
   private ruleNames: Map<string, string> = new Map();
 
+  /** Register a rule name for display in stats */
+  setRuleName(ruleId: string, name: string): void {
+    if (ruleId.length > 0 && name.length > 0) {
+      this.ruleNames.set(ruleId, name);
+    }
+  }
+
   private constructor() {}
 
   static getInstance(): FeedbackService {
