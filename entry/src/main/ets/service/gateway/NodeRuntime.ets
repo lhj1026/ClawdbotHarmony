@@ -57,7 +57,7 @@ import { FeedbackService } from '../context/FeedbackService';
 import { GeofenceSuggestion } from '../context/LocationDiscoveryService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.43.6';
+const APP_VERSION = '2.43.7';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -1018,14 +1018,27 @@ export class NodeRuntime {
       }
       if (feedback === 'accept') {
         // Positive: increase priority slightly
-        this.adjustRulePriority(engine, ruleId, 0.2);
+        let delta = 0.2;
+        this.adjustRulePriority(engine, ruleId, delta);
         fbService.onThumbsUp(ruleId);
-        this.sendFeedbackResponse('✅ 感谢反馈！已记录，此规则权重已提升');
+        let displayName = ruleName.length > 0 ? ruleName : ruleId;
+        this.sendFeedbackResponse(
+          `✅ 反馈已记录\n\n` +
+          `📋 规则：${displayName}\n` +
+          `📈 权重提升 +${delta}，未来会更多推荐此类场景`
+        );
       } else if (feedback === 'reject') {
         // Negative: decrease priority
-        this.adjustRulePriority(engine, ruleId, -0.3);
+        let delta = -0.3;
+        this.adjustRulePriority(engine, ruleId, delta);
         fbService.onThumbsDown(ruleId);
-        this.sendFeedbackResponse('❌ 已记录，此规则权重已降低');
+        let displayName = ruleName.length > 0 ? ruleName : ruleId;
+        this.sendFeedbackResponse(
+          `❌ 反馈已记录\n\n` +
+          `📋 规则：${displayName}\n` +
+          `📉 权重降低 ${delta}，会减少此类推荐\n\n` +
+          `👇 请告诉我你现在的实际场景：`
+        );
         // Show follow-up: ask user what they're actually doing
         this.showSceneCorrectionCard(ruleId);
       } else if (feedback === 'scene_correct') {
@@ -1033,12 +1046,23 @@ export class NodeRuntime {
         let scene = ctx['scene'] ?? '';
         let location = ctx['location'] ?? '';
         this.log.info(TAG, `Scene correction: ruleId=${ruleId} scene=${scene} location=${location}`);
-        this.sendFeedbackResponse(`📝 收到！你现在${location ? '在' + location : ''}${scene ? '在' + scene : ''}，我会学习这个模式`);
-        // Record scene correction locally for future learning
+        let detail = '';
+        if (location.length > 0 && scene.length > 0) {
+          detail = `在${location}，${scene}`;
+        } else if (location.length > 0) {
+          detail = `在${location}`;
+        } else if (scene.length > 0) {
+          detail = `${scene}`;
+        }
+        this.sendFeedbackResponse(
+          `📝 场景已纠正\n\n` +
+          `🎯 实际场景：${detail}\n` +
+          `🧠 系统会学习这个模式，优化未来推荐`
+        );
         // TODO: use this data to auto-generate/adjust rules based on actual user patterns
       } else if (feedback === 'dismiss') {
         // Dismiss is a mild negative signal, don't record as thumbs_down
-        this.sendFeedbackResponse('🙈 已忽略');
+        this.sendFeedbackResponse('🙈 已忽略，不会影响未来推荐');
       }
     } catch (err) {
       this.log.warn(TAG, `handleA2UIAction error: ${(err as Error).message}`);
