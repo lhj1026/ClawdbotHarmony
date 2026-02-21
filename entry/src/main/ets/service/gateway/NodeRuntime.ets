@@ -39,7 +39,7 @@ import {
 import { image } from '@kit.ImageKit';
 import { buffer } from '@kit.ArkTS';
 import { webview } from '@kit.ArkWeb';
-import { componentSnapshot } from '@kit.ArkUI';
+import { componentSnapshot, router, window } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
 import { ConfigManager } from '../ConfigManager';
 import { http } from '@kit.NetworkKit';
@@ -57,7 +57,7 @@ import { FeedbackService } from '../context/FeedbackService';
 import { GeofenceSuggestion } from '../context/LocationDiscoveryService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.46.0';
+const APP_VERSION = '2.47.0';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -2424,6 +2424,32 @@ export class NodeRuntime {
           result = await this.handleContextListRules();
           break;
         }
+        // ---- UI automation ----
+        case Command.UI_SCREENSHOT: {
+          this.log.info(TAG, 'Executing ui.screenshot...');
+          result = await this.handleUiScreenshot(paramsJson);
+          break;
+        }
+        case Command.UI_NAVIGATE: {
+          this.log.info(TAG, 'Executing ui.navigate...');
+          result = await this.handleUiNavigate(paramsJson);
+          break;
+        }
+        case Command.UI_BACK: {
+          this.log.info(TAG, 'Executing ui.back...');
+          result = await this.handleUiBack();
+          break;
+        }
+        case Command.UI_GET_STATE: {
+          this.log.info(TAG, 'Executing ui.get_state...');
+          result = await this.handleUiGetState();
+          break;
+        }
+        case Command.UI_TAP: {
+          this.log.info(TAG, 'Executing ui.tap...');
+          result = await this.handleUiTap(paramsJson);
+          break;
+        }
         default:
           this.log.warn(TAG, `Unsupported invoke command: ${command}`);
           this.dispatchInvoke(command, paramsStr, `unsupported command: ${command}`, true);
@@ -2723,6 +2749,130 @@ export class NodeRuntime {
       this.log.error(TAG, `context.listRules error: ${msg}`);
       return `{"error":${JSON.stringify(msg)}}`;
     }
+  }
+
+  // ---- UI automation handlers ----
+
+  private async handleUiScreenshot(paramsJson: string | undefined): Promise<string> {
+    let quality: number = 75;
+    if (paramsJson) {
+      try {
+        let p = JSON.parse(paramsJson) as Record<string, Object>;
+        if (p['quality'] !== undefined) {
+          let q: number = p['quality'] as number;
+          quality = q <= 1 ? Math.round(q * 100) : Math.round(q);
+        }
+      } catch { /* ignore */ }
+    }
+
+    let pixelMap: image.PixelMap | undefined = undefined;
+
+    // Try window.snapshot() using UIAbilityContext
+    if (this._context) {
+      try {
+        let win: window.Window = await window.getLastWindow(this._context);
+        pixelMap = await win.snapshot();
+        this.log.info(TAG, 'ui.screenshot: window.snapshot() succeeded');
+      } catch (err) {
+        this.log.warn(TAG, `ui.screenshot window.snapshot() failed: ${(err as Error).message ?? String(err)}`);
+      }
+    }
+
+    // Fallback: componentSnapshot on appRoot
+    if (!pixelMap) {
+      try {
+        pixelMap = await componentSnapshot.get('appRoot');
+        this.log.info(TAG, 'ui.screenshot: componentSnapshot(appRoot) succeeded');
+      } catch (err) {
+        this.log.warn(TAG, `ui.screenshot componentSnapshot failed: ${(err as Error).message ?? String(err)}`);
+      }
+    }
+
+    if (!pixelMap) {
+      return '{"ok":false,"error":"All screenshot methods failed"}';
+    }
+
+    let info: image.ImageInfo = await pixelMap.getImageInfo();
+    let width: number = info.size.width;
+    let height: number = info.size.height;
+
+    let packer: image.ImagePacker = image.createImagePacker();
+    let packOpts: image.PackingOption = { format: 'image/jpeg', quality: quality };
+    let jpegData: ArrayBuffer = await packer.packing(pixelMap, packOpts);
+    packer.release();
+    pixelMap.release();
+
+    let base64Str: string = buffer.from(jpegData).toString('base64');
+    this.log.info(TAG, `ui.screenshot: ${width}x${height}, ${jpegData.byteLength} bytes`);
+
+    return `{"width":${width},"height":${height},"format":"jpeg","data":${JSON.stringify(base64Str)}}`;
+  }
+
+  private async handleUiNavigate(paramsJson: string | undefined): Promise<string> {
+    let page: string = '';
+    if (paramsJson) {
+      try {
+        let p = JSON.parse(paramsJson) as Record<string, string>;
+        if (p['page'] !== undefined) page = p['page'];
+      } catch { /* ignore */ }
+    }
+    if (page.length === 0) {
+      return '{"ok":false,"error":"missing page parameter"}';
+    }
+    try {
+      await router.pushUrl({ url: page });
+      this.log.info(TAG, `ui.navigate: navigated to ${page}`);
+      return `{"success":true,"page":${JSON.stringify(page)}}`;
+    } catch (err) {
+      let msg: string = (err as Error).message ?? 'navigation failed';
+      this.log.error(TAG, `ui.navigate error: ${msg}`);
+      return `{"success":false,"error":${JSON.stringify(msg)}}`;
+    }
+  }
+
+  private async handleUiBack(): Promise<string> {
+    try {
+      router.back();
+      this.log.info(TAG, 'ui.back: navigated back');
+      return '{"success":true}';
+    } catch (err) {
+      let msg: string = (err as Error).message ?? 'back failed';
+      this.log.error(TAG, `ui.back error: ${msg}`);
+      return `{"success":false,"error":${JSON.stringify(msg)}}`;
+    }
+  }
+
+  private async handleUiGetState(): Promise<string> {
+    let currentPage: string = '';
+    try {
+      let state: router.RouterState = router.getState();
+      currentPage = state.path + state.name;
+    } catch { /* ignore */ }
+
+    let isConnected: boolean = this.connectionState === ConnectionState.Connected;
+
+    return `{"currentPage":${JSON.stringify(currentPage)},"isConnected":${isConnected},"version":"${APP_VERSION}"}`;
+  }
+
+  private async handleUiTap(paramsJson: string | undefined): Promise<string> {
+    // ui.tap requires system-level permissions (inputEventClient) or accessibility service
+    // to inject touch events, which are not available to regular apps.
+    // TODO: Implement when system-level API access is available.
+    // Alternative approaches:
+    //   - Use accessibility service (requires specific permissions)
+    //   - Directly invoke component onClick handlers (requires component registry)
+    //   - Use shell input tap via exec capability (requires adb/hdc access)
+    let x: number = 0;
+    let y: number = 0;
+    if (paramsJson) {
+      try {
+        let p = JSON.parse(paramsJson) as Record<string, Object>;
+        if (p['x'] !== undefined) x = p['x'] as number;
+        if (p['y'] !== undefined) y = p['y'] as number;
+      } catch { /* ignore */ }
+    }
+    this.log.warn(TAG, `ui.tap: requested at (${x}, ${y}) but not implemented — requires system permissions`);
+    return `{"ok":false,"error":"ui.tap requires system-level permissions (inputEventClient) not available to regular apps","x":${x},"y":${y}}`;
   }
 
   /**

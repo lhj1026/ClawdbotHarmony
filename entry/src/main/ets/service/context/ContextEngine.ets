@@ -324,10 +324,32 @@ export class ContextEngineService {
       let results: MatchResult[] = parsed as MatchResult[];
 
       // Post-filter: remove results whose excludeConditions match
+      // ArkTS 不支持 index signature，手动构建 Record
+      let snapshotRecord: Record<string, string | undefined> = {
+        'timeOfDay': snapshot.timeOfDay,
+        'hour': snapshot.hour,
+        'dayOfWeek': snapshot.dayOfWeek,
+        'isWeekend': snapshot.isWeekend,
+        'motionState': snapshot.motionState,
+        'batteryLevel': snapshot.batteryLevel,
+        'isCharging': snapshot.isCharging,
+        'networkType': snapshot.networkType
+      };
+      if (snapshot.geofence !== undefined) snapshotRecord['geofence'] = snapshot.geofence;
+      if (snapshot.wifiSsid !== undefined) snapshotRecord['wifiSsid'] = snapshot.wifiSsid;
+      if (snapshot.wifiLostWork !== undefined) snapshotRecord['wifiLostWork'] = snapshot.wifiLostWork;
+      if (snapshot.wifiGeofence !== undefined) snapshotRecord['wifiGeofence'] = snapshot.wifiGeofence;
+      if (snapshot.wifiLost !== undefined) snapshotRecord['wifiLost'] = snapshot.wifiLost;
+      if (snapshot.wifiLostCategory !== undefined) snapshotRecord['wifiLostCategory'] = snapshot.wifiLostCategory;
+      if (snapshot.latitude !== undefined) snapshotRecord['latitude'] = snapshot.latitude;
+      if (snapshot.longitude !== undefined) snapshotRecord['longitude'] = snapshot.longitude;
+      if (snapshot.stepCount !== undefined) snapshotRecord['stepCount'] = snapshot.stepCount;
+      if (snapshot.speed !== undefined) snapshotRecord['speed'] = snapshot.speed;
+      if (snapshot.transportMode !== undefined) snapshotRecord['transportMode'] = snapshot.transportMode;
       let filtered: MatchResult[] = [];
       for (let i = 0; i < results.length; i++) {
         let result = results[i];
-        if (!this.isExcluded(result.ruleId, snapshot)) {
+        if (!this.isExcluded(result.ruleId, snapshotRecord)) {
           filtered.push(result);
           if (filtered.length >= maxResults) break;
         } else {
@@ -346,7 +368,7 @@ export class ContextEngineService {
    * Each element in excludeConditions is a group of conditions (AND);
    * if ANY group fully matches, the rule is excluded (OR between groups).
    */
-  private isExcluded(ruleId: string, snapshot: ContextSnapshot): boolean {
+  private isExcluded(ruleId: string, snapshot: Record<string, string | undefined>): boolean {
     // Cache rules for the duration of one evaluate call
     if (!this._cachedRules) {
       let rulesJson = nativeExportRules();
@@ -379,33 +401,9 @@ export class ContextEngineService {
     return false;
   }
 
-  /** Get a snapshot field value by key name */
-  private getSnapshotValue(snapshot: ContextSnapshot, key: string): string {
-    if (key === 'timeOfDay') return snapshot.timeOfDay;
-    if (key === 'hour') return snapshot.hour;
-    if (key === 'dayOfWeek') return snapshot.dayOfWeek;
-    if (key === 'isWeekend') return snapshot.isWeekend;
-    if (key === 'motionState') return snapshot.motionState;
-    if (key === 'batteryLevel') return snapshot.batteryLevel;
-    if (key === 'isCharging') return snapshot.isCharging;
-    if (key === 'networkType') return snapshot.networkType;
-    if (key === 'geofence') return snapshot.geofence ?? '';
-    if (key === 'wifiSsid') return snapshot.wifiSsid ?? '';
-    if (key === 'wifiGeofence') return snapshot.wifiGeofence ?? '';
-    if (key === 'wifiLost') return snapshot.wifiLost ?? '';
-    if (key === 'wifiLostWork') return snapshot.wifiLostWork ?? '';
-    if (key === 'wifiLostCategory') return snapshot.wifiLostCategory ?? '';
-    if (key === 'latitude') return snapshot.latitude ?? '';
-    if (key === 'longitude') return snapshot.longitude ?? '';
-    if (key === 'stepCount') return snapshot.stepCount ?? '';
-    if (key === 'speed') return snapshot.speed ?? '';
-    if (key === 'transportMode') return snapshot.transportMode ?? '';
-    return '';
-  }
-
   /** Match a single condition against snapshot */
-  private matchCondition(cond: ContextCondition, snapshot: ContextSnapshot): boolean {
-    let actual = this.getSnapshotValue(snapshot, cond.key);
+  private matchCondition(cond: ContextCondition, snapshot: Record<string, string | undefined>): boolean {
+    let actual = snapshot[cond.key] ?? '';
     let expected = cond.value;
     switch (cond.op) {
       case 'eq': return actual === expected;
