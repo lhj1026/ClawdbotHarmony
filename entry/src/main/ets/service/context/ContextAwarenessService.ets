@@ -690,6 +690,24 @@ export class ContextAwarenessService {
   }
 
   /**
+   * 异步获取WiFi信息
+   */
+  private async refreshWifiAsync(): Promise<void> {
+    try {
+      let info = await wifiManager.getLinkedInfo();
+      let ssid = info.ssid ?? '';
+      this.tray.put('wifiSSID', ssid, 0.9, 'wifi');
+      if (ssid !== this.lastWifiSsid) {
+        this.log.info(TAG, `WiFi: ${this.lastWifiSsid} -> ${ssid}`);
+        this.engine.pushEvent('wifi_change');
+      }
+      this.lastWifiSsid = ssid;
+    } catch {
+      // ignore
+    }
+  }
+
+  /**
    * 处理位置更新
    */
   private handleLocationUpdate(location: geoLocationManager.Location): void {
@@ -1183,8 +1201,8 @@ export class ContextAwarenessService {
    * 停留5分钟+有WiFi连接 → 立即发现，不等聚类
    */
   private async checkForNewPlaceSmart(lat: number, lng: number): Promise<void> {
-    // 同时学习当前围栏的特征
-    this.learnPlaceSignals(lat, lng);
+    // 同时学习当前围栏的特征（会先获取WiFi）
+    await this.learnPlaceSignals(lat, lng);
     
     // 检测新地点
     await this.checkForNewPlace(lat, lng, this.lastWifiSsid);
@@ -1193,8 +1211,14 @@ export class ContextAwarenessService {
   /**
    * 学习围栏特征信号：在围栏内时，记录WiFi/蓝牙等特征
    */
-  private learnPlaceSignals(lat: number, lng: number): void {
+  private async learnPlaceSignals(lat: number, lng: number): Promise<void> {
     let allGeofences = this.geofenceMgr.getAllGeofences();
+    
+    // 如果WiFi信息为空，尝试同步获取
+    if (!this.lastWifiSsid || this.lastWifiSsid.length === 0) {
+      await this.refreshWifiAsync();
+    }
+    
     this.log.debug(TAG, `learnPlaceSignals: checking ${allGeofences.length} geofences, wifi=${this.lastWifiSsid}`);
     
     for (let i = 0; i < allGeofences.length; i++) {
