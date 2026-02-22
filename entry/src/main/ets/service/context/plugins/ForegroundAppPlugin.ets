@@ -17,8 +17,8 @@
  * - 健康: 运动健康, Keep
  * - 音乐: 网易云, QQ音乐, Spotify
  *
- * Note: BUNDLE_ACTIVE_INFO is a system permission that may not be available
- * to non-system apps. Falls back to observing own app state if restricted.
+ * Note: For non-system apps, app usage statistics may be restricted.
+ * Falls back to observing own app state if restricted.
  */
 import { common } from '@kit.AbilityKit';
 import { LogService } from '../../../common/LogService';
@@ -33,6 +33,8 @@ const APP_CATEGORIES: Record<string, string> = {
   'com.tencent.mobileqq': '社交',
   'com.whatsapp': '社交',
   'org.telegram.messenger': '社交',
+  'com.discord': '社交',
+  'com.linkedin.android': '社交',
   // 办公
   'com.huawei.hmos.email': '办公',
   'com.kingsoft.office': '办公',
@@ -40,11 +42,13 @@ const APP_CATEGORIES: Record<string, string> = {
   'us.zoom.videomeetings': '办公',
   'com.tencent.wework': '办公',
   'com.alibaba.android.rimet': '办公',
+  'com.huawei.hmos.calendar': '办公',
   // 娱乐
   'com.ss.android.ugc.aweme': '娱乐',
   'com.kuaishou.nebula': '娱乐',
   'tv.danmaku.bili': '娱乐',
   'com.google.android.youtube': '娱乐',
+  'com.netflix.mediaclient': '娱乐',
   // 导航
   'com.autonavi.minimap': '导航',
   'com.baidu.BaiduMap': '导航',
@@ -53,10 +57,12 @@ const APP_CATEGORIES: Record<string, string> = {
   'com.taobao.taobao': '购物',
   'com.jingdong.app.mall': '购物',
   'com.xunmeng.pinduoduo': '购物',
+  'com.amazon.mShop.android': '购物',
   // 资讯
   'com.ss.android.article.news': '资讯',
   'com.zhihu.android': '资讯',
   'com.twitter.android': '资讯',
+  'com.reddit.frontpage': '资讯',
   // 健康
   'com.huawei.health': '健康',
   'com.gotokeep.keep': '健康',
@@ -64,10 +70,13 @@ const APP_CATEGORIES: Record<string, string> = {
   'com.netease.cloudmusic': '音乐',
   'com.tencent.qqmusic': '音乐',
   'com.spotify.music': '音乐',
-  // 工具
-  'com.huawei.hmos.settings': '工具',
-  'com.huawei.hmos.filemanager': '工具',
-  'com.huawei.hmos.calculator': '工具',
+  'com.apple.android.music': '音乐',
+  // 阅读
+  'com.tencent.weread': '阅读',
+  'com.amazon.kindle': '阅读',
+  // 游戏 (common patterns)
+  'com.tencent.tmgp.': '游戏',
+  'com.netease.game.': '游戏',
 };
 
 export class ForegroundAppPlugin implements DigitalPlugin {
@@ -78,8 +87,6 @@ export class ForegroundAppPlugin implements DigitalPlugin {
   private appStartTime: number = 0;
 
   async init(_context: common.UIAbilityContext): Promise<void> {
-    // Try to use UsageStatistics API
-    this.tryObserveAppState();
     this.log.info(TAG, 'Init: foreground app observation started');
   }
 
@@ -105,37 +112,53 @@ export class ForegroundAppPlugin implements DigitalPlugin {
     this.log.info(TAG, 'Destroyed');
   }
 
-  private tryObserveAppState(): void {
-    try {
-      // HarmonyOS: Use usageStatistics.queryCurrentBundleEvents or similar
-      // For non-system apps, this API may be restricted
-      // Attempt dynamic import to avoid compile errors if API is unavailable
-
-      // Fallback: Track our own app's foreground/background state
-      // This is always available and provides basic signal
-      this.foregroundApp = 'com.hongjieliu.clawdbot';
-      this.appCategory = '工具';
-      this.appStartTime = Date.now();
-      this.log.info(TAG, 'Using self-observation fallback (system API restricted)');
-    } catch (err) {
-      this.log.warn(TAG, `App state observation failed: ${(err as Error).message}`);
-    }
-  }
-
   /**
    * Called when we detect app switch (from system events or notifications)
    */
   updateForegroundApp(bundleName: string): void {
     if (bundleName !== this.foregroundApp) {
       this.foregroundApp = bundleName;
-      this.appCategory = APP_CATEGORIES[bundleName] ?? 'other';
+      this.appCategory = this.getCategoryForBundle(bundleName);
       this.appStartTime = Date.now();
       this.log.debug(TAG, `Foreground: ${bundleName} → ${this.appCategory}`);
     }
   }
 
   /** Get category for any bundle name */
+  private getCategoryForBundle(bundleName: string): string {
+    // Exact match
+    if (APP_CATEGORIES[bundleName]) {
+      return APP_CATEGORIES[bundleName];
+    }
+    
+    // Prefix match (for games)
+    let keys = Object.keys(APP_CATEGORIES);
+    for (let i = 0; i < keys.length; i++) {
+      let prefix = keys[i];
+      if (prefix.endsWith('.') && bundleName.startsWith(prefix)) {
+        return APP_CATEGORIES[prefix];
+      }
+    }
+    
+    return 'other';
+  }
+
+  /** Get category for any bundle name (static) */
   static getCategoryForBundle(bundleName: string): string {
-    return APP_CATEGORIES[bundleName] ?? 'other';
+    // Exact match
+    if (APP_CATEGORIES[bundleName]) {
+      return APP_CATEGORIES[bundleName];
+    }
+    
+    // Prefix match (for games)
+    let keys = Object.keys(APP_CATEGORIES);
+    for (let i = 0; i < keys.length; i++) {
+      let prefix = keys[i];
+      if (prefix.endsWith('.') && bundleName.startsWith(prefix)) {
+        return APP_CATEGORIES[prefix];
+      }
+    }
+    
+    return 'other';
   }
 }

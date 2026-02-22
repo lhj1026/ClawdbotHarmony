@@ -13,6 +13,8 @@
     { "name": "health_reason", "value": "Context awareness reads heart rate data from wearable devices to detect activity and health state for smart suggestions." },
     { "name": "notification_reason", "value": "AI assistant needs notification access to alert you when new messages arrive while the app is in the background." },
     { "name": "bluetooth_reason", "value": "Context awareness needs Bluetooth access to detect connected audio devices and peripherals for smart suggestions." },
-    { "name": "wifi_reason", "value": "Context awareness needs WiFi info to learn location signals and detect when you arrive at or leave familiar places like home or work." }
+    { "name": "wifi_reason", "value": "Context awareness needs WiFi info to learn location signals and detect when you arrive at or leave familiar places like home or work." },
+    { "name": "screen_data_reason", "value": "Context awareness learns your app usage patterns to provide smarter recommendations based on your daily routines and preferences." },
+    { "name": "camera_posture_reason", "value": "Context awareness uses front camera to detect if you're looking at the screen for smarter notification timing." }
   ]
 }

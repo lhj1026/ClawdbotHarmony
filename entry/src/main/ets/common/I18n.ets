@@ -233,6 +233,7 @@ function buildZh(): Map<string, string> {
   m.set('settings.status', '状态');
   m.set('settings.connect', '连接');
   m.set('settings.disconnect', '断开');
+  m.set('settings.stop', '停止');
   m.set('settings.connected', '已连接');
   m.set('settings.connecting', '连接中...');
   m.set('settings.disconnected', '未连接');
@@ -785,6 +786,7 @@ function buildEn(): Map<string, string> {
   m.set('settings.status', 'Status');
   m.set('settings.connect', 'Connect');
   m.set('settings.disconnect', 'Disconnect');
+  m.set('settings.stop', 'Stop');
   m.set('settings.connected', 'Connected');
   m.set('settings.connecting', 'Connecting...');
   m.set('settings.disconnected', 'Disconnected');

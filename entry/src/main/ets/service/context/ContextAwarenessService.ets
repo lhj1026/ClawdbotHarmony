@@ -611,9 +611,8 @@ export class ContextAwarenessService {
     try {
       wifiManager.getLinkedInfo().then((info) => {
         let ssid = info.ssid ?? '';
-        this.tray.put('wifiSSID', ssid, 0.9, 'wifi');
+        this.tray.put('wifiSsid', ssid, 0.9, 'wifi');
         
-        // 始终更新 lastWifiSsid
         if (ssid !== this.lastWifiSsid) {
           this.log.info(TAG, `WiFi: ${this.lastWifiSsid} -> ${ssid}`);
           this.engine.pushEvent('wifi_change');
@@ -677,7 +676,7 @@ export class ContextAwarenessService {
     try {
       wifiManager.getLinkedInfo().then((info) => {
         let ssid = info.ssid ?? '';
-        this.tray.put('wifiSSID', ssid, 0.9, 'wifi');
+        this.tray.put('wifiSsid', ssid, 0.9, 'wifi');
         if (ssid !== this.lastWifiSsid) {
           this.log.info(TAG, `WiFi: ${this.lastWifiSsid} -> ${ssid}`);
           this.engine.pushEvent('wifi_change');
@@ -696,7 +695,7 @@ export class ContextAwarenessService {
     try {
       let info = await wifiManager.getLinkedInfo();
       let ssid = info.ssid ?? '';
-      this.tray.put('wifiSSID', ssid, 0.9, 'wifi');
+      this.tray.put('wifiSsid', ssid, 0.9, 'wifi');
       if (ssid !== this.lastWifiSsid) {
         this.log.info(TAG, `WiFi: ${this.lastWifiSsid} -> ${ssid}`);
         this.engine.pushEvent('wifi_change');

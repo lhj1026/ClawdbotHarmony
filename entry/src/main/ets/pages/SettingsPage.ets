@@ -357,10 +357,10 @@ export struct SettingsPage {
             .width('100%')
             .height(40)
 
-            Button(this.gwIsConnected() ? I18n.t('settings.disconnect') : I18n.t('settings.connect'))
+            Button(this.getGwButtonText())
               .width('100%')
               .height(44)
-              .backgroundColor(this.gwIsConnected() ? '#D32F2F' : '#4CAF50')
+              .backgroundColor(this.getGwButtonColor())
               .fontColor(Color.White)
               .fontSize(15)
               .fontWeight(FontWeight.Medium)
@@ -1045,10 +1045,10 @@ export struct SettingsPage {
               .width('100%')
               .height(40)
 
-              Button(this.operatorIsConnected() ? I18n.t('settings.disconnect') : I18n.t('settings.connect'))
+              Button(this.getOperatorButtonText())
                 .width('100%')
                 .height(44)
-                .backgroundColor(this.operatorIsConnected() ? '#D32F2F' : '#4CAF50')
+                .backgroundColor(this.getOperatorButtonColor())
                 .fontColor(Color.White)
                 .fontSize(15)
                 .fontWeight(FontWeight.Medium)
@@ -1231,10 +1231,10 @@ export struct SettingsPage {
               .height(40)
 
               // Node connection button
-              Button(this.nodeIsConnected() ? I18n.t('settings.disconnect') : I18n.t('settings.connect'))
+              Button(this.getNodeButtonText())
                 .width('100%')
                 .height(44)
-                .backgroundColor(this.nodeIsConnected() ? '#D32F2F' : '#4CAF50')
+                .backgroundColor(this.getNodeButtonColor())
                 .fontColor(Color.White)
                 .fontSize(15)
                 .fontWeight(FontWeight.Medium)
@@ -1979,15 +1979,63 @@ export struct SettingsPage {
   }
 
   private gwIsConnected(): boolean {
-    return this.gwState !== ConnectionState.Disconnected;
+    return this.gwState === ConnectionState.Connected;
+  }
+
+  private gwIsConnecting(): boolean {
+    return this.gwState === ConnectionState.Connecting || this.gwState === ConnectionState.Reconnecting;
+  }
+
+  private getGwButtonText(): string {
+    if (this.gwIsConnected()) return I18n.t('settings.disconnect');
+    if (this.gwIsConnecting()) return I18n.t('settings.stop');
+    return I18n.t('settings.connect');
+  }
+
+  private getGwButtonColor(): string {
+    if (this.gwIsConnected()) return '#D32F2F';
+    if (this.gwIsConnecting()) return '#FF9800';
+    return '#4CAF50';
   }
 
   private operatorIsConnected(): boolean {
     return this.operatorState === ConnectionState.Connected;
   }
 
+  private operatorIsConnecting(): boolean {
+    return this.operatorState === ConnectionState.Connecting || this.operatorState === ConnectionState.Reconnecting;
+  }
+
+  private getOperatorButtonText(): string {
+    if (this.operatorIsConnected()) return I18n.t('settings.disconnect');
+    if (this.operatorIsConnecting()) return I18n.t('settings.stop');
+    return I18n.t('settings.connect');
+  }
+
+  private getOperatorButtonColor(): string {
+    if (this.operatorIsConnected()) return '#D32F2F';
+    if (this.operatorIsConnecting()) return '#FF9800';
+    return '#4CAF50';
+  }
+
   private nodeIsConnected(): boolean {
     return this.nodeState === ConnectionState.Connected;
+  }
+
+  private nodeIsConnecting(): boolean {
+    return this.nodeState === ConnectionState.Connecting || this.nodeState === ConnectionState.Reconnecting;
+  }
+
+  private getNodeButtonText(): string {
+    if (this.nodeIsConnected()) return I18n.t('settings.disconnect');
+    if (this.nodeIsConnecting()) return I18n.t('settings.stop');
+    return I18n.t('settings.connect');
+  }
+
+  private getNodeButtonColor(): string {
+    if (this.nodeIsConnected()) return '#D32F2F';
+    if (this.nodeIsConnecting()) return '#FF9800';
+    return '#4CAF50';
   }
 
   private getAssistantInitial(): string {
