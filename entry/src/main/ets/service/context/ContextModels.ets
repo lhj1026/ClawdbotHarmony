@@ -23,6 +23,17 @@ export interface Geofence {
   radiusMeters: number;            // 触发半径
   category: GeofenceCategory;
   metadata?: Record<string, string>; // 额外数据，如商店ID
+  // 学习的特征信号
+  learnedSignals?: LearnedPlaceSignals;
+}
+
+/** 学习的地点特征信号 */
+export interface LearnedPlaceSignals {
+  wifiSSIDs?: string[];            // 关联的WiFi SSID列表
+  bluetoothDevices?: string[];     // 关联的蓝牙设备MAC/名称
+  typicalTimes?: TimeRange[];      // 典型出现时间段
+  lastSeen?: number;               // 最后一次学习时间戳
+  visitCount?: number;             // 访问次数
 }
 
 export type GeofenceCategory = 

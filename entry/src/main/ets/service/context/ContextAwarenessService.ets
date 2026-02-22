@@ -125,12 +125,40 @@ export class ContextAwarenessService {
   // A2UI 监听器 (本地UI分发)
   private a2uiListeners: ((type: string, content: string) => void)[] = [];
   // 新地点自动发现
-  private newPlaceDetectionStart: number = 0;  // 开始检测新地点的时间戳
+  private newPlaceDetectionStart: number = 0;
   private newPlaceLastLat: number = 0;
   private newPlaceLastLng: number = 0;
   private newPlaceWifiSsid: string = '';
-  private static readonly NEW_PLACE_STABLE_MS = 5 * 60 * 1000;  // 5分钟稳定才算新地点
-  private static readonly NEW_PLACE_MAX_DRIFT_M = 100;  // 100米内视为同一地点
+  private static readonly NEW_PLACE_STABLE_MS = 5 * 60 * 1000;
+  private static readonly NEW_PLACE_MAX_DRIFT_M = 100;
+  
+  // ==================== 多级采集策略 (功耗优化) ====================
+  // GPS间隔
+  private locationTimer: number = -1;
+  private locationIntervalMs: number = 60 * 1000;
+  private static readonly GPS_STATIONARY = 5 * 60 * 1000;      // 静止: 5分钟
+  private static readonly GPS_WALKING = 30 * 1000;             // 步行: 30秒
+  private static readonly GPS_RUNNING = 15 * 1000;             // 跑步: 15秒
+  private static readonly GPS_DRIVING = 5 * 1000;              // 驾驶: 5秒
+  private static readonly GPS_UNKNOWN = 60 * 1000;             // 未知: 1分钟
+  
+  // WiFi扫描间隔
+  private wifiTimer: number = -1;
+  private wifiIntervalMs: number = 2 * 60 * 1000;
+  private static readonly WIFI_STATIONARY = 5 * 60 * 1000;     // 静止: 5分钟
+  private static readonly WIFI_WALKING = 2 * 60 * 1000;        // 步行: 2分钟
+  private static readonly WIFI_RUNNING = 5 * 60 * 1000;        // 跑步: 5分钟 (不太可能连WiFi)
+  private static readonly WIFI_DRIVING = 0;                     // 驾驶: 关闭
+  private static readonly WIFI_UNKNOWN = 2 * 60 * 1000;
+  
+  // 加速度计间隔 (纳秒)
+  private accelIntervalNs: number = 1000000000;  // 1秒
+  private static readonly ACCEL_STATIONARY = 5000000000;       // 静止: 5秒
+  private static readonly ACCEL_WALKING = 1000000000;          // 步行: 1秒
+  private static readonly ACCEL_RUNNING = 500000000;           // 跑步: 500ms
+  private static readonly ACCEL_DRIVING = 2000000000;          // 驾驶: 2秒
+  private static readonly ACCEL_UNKNOWN = 1000000000;
+  
   // 数字世界感知
   private digitalWorld: DigitalWorldService = DigitalWorldService.getInstance();
   // 传感器数据托盘
@@ -196,34 +224,32 @@ export class ContextAwarenessService {
     }
     
     try {
-      // 请求位置权限并启动位置监控
+      // 请求位置权限
       let locationGranted = await this.requestLocationPermission();
-      if (locationGranted) {
-        await this.geofenceMgr.startMonitoring();
-      } else {
-        this.log.warn(TAG, 'Location permission denied, geofence monitoring disabled');
-      }
       
       // 请求运动传感器权限并启动
       await this.requestMotionPermission();
       this.startMotionSensors();
       
-      // 启动 WiFi 状态监听
-      this.startWifiMonitoring();
+      // 启动WiFi定时扫描 (多级采集)
+      this.startWifiTimer();
       
       // 启动定时规则评估
       this.startPeriodicEvaluation();
 
-      // 启动位置自动发现（定时聚类）
+      // 启动智能位置获取（多级采集）
       if (locationGranted) {
+        this.startSmartLocationTimer();
         this.startLocationDiscovery();
+      } else {
+        this.log.warn(TAG, 'Location permission denied, location features disabled');
       }
 
       // 启动数字世界感知
       this.digitalWorld.start();
 
       this.isRunning = true;
-      this.log.info(TAG, 'Context Awareness Service started');
+      this.log.info(TAG, 'Context Awareness Service started (multi-tier sensing enabled)');
       return true;
     } catch (err) {
       this.log.error(TAG, `Failed to start: ${(err as Error).message}`);
@@ -234,9 +260,9 @@ export class ContextAwarenessService {
   stop(): void {
     if (!this.isRunning) return;
     
-    this.geofenceMgr.stopMonitoring();
+    this.stopSmartLocationTimer();
+    this.stopWifiTimer();
     this.stopMotionSensors();
-    this.stopWifiMonitoring();
     this.stopPeriodicEvaluation();
     this.stopLocationDiscovery();
     this.digitalWorld.stop();
@@ -246,35 +272,7 @@ export class ContextAwarenessService {
   }
   
   
-  // ==================== WiFi 状态监听 ====================
-  
-  private wifiConnectionCallback: ((state: number) => void) | undefined;
-  
-  private startWifiMonitoring(): void {
-    try {
-      this.wifiConnectionCallback = (state: number) => {
-        // state: 0=disconnected, 1=connected
-        if (state === 0) {
-          this.onWifiDisconnected();
-        } else if (state === 1) {
-          this.onWifiConnected();
-        }
-      };
-      wifiManager.on('wifiConnectionChange', this.wifiConnectionCallback);
-      this.log.info(TAG, 'WiFi monitoring started');
-    } catch (err) {
-      this.log.warn(TAG, `WiFi monitoring failed: ${(err as Error).message}`);
-    }
-  }
-  
-  private stopWifiMonitoring(): void {
-    try {
-      if (this.wifiConnectionCallback) {
-        wifiManager.off('wifiConnectionChange', this.wifiConnectionCallback);
-        this.wifiConnectionCallback = undefined;
-      }
-    } catch { /* ignore */ }
-  }
+  // ==================== WiFi 连接事件处理 ====================
   
   private onWifiDisconnected(): void {
     let lostSsid = this.lastWifiSsid;
@@ -448,37 +446,255 @@ export class ContextAwarenessService {
   }
   
   /**
-   * 基于加速度计数据判断运动状态
-   * 简化版本：使用加速度幅度
+   * 基于加速度计数据和GPS速度综合判断运动状态
+   * 解决：开车/高铁匀速时加速度小但速度快的问题
    */
   private updateMotionState(): void {
     let x = this.accelerometerData.x;
     let y = this.accelerometerData.y;
     let z = this.accelerometerData.z;
     let magnitude = Math.sqrt(x * x + y * y + z * z);
+    let gpsSpeed = this.lastLocation?.speed ?? 0;  // m/s
     
-    // 简单阈值判断（实际应用需要更复杂的算法）
     let newState: MotionState;
     
-    if (magnitude < 10.5) {
-      newState = 'stationary';
-    } else if (magnitude < 12) {
-      newState = 'walking';
-    } else if (magnitude < 15) {
-      newState = 'running';
+    // 优先使用GPS速度判断（解决开车/高铁匀速问题）
+    if (gpsSpeed > 20) {
+      // > 72 km/h: 高铁/高速公路
+      newState = 'driving';
+    } else if (gpsSpeed > 5) {
+      // > 18 km/h: 驾驶/骑行
+      newState = 'driving';
+    } else if (gpsSpeed > 1.5) {
+      // > 5.4 km/h: 跑步/快走
+      newState = magnitude > 12 ? 'running' : 'walking';
     } else {
-      // 高加速度可能是车辆
-      newState = this.lastLocation?.speed && this.lastLocation.speed > 5 ? 'driving' : 'walking';
+      // GPS速度慢或无，用加速度判断
+      if (magnitude < 10.5) {
+        newState = 'stationary';
+      } else if (magnitude < 12) {
+        newState = 'walking';
+      } else if (magnitude < 15) {
+        newState = 'running';
+      } else {
+        newState = 'driving';
+      }
     }
     
-    // Always update tray with latest motion data
+    // 更新数据托盘
     this.tray.put('motionState', newState, 0.9, 'accelerometer');
+    this.tray.put('gpsSpeed', gpsSpeed.toFixed(2), 0.85, 'gps');
 
+    // 运动状态变化时调整GPS采样频率
     if (newState !== this.lastMotionState) {
-      this.log.debug(TAG, `Motion state: ${this.lastMotionState} -> ${newState}`);
+      this.log.info(TAG, `Motion state: ${this.lastMotionState} -> ${newState}, gpsSpeed=${gpsSpeed.toFixed(1)}m/s`);
       this.engine.pushEvent('motion_' + newState);
       this.lastMotionState = newState;
+      this.adjustLocationInterval(newState);
     }
+  }
+
+  /**
+   * 根据运动状态调整所有传感器采样间隔 (多级采集)
+   */
+  private adjustLocationInterval(state: MotionState): void {
+    let newGpsInterval: number;
+    let newWifiInterval: number;
+    let newAccelInterval: number;
+    
+    switch (state) {
+      case 'stationary':
+        newGpsInterval = ContextAwarenessService.GPS_STATIONARY;
+        newWifiInterval = ContextAwarenessService.WIFI_STATIONARY;
+        newAccelInterval = ContextAwarenessService.ACCEL_STATIONARY;
+        break;
+      case 'walking':
+        newGpsInterval = ContextAwarenessService.GPS_WALKING;
+        newWifiInterval = ContextAwarenessService.WIFI_WALKING;
+        newAccelInterval = ContextAwarenessService.ACCEL_WALKING;
+        break;
+      case 'running':
+        newGpsInterval = ContextAwarenessService.GPS_RUNNING;
+        newWifiInterval = ContextAwarenessService.WIFI_RUNNING;
+        newAccelInterval = ContextAwarenessService.ACCEL_RUNNING;
+        break;
+      case 'driving':
+        newGpsInterval = ContextAwarenessService.GPS_DRIVING;
+        newWifiInterval = ContextAwarenessService.WIFI_DRIVING;
+        newAccelInterval = ContextAwarenessService.ACCEL_DRIVING;
+        break;
+      default:
+        newGpsInterval = ContextAwarenessService.GPS_UNKNOWN;
+        newWifiInterval = ContextAwarenessService.WIFI_UNKNOWN;
+        newAccelInterval = ContextAwarenessService.ACCEL_UNKNOWN;
+    }
+    
+    // 调整GPS采集
+    if (newGpsInterval !== this.locationIntervalMs) {
+      this.locationIntervalMs = newGpsInterval;
+      this.log.info(TAG, `GPS interval: ${newGpsInterval / 1000}s for ${state}`);
+      this.restartLocationTimer();
+    }
+    
+    // 调整WiFi扫描
+    if (newWifiInterval !== this.wifiIntervalMs) {
+      this.wifiIntervalMs = newWifiInterval;
+      this.log.info(TAG, `WiFi interval: ${newWifiInterval / 1000}s for ${state}`);
+      this.restartWifiTimer();
+    }
+    
+    // 调整加速度计
+    if (newAccelInterval !== this.accelIntervalNs) {
+      this.accelIntervalNs = newAccelInterval;
+      this.log.info(TAG, `Accel interval: ${newAccelInterval / 1000000}ms for ${state}`);
+      this.restartAccelerometer();
+    }
+  }
+
+  /**
+   * 启动智能位置获取定时器
+   */
+  private startSmartLocationTimer(): void {
+    if (this.locationTimer !== -1) return;
+    
+    this.locationTimer = setInterval(() => {
+      this.fetchSingleLocation();
+    }, this.locationIntervalMs);
+    
+    this.log.info(TAG, `GPS timer started: ${this.locationIntervalMs / 1000}s`);
+    this.fetchSingleLocation();
+  }
+
+  private stopSmartLocationTimer(): void {
+    if (this.locationTimer !== -1) {
+      clearInterval(this.locationTimer);
+      this.locationTimer = -1;
+    }
+  }
+
+  private restartLocationTimer(): void {
+    this.stopSmartLocationTimer();
+    if (this.locationIntervalMs > 0) {
+      this.startSmartLocationTimer();
+    }
+  }
+
+  /**
+   * WiFi扫描定时器 (多级采集)
+   */
+  private startWifiTimer(): void {
+    if (this.wifiTimer !== -1 || this.wifiIntervalMs === 0) return;
+    
+    this.wifiTimer = setInterval(() => {
+      this.scanWifi();
+    }, this.wifiIntervalMs);
+    
+    this.log.info(TAG, `WiFi timer started: ${this.wifiIntervalMs / 1000}s`);
+    this.scanWifi();
+  }
+
+  private stopWifiTimer(): void {
+    if (this.wifiTimer !== -1) {
+      clearInterval(this.wifiTimer);
+      this.wifiTimer = -1;
+    }
+  }
+
+  private restartWifiTimer(): void {
+    this.stopWifiTimer();
+    if (this.wifiIntervalMs > 0) {
+      this.startWifiTimer();
+    }
+  }
+
+  private scanWifi(): void {
+    try {
+      wifiManager.getLinkedInfo().then((info) => {
+        let ssid = info.ssid ?? '';
+        this.tray.put('wifiSSID', ssid, 0.9, 'wifi');
+        if (ssid !== this.lastWifiSsid) {
+          this.log.info(TAG, `WiFi: ${this.lastWifiSsid} -> ${ssid}`);
+          this.engine.pushEvent('wifi_change');
+          this.lastWifiSsid = ssid;
+        }
+      }).catch(() => {});
+    } catch {
+      // ignore
+    }
+  }
+
+  /**
+   * 重启加速度计 (多级采集)
+   */
+  private restartAccelerometer(): void {
+    try {
+      sensor.off(sensor.SensorId.ACCELEROMETER);
+    } catch {
+      // ignore
+    }
+    try {
+      sensor.on(sensor.SensorId.ACCELEROMETER, (data: sensor.AccelerometerResponse) => {
+        this.accelerometerData = { x: data.x, y: data.y, z: data.z } as AccelerometerData;
+        this.updateMotionState();
+      }, { interval: this.accelIntervalNs });
+    } catch (err) {
+      this.log.warn(TAG, `Accelerometer restart failed: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * 获取单次位置并处理
+   */
+  private fetchSingleLocation(): void {
+    try {
+      let request: geoLocationManager.CurrentLocationRequest = {
+        priority: geoLocationManager.LocationRequestPriority.FIRST_FIX,
+        scenario: geoLocationManager.LocationRequestScenario.UNSET,
+        maxAccuracy: 100,
+      };
+      
+      geoLocationManager.getCurrentLocation(request).then((location) => {
+        if (location) {
+          this.handleLocationUpdate(location);
+        }
+      }).catch((err: Error) => {
+        this.log.warn(TAG, `Location fetch failed: ${err.message}`);
+      });
+    } catch (err) {
+      this.log.warn(TAG, `Location request error: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * 处理位置更新
+   */
+  private handleLocationUpdate(location: geoLocationManager.Location): void {
+    let lat = location.latitude;
+    let lng = location.longitude;
+    let speed = location.speed ?? 0;
+    let accuracy = location.accuracy ?? 100;
+    
+    // 更新数据托盘
+    this.tray.put('latitude', lat.toFixed(6), 1.0, 'gps');
+    this.tray.put('longitude', lng.toFixed(6), 1.0, 'gps');
+    this.tray.put('locationAccuracy', accuracy.toFixed(0), 0.8, 'gps');
+    
+    // 检查围栏
+    let locState: LocationState = {
+      latitude: lat,
+      longitude: lng,
+      speed: speed,
+      accuracy: accuracy,
+      timestamp: Date.now(),
+      insideGeofences: []
+    };
+    this.geofenceMgr.updateLocation(locState);
+    this.lastLocation = locState;
+    
+    this.log.debug(TAG, `Location update: (${lat.toFixed(4)}, ${lng.toFixed(4)}) speed=${speed.toFixed(1)}m/s`);
+    
+    // 检查新地点（停留5分钟+WiFi）
+    this.checkForNewPlaceSmart(lat, lng);
   }
 
 
@@ -936,6 +1152,76 @@ export class ContextAwarenessService {
     
     // 显示 A2UI 卡片让用户确认
     this.showNewPlaceCard(lat, lng, wifiSsid, placeName);
+  }
+
+  /**
+   * 实时检测新地点（结合当前WiFi状态）
+   * 停留5分钟+有WiFi连接 → 立即发现，不等聚类
+   */
+  private async checkForNewPlaceSmart(lat: number, lng: number): Promise<void> {
+    // 同时学习当前围栏的特征
+    this.learnPlaceSignals(lat, lng);
+    
+    // 检测新地点
+    await this.checkForNewPlace(lat, lng, this.lastWifiSsid);
+  }
+
+  /**
+   * 学习围栏特征信号：在围栏内时，记录WiFi/蓝牙等特征
+   */
+  private learnPlaceSignals(lat: number, lng: number): void {
+    let allGeofences = this.geofenceMgr.getAllGeofences();
+    
+    for (let i = 0; i < allGeofences.length; i++) {
+      let gf = allGeofences[i];
+      let dist = this.haversineDistance(lat, lng, gf.latitude, gf.longitude);
+      
+      if (dist < gf.radiusMeters) {
+        // 在此围栏内，学习信号
+        let signals = gf.learnedSignals ?? {
+          wifiSSIDs: [],
+          bluetoothDevices: [],
+          typicalTimes: [],
+          lastSeen: 0,
+          visitCount: 0
+        };
+        
+        let updated = false;
+        
+        // 学习WiFi SSID
+        if (this.lastWifiSsid && this.lastWifiSsid.length > 0) {
+          if (!signals.wifiSSIDs!.includes(this.lastWifiSsid)) {
+            signals.wifiSSIDs!.push(this.lastWifiSsid);
+            this.log.info(TAG, `Learned WiFi for ${gf.name}: ${this.lastWifiSsid}`);
+            updated = true;
+          }
+        }
+        
+        // 更新访问统计
+        signals.visitCount = (signals.visitCount ?? 0) + 1;
+        signals.lastSeen = Date.now();
+        
+        // 学习典型时间
+        let hour = new Date().getHours();
+        let timeRange = `${hour}:00-${hour + 1}:00`;
+        if (!signals.typicalTimes!.some(t => t.start === timeRange)) {
+          signals.typicalTimes!.push({ start: timeRange, end: `${hour + 1}:00` });
+          if (signals.typicalTimes!.length > 5) {
+            signals.typicalTimes!.shift();
+          }
+          updated = true;
+        }
+        
+        // 保存更新
+        if (updated || signals.visitCount === 1) {
+          gf.learnedSignals = signals;
+          this.geofenceMgr.saveToFile();
+        }
+        
+        // 只处理第一个匹配的围栏
+        break;
+      }
+    }
   }
 
   /**
