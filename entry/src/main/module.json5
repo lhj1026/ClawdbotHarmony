@@ -106,6 +106,14 @@
           "when": "inuse"
         }
       },
+      {
+        "name": "ohos.permission.GET_WIFI_INFO",
+        "reason": "$string:wifi_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
+        }
+      },
       // {
       //   "name": "ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY",
       //   "reason": "$string:file_reason",
