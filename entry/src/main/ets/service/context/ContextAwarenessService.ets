@@ -7,6 +7,7 @@ import { sensor } from '@kit.SensorServiceKit';
 import { batteryInfo } from '@kit.BasicServicesKit';
 import { wifiManager } from '@kit.ConnectivityKit';
 import { geoLocationManager } from '@kit.LocationKit';
+import { radio } from '@kit.TelephonyKit';
 import { common, abilityAccessCtrl } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
 import { LogService } from '../../common/LogService';
@@ -131,6 +132,9 @@ export class ContextAwarenessService {
   private newPlaceWifiSsid: string = '';
   private static readonly NEW_PLACE_STABLE_MS = 5 * 60 * 1000;
   private static readonly NEW_PLACE_MAX_DRIFT_M = 100;
+  // CellID 跟踪 (用于低功耗位置变化检测)
+  private lastCellId: string = '';
+  private lastCellIdTime: number = 0;
   
   // ==================== 多级采集策略 (功耗优化) ====================
   // GPS间隔
@@ -644,28 +648,37 @@ export class ContextAwarenessService {
   }
 
   /**
-   * 获取单次位置并处理
+   * 获取单次位置并处理 (CellID优化：如果基站没变且静止，跳过GPS)
    */
-  private fetchSingleLocation(): void {
+  private async fetchSingleLocation(): Promise<void> {
     try {
       // 先获取WiFi信息
       this.refreshWifiSync();
       
+      // CellID优化：如果静止且CellID没变，跳过GPS请求
+      if (this.lastMotionState === 'stationary') {
+        let cellIdChanged = await this.checkCellIdChanged();
+        if (!cellIdChanged && this.lastLocation) {
+          // CellID没变，用户可能还在同一位置，使用缓存位置
+          this.log.debug(TAG, 'CellID unchanged, using cached location');
+          this.checkForNewPlaceSmart(this.lastLocation.latitude, this.lastLocation.longitude);
+          return;
+        }
+      }
+      
+      // CellID变了或不在静止状态，请求GPS
       let request: geoLocationManager.CurrentLocationRequest = {
         priority: geoLocationManager.LocationRequestPriority.FIRST_FIX,
         scenario: geoLocationManager.LocationRequestScenario.UNSET,
         maxAccuracy: 100,
       };
       
-      geoLocationManager.getCurrentLocation(request).then((location) => {
-        if (location) {
-          this.handleLocationUpdate(location);
-        }
-      }).catch((err: Error) => {
-        this.log.warn(TAG, `Location fetch failed: ${err.message}`);
-      });
+      let location = await geoLocationManager.getCurrentLocation(request);
+      if (location) {
+        this.handleLocationUpdate(location);
+      }
     } catch (err) {
-      this.log.warn(TAG, `Location request error: ${(err as Error).message}`);
+      this.log.warn(TAG, `Location fetch failed: ${(err as Error).message}`);
     }
   }
 
@@ -738,7 +751,54 @@ export class ContextAwarenessService {
     this.checkForNewPlaceSmart(lat, lng);
   }
 
+  /**
+   * 获取当前CellID (用于低功耗位置变化检测)
+   * 格式: mcc_mnc_lac_cellid
+   */
+  private async getCurrentCellId(): Promise<string> {
+    try {
+      // 使用 radio API 获取信号信息
+      let signalInfoList = await radio.getSignalInformationList();
+      if (signalInfoList && signalInfoList.length > 0) {
+        // 取第一个活跃的基站信息
+        let info = signalInfoList[0];
+        if (info) {
+          let mcc = info.mcc ?? '0';
+          let mnc = info.mnc ?? '0';
+          let lac = info.lac ?? info.tac ?? '0';
+          let cellId = info.cellId ?? info.nci ?? '0';
+          return `${mcc}_${mnc}_${lac}_${cellId}`;
+        }
+      }
+    } catch (err) {
+      this.log.debug(TAG, `CellID fetch error: ${(err as Error).message}`);
+    }
+    return '';
+  }
 
+  /**
+   * 检查CellID是否变化 (用于决定是否需要请求GPS)
+   * @return true=变化了需要GPS, false=没变化可以跳过GPS
+   */
+  private async checkCellIdChanged(): Promise<boolean> {
+    let currentCellId = await this.getCurrentCellId();
+    if (currentCellId.length === 0) {
+      // 无法获取CellID，保守起见请求GPS
+      return true;
+    }
+    
+    this.tray.put('cellId', currentCellId, 0.9, 'cellular');
+    
+    if (currentCellId !== this.lastCellId) {
+      this.log.info(TAG, `CellID changed: ${this.lastCellId} -> ${currentCellId}`);
+      this.lastCellId = currentCellId;
+      this.lastCellIdTime = Date.now();
+      return true;
+    }
+    
+    // CellID没变，可能还在同一位置
+    return false;
+  }
   private startPeriodicEvaluation(): void {
     if (this.evaluationTimer !== -1) return;
     this.evaluationTimer = setInterval(() => {
@@ -1225,12 +1285,13 @@ export class ContextAwarenessService {
       let dist = this.haversineDistance(lat, lng, gf.latitude, gf.longitude);
       
       if (dist < gf.radiusMeters) {
-        this.log.info(TAG, `Inside geofence: ${gf.name}, dist=${Math.round(dist)}m, wifi=${this.lastWifiSsid}`);
+        this.log.info(TAG, `Inside geofence: ${gf.name}, dist=${Math.round(dist)}m, wifi=${this.lastWifiSsid}, cellId=${this.lastCellId}`);
         
         // 在此围栏内，学习信号
         let signals = gf.learnedSignals ?? {
           wifiSSIDs: [],
           bluetoothDevices: [],
+          cellIds: [],
           typicalTimes: [],
           lastSeen: 0,
           visitCount: 0
@@ -1246,8 +1307,15 @@ export class ContextAwarenessService {
             this.notifyGeofenceFeatureLearned(gf.name, 'WiFi', this.lastWifiSsid);
             updated = true;
           }
-        } else {
-          this.log.debug(TAG, `No WiFi to learn for ${gf.name}`);
+        }
+        
+        // 学习CellID
+        if (this.lastCellId && this.lastCellId.length > 0) {
+          if (!signals.cellIds!.includes(this.lastCellId)) {
+            signals.cellIds!.push(this.lastCellId);
+            this.log.info(TAG, `Learned CellID for ${gf.name}: ${this.lastCellId}`);
+            updated = true;
+          }
         }
         
         // 更新访问统计

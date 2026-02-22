@@ -103,6 +103,7 @@ export interface ContextSnapshot {
   networkType: string;     // wifi, cellular, none
   geofence?: string;       // current geofence id, if any
   wifiSsid?: string;       // current WiFi SSID
+  cellId?: string;         // current CellID (mcc_mnc_lac_cellid)
   wifiLostWork?: string;   // "true" if recently lost work WiFi (backward compat)
   wifiGeofence?: string;   // WiFi signal matched geofence category (home/work/gym/etc)
   wifiLost?: string;       // "true" if recently lost a known WiFi

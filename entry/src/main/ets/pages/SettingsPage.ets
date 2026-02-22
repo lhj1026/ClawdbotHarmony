@@ -2115,6 +2115,10 @@ export struct SettingsPage {
       NodeRuntime.getInstance().disconnect();
       return;
     }
+    if (this.gwIsConnecting()) {
+      NodeRuntime.getInstance().disconnect();
+      return;
+    }
     await this.connectToGateway(true, true);
   }
 
@@ -2124,12 +2128,20 @@ export struct SettingsPage {
       NodeRuntime.getInstance().disconnectOperator();
       return;
     }
+    if (this.operatorIsConnecting()) {
+      NodeRuntime.getInstance().disconnectOperator();
+      return;
+    }
     await this.connectToGateway(true, false);
   }
 
   /** Connect node session only (for capabilities) */
   private async toggleNodeConnection(): Promise<void> {
     if (this.nodeIsConnected()) {
+      NodeRuntime.getInstance().disconnectNode();
+      return;
+    }
+    if (this.nodeIsConnecting()) {
       NodeRuntime.getInstance().disconnectNode();
       return;
     }

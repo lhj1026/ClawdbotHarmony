@@ -1,7 +1,7 @@
 /**
  * place_signal_learner.h — 地点信号学习 C++ 实现
  *
- * 学习围栏关联的WiFi/蓝牙/时间特征
+ * 学习围栏关联的WiFi/蓝牙/CellID/时间特征
  */
 #pragma once
 
@@ -23,10 +23,29 @@ struct TimeRange {
     int endHour;
 };
 
+/** CellID 信息 */
+struct CellIdInfo {
+    int mcc;          // Mobile Country Code
+    int mnc;          // Mobile Network Code
+    int lac;          // Location Area Code (GSM) or Tracking Area Code (LTE)
+    int cellId;       // Cell ID
+    int signalStrength;
+    
+    std::string toString() const {
+        return std::to_string(mcc) + "_" + std::to_string(mnc) + "_" + 
+               std::to_string(lac) + "_" + std::to_string(cellId);
+    }
+    
+    bool operator<(const CellIdInfo& other) const {
+        return toString() < other.toString();
+    }
+};
+
 /** 学习的地点信号 */
 struct LearnedSignals {
     std::set<std::string> wifiSSIDs;
     std::set<std::string> bluetoothDevices;
+    std::set<std::string> cellIds;        // CellID 字符串集合
     std::vector<TimeRange> typicalTimes;
     int64_t lastSeen;
     int visitCount;
@@ -54,9 +73,11 @@ public:
      * @param placeId 地点ID
      * @param wifiSsid 当前WiFi SSID
      * @param btDevice 当前蓝牙设备
+     * @param cellId 当前CellID字符串 (mcc_mnc_lac_cellid)
      * @return 是否学到了新信号
      */
-    bool learn(const std::string& placeId, const std::string& wifiSsid, const std::string& btDevice = "") {
+    bool learn(const std::string& placeId, const std::string& wifiSsid, 
+               const std::string& btDevice = "", const std::string& cellId = "") {
         bool learned = false;
         
         LearnedSignals& signals = signals_[placeId];
@@ -70,6 +91,12 @@ public:
         // 学习蓝牙
         if (!btDevice.empty() && signals.bluetoothDevices.find(btDevice) == signals.bluetoothDevices.end()) {
             signals.bluetoothDevices.insert(btDevice);
+            learned = true;
+        }
+        
+        // 学习CellID
+        if (!cellId.empty() && signals.cellIds.find(cellId) == signals.cellIds.end()) {
+            signals.cellIds.insert(cellId);
             learned = true;
         }
         
@@ -106,6 +133,15 @@ public:
     }
     
     /**
+     * 检查CellID是否匹配地点
+     */
+    bool matchesCellId(const std::string& placeId, const std::string& cellId) const {
+        auto it = signals_.find(placeId);
+        if (it == signals_.end()) return false;
+        return it->second.cellIds.count(cellId) > 0;
+    }
+    
+    /**
      * 根据WiFi查找匹配的地点
      */
     std::vector<std::string> findPlacesByWifi(const std::string& wifiSsid) const {
@@ -113,6 +149,23 @@ public:
         for (const auto& pair : signals_) {
             if (pair.second.wifiSSIDs.count(wifiSsid) > 0) {
                 result.push_back(pair.first);
+            }
+        }
+        return result;
+    }
+    
+    /**
+     * 根据CellID查找匹配的地点
+     */
+    std::vector<std::string> findPlacesByCellId(const std::string& cellId) const {
+        std::vector<std::string> result;
+        for (const auto& pair : signals_) {
+            if (pair.second.cellIds.count(cellId) > 0) {
+                result.push_back(pair.first);
+            }
+        }
+        return result;
+    }
             }
         }
         return result;

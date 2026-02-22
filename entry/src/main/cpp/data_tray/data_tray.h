@@ -62,6 +62,7 @@ struct ContextSnapshot {
     std::optional<std::string> geofence;
     std::optional<std::string> wifiSsid;
     std::optional<std::string> wifiLostWork;
+    std::optional<std::string> cellId;
     std::optional<std::string> latitude;
     std::optional<std::string> longitude;
     std::optional<std::string> stepCount;
@@ -86,6 +87,7 @@ inline int64_t getDefaultTTL(const std::string& key) {
 
         // 网络
         {"networkType", 2 * 60 * 1000},     // 2 min
+        {"wifiSsid", 2 * 60 * 1000},        // 2 min
 
         // 运动
         {"motionState", 30 * 1000},         // 30 sec
@@ -95,6 +97,7 @@ inline int64_t getDefaultTTL(const std::string& key) {
         {"latitude", 2 * 60 * 1000},        // 2 min
         {"longitude", 2 * 60 * 1000},       // 2 min
         {"geofence", 5 * 60 * 1000},        // 5 min
+        {"cellId", 10 * 60 * 1000},         // 10 min - 基站变化较慢
 
         // 环境
         {"heartRate", 60 * 1000},           // 1 min
@@ -199,6 +202,10 @@ public:
         auto wifiLostWork = getUnlocked("wifiLostWork");
         if (wifiLostWork.value.has_value()) {
             snap.wifiLostWork = wifiLostWork.value;
+        }
+        auto cellId = getUnlocked("cellId");
+        if (cellId.value.has_value()) {
+            snap.cellId = cellId.value;
         }
         auto lat = getUnlocked("latitude");
         if (lat.value.has_value()) {
