@@ -4,6 +4,7 @@
  */
 import { router, promptAction } from '@kit.ArkUI';
 import { LogService } from '../common/LogService';
+import { I18n } from '../common/I18n';
 import { ContextAwarenessService } from '../service/context/ContextAwarenessService';
 import { ContextEngineService } from '../service/context/ContextEngine';
 import { FeedbackService } from '../service/context/FeedbackService';
@@ -725,10 +726,37 @@ struct ContextSettingsPage {
     try {
       let cas = ContextAwarenessService.getInstance();
       let discovery = LocationDiscoveryService.getInstance();
-      discovery.runDiscovery().then(() => {
+      let stats = cas.getLocationDiscoveryStats();
+      
+      if (stats.historyCount < 10) {
+        promptAction.showToast({
+          message: I18n.t('context.discovery.notEnoughData'),
+          duration: 2000
+        });
+        return;
+      }
+      
+      promptAction.showToast({
+        message: I18n.t('context.discovery.running'),
+        duration: 1500
+      });
+      
+      discovery.runDiscovery().then((suggestions: GeofenceSuggestion[]) => {
         this.suggestions = cas.getFilteredSuggestions();
-        let stats = cas.getLocationDiscoveryStats();
-        this.discoveryStats = `历史点: ${stats.historyCount} | 聚类: ${stats.clusterCount} | 上次发现: ${stats.lastDiscovery}`;
+        let newStats = cas.getLocationDiscoveryStats();
+        this.discoveryStats = `历史点: ${newStats.historyCount} | 聚类: ${newStats.clusterCount} | 上次发现: ${newStats.lastDiscovery}`;
+        
+        if (this.suggestions.length > 0) {
+          promptAction.showToast({
+            message: I18n.t('context.discovery.found').replace('{0}', this.suggestions.length.toString()),
+            duration: 2000
+          });
+        } else {
+          promptAction.showToast({
+            message: I18n.t('context.discovery.noResult'),
+            duration: 2000
+          });
+        }
       });
     } catch (err) {
       this.log.error('CtxSettings', 'Discovery error: ' + (err as Error).message);

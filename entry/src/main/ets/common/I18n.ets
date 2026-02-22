@@ -544,6 +544,12 @@ function buildZh(): Map<string, string> {
   m.set('context.feedback.dismiss', '忽略');
   m.set('context.feedback.viewDetails', '查看详情');
 
+  // Context Awareness - Discovery
+  m.set('context.discovery.running', '正在分析位置历史...');
+  m.set('context.discovery.found', '发现 {0} 个常去地点');
+  m.set('context.discovery.noResult', '暂未发现新地点，继续积累位置数据');
+  m.set('context.discovery.notEnoughData', '位置数据不足 (需要至少10个点)');
+
   return m;
 }
 
@@ -1082,6 +1088,12 @@ function buildEn(): Map<string, string> {
   m.set('context.feedback.inaccurate', 'Inaccurate');
   m.set('context.feedback.dismiss', 'Dismiss');
   m.set('context.feedback.viewDetails', 'View Details');
+
+  // Context Awareness - Discovery
+  m.set('context.discovery.running', 'Analyzing location history...');
+  m.set('context.discovery.found', 'Found {0} frequent locations');
+  m.set('context.discovery.noResult', 'No new locations found, keep collecting data');
+  m.set('context.discovery.notEnoughData', 'Not enough location data (need at least 10 points)');
 
   return m;
 }
