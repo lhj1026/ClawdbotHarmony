@@ -1,5 +1,31 @@
 # ClawdBot 情景智能设计文档
 
+## 架构概览
+
+### C++ 核心逻辑 (高性能)
+| 模块 | 文件 | 功能 |
+|------|------|------|
+| geo_utils | cpp/geo_utils/ | Haversine距离计算、围栏匹配 |
+| dbscan_cluster | cpp/dbscan_cluster/ | DBSCAN聚类算法 |
+| context_engine | cpp/context_engine/ | 规则引擎、LinUCB、MAB、决策树 |
+| data_tray | cpp/data_tray/ | 传感器数据托盘、TTL管理 |
+| location_fusion | cpp/location_fusion/ | 多源位置融合 |
+| voiceprint | cpp/voiceprint/ | 声纹识别 |
+| **motion_detector** | cpp/motion_detector/ | 运动状态检测 |
+| **sampling_strategy** | cpp/motion_detector/ | 多级采集策略 |
+| **place_learner** | cpp/place_learner/ | 地点信号学习 |
+| **new_place_detector** | cpp/place_learner/ | 新地点检测 |
+
+### ArkTS 层 (UI + 平台API)
+| 模块 | 功能 |
+|------|------|
+| ContextAwarenessService | 协调服务、调用平台API |
+| GeofenceManager | 围栏管理、文件持久化 |
+| DigitalWorldService | 数字世界插件管理 |
+| 各Plugin | 传感器数据采集 |
+| UI Pages | 用户界面 |
+
+---
 ## 1. 多级采集策略 (功耗优化)
 
 ### 1.1 设计原则
