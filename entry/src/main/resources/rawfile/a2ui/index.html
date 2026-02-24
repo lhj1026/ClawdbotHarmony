@@ -313,7 +313,25 @@ body{font-family:-apple-system,HarmonyOS Sans,sans-serif;background:#0F0F1A;colo
         el.onclick = function() {
           if (c.action) {
             if (c.action.event) {
-              sendAction({name: c.action.event.name, sourceId: id, context: c.action.event.context});
+              var evtCtx = {};
+              var origCtx = c.action.event.context || {};
+              for (var k in origCtx) { if (origCtx.hasOwnProperty(k)) evtCtx[k] = origCtx[k]; }
+              // Collect selected choices from parent form
+              var formEl = el.closest('[data-a2ui-id]');
+              if (formEl) {
+                var root = formEl.parentElement;
+                if (root) {
+                  var pickers = root.querySelectorAll('.a2ui-field');
+                  pickers.forEach(function(picker) {
+                    var pickerId = picker.getAttribute('data-a2ui-id');
+                    if (pickerId) {
+                      var sel = picker.querySelector('.a2ui-chip.selected');
+                      if (sel) evtCtx['choice_' + pickerId] = sel.textContent;
+                    }
+                  });
+                }
+              }
+              sendAction({name: c.action.event.name, sourceId: id, context: evtCtx});
             } else if (c.action.functionCall) {
               callFn(c.action.functionCall.call, c.action.functionCall.args, ctx);
             }

@@ -31,6 +31,7 @@ interface UserPlaceLearnedSignals {
   typicalTimes?: UserPlaceTimeRange[];
   lastSeen?: number;
   visitCount?: number;
+  typicalActivities?: Record<string, number>;  // "hourBucket-activity" → count
 }
 
 interface UserPlaceTimeRange {
@@ -369,6 +370,7 @@ export class GeofenceManager {
               typicalTimes: ls.typicalTimes ?? [],
               lastSeen: ls.lastSeen ?? 0,
               visitCount: ls.visitCount ?? 0,
+              typicalActivities: ls.typicalActivities ?? {},
             };
             gf.learnedSignals = signals;
           }
@@ -413,6 +415,7 @@ export class GeofenceManager {
             typicalTimes: times,
             lastSeen: ls.lastSeen ?? 0,
             visitCount: ls.visitCount ?? 0,
+            typicalActivities: ls.typicalActivities ?? {},
           };
         }
         places.push(place);

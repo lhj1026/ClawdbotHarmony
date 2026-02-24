@@ -2972,6 +2972,30 @@ export class ContextAwarenessService {
   }
   
   
+  /**
+   * 将用户反馈的活动记录到当前围栏的 typicalActivities 中
+   */
+  learnActivityForCurrentGeofence(activity: string): void {
+    let geofenceSlot = this.tray.get('geofence');
+    let geofenceId = geofenceSlot?.value ?? '';
+    if (geofenceId.length === 0) return;
+
+    let gf = this.geofenceMgr.getGeofence(geofenceId);
+    if (!gf) return;
+    if (!gf.learnedSignals) {
+      gf.learnedSignals = {};
+    }
+    if (!gf.learnedSignals.typicalActivities) {
+      gf.learnedSignals.typicalActivities = {};
+    }
+    let hourBucket = Math.floor(new Date().getHours() / 3) * 3; // 3h bucket
+    let key = `${hourBucket}-${activity}`;
+    let count = gf.learnedSignals.typicalActivities[key] ?? 0;
+    gf.learnedSignals.typicalActivities[key] = count + 1;
+    this.geofenceMgr.saveToFile();
+    this.log.info(TAG, `Learned activity: geofence=${geofenceId} key=${key} count=${count + 1}`);
+  }
+
   addGeofence(geofence: Geofence): void {
     this.geofenceMgr.addGeofence(geofence);
     this.geofenceMgr.saveToFile();
@@ -3172,6 +3196,27 @@ export class ContextAwarenessService {
     await this.evaluateAndDeliver(snapshot);
     // 返回引擎匹配结果（evaluateAndDeliver 内部已处理推送）
     return this.engine.evaluate(snapshot, 3);
+  }
+
+  /**
+   * 暴露内部状态给测试运行器 (ContextTestRunner)
+   */
+  getTestableState(): Record<string, string> {
+    let result: Record<string, string> = {
+      'currentTier': this.currentTier.toString(),
+      'motionState': this.lastMotionState,
+      'exploreMode': this.exploreMode.toString(),
+      'isRunning': this.isRunning.toString(),
+    };
+    let geofenceSlot = this.tray.get('geofence');
+    result['geofence'] = geofenceSlot?.value ?? '';
+    let wifiSlot = this.tray.get('wifiSsid');
+    result['wifiSsid'] = wifiSlot?.value ?? '';
+    // WiFi mobility classification
+    if (this.lastWifiSsid.length > 0) {
+      result['wifiMobility'] = this.classifyWifi(this.lastWifiSsid);
+    }
+    return result;
   }
 
   getStatus(): string {

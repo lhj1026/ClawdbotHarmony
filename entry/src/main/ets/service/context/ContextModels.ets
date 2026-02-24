@@ -35,6 +35,7 @@ export interface LearnedPlaceSignals {
   typicalTimes?: TimeRange[];      // 典型出现时间段
   lastSeen?: number;               // 最后一次学习时间戳
   visitCount?: number;             // 访问次数
+  typicalActivities?: Record<string, number>;  // "hourBucket-activity" → count
 }
 
 export type GeofenceCategory = 

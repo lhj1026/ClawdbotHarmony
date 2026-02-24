@@ -21,6 +21,7 @@ import { ConversationLogger } from '../service/ConversationLogger';
 import { ContextEngineService, ContextRule, ContextCondition, ContextAction } from '../service/context/ContextEngine';
 import { LocationDiscoveryService, GeofenceSuggestion } from '../service/context/LocationDiscoveryService';
 import { ContextAwarenessService } from '../service/context/ContextAwarenessService';
+import { ContextTestRunner } from '../service/context/ContextTestRunner';
 import { promptAction, router } from '@kit.ArkUI';
 import { audio } from '@kit.AudioKit';
 import { fileIo, picker } from '@kit.CoreFileKit';
@@ -1793,6 +1794,11 @@ Respond ONLY with the JSON array.`;
       this.printLocationDiscovery();
       return true;
     }
+    if (has(['测试', 'test'])) {
+      this.inputText = '';
+      this.runContextTests();
+      return true;
+    }
     if (s === '' || s === 'help' || s === '帮助' || s === '?') {
       this.inputText = '';
       this.printSlashHelp();
@@ -1815,11 +1821,40 @@ Respond ONLY with the JSON array.`;
       '/技能 — 技能管理\n' +
       '/对话记录 — 历史对话\n' +
       '/日志 — 查看日志\n' +
+      '/测试 — 运行情景智能测试\n' +
       '/关于 — 关于页面';
     let msg = new ChatMessage('assistant', helpText);
     this.messages.push(msg);
     this.scrollToEnd();
     this.saveHistory();
+  }
+
+  private runContextTests(): void {
+    let startMsg = new ChatMessage('assistant', '🧪 正在运行情景智能测试...');
+    this.messages.push(startMsg);
+    this.scrollToEnd();
+
+    let runner = new ContextTestRunner();
+    let ctx = getContext(this) as common.UIAbilityContext;
+    runner.runAll(ctx).then((results) => {
+      // Output each test result
+      for (let r of results) {
+        let text = runner.formatResult(r);
+        let resultMsg = new ChatMessage('assistant', text);
+        this.messages.push(resultMsg);
+      }
+      // Summary
+      let summaryText = runner.formatSummary(results);
+      let summaryMsg = new ChatMessage('assistant', summaryText);
+      this.messages.push(summaryMsg);
+      this.scrollToEnd();
+      this.saveHistory();
+    }).catch((err: Error) => {
+      let errMsg = new ChatMessage('assistant', `❌ 测试运行失败: ${err.message}`);
+      this.messages.push(errMsg);
+      this.scrollToEnd();
+      this.saveHistory();
+    });
   }
 
   private printContextRules(): void {

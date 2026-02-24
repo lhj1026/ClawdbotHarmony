@@ -1097,11 +1097,11 @@ export class NodeRuntime {
         this.adjustRulePriority(engine, ruleId, delta);
         fbService.onThumbsUp(ruleId);
         let displayName = ruleName.length > 0 ? ruleName : ruleId;
-        this.sendFeedbackResponse(
-          `✅ 反馈已记录\n\n` +
+        let acceptMsg = `✅ 反馈已记录\n\n` +
           `📋 规则：${displayName}\n` +
-          `📈 权重提升 +${delta}，未来会更多推荐此类场景`
-        );
+          `📈 权重提升 +${delta}，未来会更多推荐此类场景`;
+        this.sendFeedbackResponse(acceptMsg);
+        this.pushA2UIConfirmation(acceptMsg);
       } else if (feedback === 'reject') {
         // Negative: decrease priority
         let delta = -0.3;
@@ -1130,8 +1130,44 @@ export class NodeRuntime {
         );
         // Show follow-up: ask user what they're actually doing
         this.showSceneCorrectionCard(ruleId);
+      } else if (feedback === 'scene_correct_combined') {
+        // Combined location + activity from ChoicePicker form
+        let locText = (ctx['choice_loc_picker'] ?? '') as string;   // "🏠 在家"
+        let actText = (ctx['choice_act_picker'] ?? '') as string;   // "💻 工作中"
+        // Extract pure text (remove emoji prefix)
+        let location = locText.replace(/^[^\u4e00-\u9fa5a-zA-Z]*/, '').replace(/^在/, '');  // "家"
+        let scene = actText.replace(/^[^\u4e00-\u9fa5a-zA-Z]*/, '').replace(/中$/, '').replace(/了$/, '');  // "工作"
+        this.log.info(TAG, `Scene correction combined: ruleId=${ruleId} location=${location} scene=${scene} (raw: loc="${locText}" act="${actText}")`);
+
+        let boostedCount = this.boostRulesMatchingScene(engine, location, scene);
+
+        let detail = '';
+        if (location.length > 0 && scene.length > 0) {
+          detail = `在${location}，${scene}`;
+        } else if (location.length > 0) {
+          detail = `在${location}`;
+        } else if (scene.length > 0) {
+          detail = `${scene}`;
+        } else {
+          detail = '未选择';
+        }
+        let boostText = boostedCount > 0
+          ? `\n📈 已提升 ${boostedCount} 条相关规则的权重`
+          : '';
+        let feedbackMsg = `📝 场景已纠正\n\n` +
+          `🎯 实际场景：${detail}\n` +
+          `🧠 系统会学习这个模式，优化未来推荐${boostText}`;
+        this.sendFeedbackResponse(feedbackMsg);
+        // Replace form card with confirmation
+        this.pushA2UIConfirmation(feedbackMsg);
+
+        // Persist activity to geofence's typicalActivities
+        let cas = ContextAwarenessService.getInstance();
+        if (scene.length > 0) {
+          cas.learnActivityForCurrentGeofence(scene);
+        }
       } else if (feedback === 'scene_correct') {
-        // User selected their actual scene after rejecting
+        // Legacy: single button scene correction (kept for backward compat)
         let scene = ctx['scene'] ?? '';
         let location = ctx['location'] ?? '';
         this.log.info(TAG, `Scene correction: ruleId=${ruleId} scene=${scene} location=${location}`);
@@ -1150,11 +1186,11 @@ export class NodeRuntime {
         let boostText = boostedCount > 0
           ? `\n📈 已提升 ${boostedCount} 条相关规则的权重`
           : '';
-        this.sendFeedbackResponse(
-          `📝 场景已纠正\n\n` +
+        let legacyMsg = `📝 场景已纠正\n\n` +
           `🎯 实际场景：${detail}\n` +
-          `🧠 系统会学习这个模式，优化未来推荐${boostText}`
-        );
+          `🧠 系统会学习这个模式，优化未来推荐${boostText}`;
+        this.sendFeedbackResponse(legacyMsg);
+        this.pushA2UIConfirmation(legacyMsg);
       } else if (feedback === 'view_snapshot') {
         // Show current scene snapshot with all sensor data
         this.showSceneSnapshotCard();
@@ -1168,6 +1204,7 @@ export class NodeRuntime {
       } else if (feedback === 'dismiss') {
         // Dismiss is a mild negative signal, don't record as thumbs_down
         this.sendFeedbackResponse('🙈 已忽略，不会影响未来推荐');
+        this.pushA2UIConfirmation('🙈 已忽略');
       }
       // Handle new place detection events
       else if (name === 'new_place_save') {
@@ -1360,22 +1397,16 @@ export class NodeRuntime {
     let safeRuleId = ruleId.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     let jsonl = `{"type":"form","id":"scene_correct_${Date.now()}","children":[` +
       `{"type":"text","text":"你现在在哪儿，在干什么？","style":{"fontSize":16,"fontWeight":"bold"}},` +
-      `{"type":"text","text":"帮助我更好地理解你的场景","style":{"fontSize":13,"color":"#888"}},` +
-      // Location buttons
+      `{"type":"text","text":"可同时选择位置和活动","style":{"fontSize":13,"color":"#888"}},` +
+      // Location choice picker
       `{"type":"text","text":"📍 位置","style":{"fontSize":14,"fontWeight":"bold"}},` +
-      `{"type":"button","text":"🏠 在家","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"scene_correct","scene":"","location":"家"}}}},` +
-      `{"type":"button","text":"🏢 在公司","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"scene_correct","scene":"","location":"公司"}}}},` +
-      `{"type":"button","text":"🚇 在路上","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"scene_correct","scene":"","location":"路上"}}}},` +
-      `{"type":"button","text":"🛒 在商场","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"scene_correct","scene":"","location":"商场"}}}},` +
-      `{"type":"button","text":"🍜 在餐厅","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"scene_correct","scene":"","location":"餐厅"}}}},` +
-      // Activity buttons
+      `{"type":"choice","id":"loc_picker","options":["🏠 在家","🏢 在公司","🚇 在路上","🛒 在商场","🍜 在餐厅"]},` +
+      // Activity choice picker
       `{"type":"text","text":"🎯 在做什么","style":{"fontSize":14,"fontWeight":"bold"}},` +
-      `{"type":"button","text":"💻 工作中","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"scene_correct","scene":"工作","location":""}}}},` +
-      `{"type":"button","text":"🛋️ 休息中","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"scene_correct","scene":"休息","location":""}}}},` +
-      `{"type":"button","text":"🏃 运动中","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"scene_correct","scene":"运动","location":""}}}},` +
-      `{"type":"button","text":"🍽️ 吃饭中","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"scene_correct","scene":"吃饭","location":""}}}},` +
-      `{"type":"button","text":"🚶 通勤中","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"scene_correct","scene":"通勤","location":""}}}},` +
-      `{"type":"button","text":"😴 要睡了","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"scene_correct","scene":"睡觉","location":""}}}},` +
+      `{"type":"choice","id":"act_picker","options":["💻 工作中","🛋️ 休息中","🏃 运动中","🍽️ 吃饭中","🚶 通勤中","😴 要睡了"]},` +
+      // Confirm button - collects both picker values
+      `{"type":"button","text":"✅ 确认","variant":"primary","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"scene_correct_combined"}}}},` +
+      // Skip button
       `{"type":"button","text":"🙅 跳过","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"dismiss"}}}}` +
       `]}`;
 
@@ -1498,6 +1529,18 @@ export class NodeRuntime {
       },
     };
     this.dispatchChatEvent(event);
+  }
+
+  /**
+   * Push a brief A2UI confirmation card that replaces the current form.
+   * Used to dismiss form cards after user feedback.
+   */
+  private pushA2UIConfirmation(text: string): void {
+    let safeText = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+    let jsonl = `{"type":"form","id":"confirm_${Date.now()}","children":[` +
+      `{"type":"text","text":"${safeText}","style":{"fontSize":14,"color":"#4CAF50"}}` +
+      `]}`;
+    this.dispatchA2UI('push', jsonl);
   }
 
   addIdentityListener(listener: (identity: AgentIdentity | undefined) => void): void {

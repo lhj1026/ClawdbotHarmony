@@ -1,0 +1,121 @@
+{
+  "version": 2,
+  "description": "情景智能集成测试用例 — 验证管线注入、快照、引擎、WiFi分类",
+  "cases": [
+    {
+      "id": "tc001",
+      "name": "工作日早上在公司",
+      "description": "周一9点，公司WiFi，JBL音箱，已知围栏，静止",
+      "input": {
+        "hour": 9,
+        "dayOfWeek": 1,
+        "motionState": "stationary",
+        "wifiSsid": "Company-WiFi-5G",
+        "btDeviceNames": "JBL Flip 5",
+        "btFixedDevices": "JBL Flip 5",
+        "geofence": "office",
+        "batteryLevel": 85,
+        "isCharging": false,
+        "screenState": "on",
+        "networkType": "wifi"
+      },
+      "expected": {
+        "tier": 1,
+        "motionState": "stationary",
+        "timeOfDay": "morning",
+        "wifiMobility": "fixed",
+        "geofenceAssociated": true
+      }
+    },
+    {
+      "id": "tc002",
+      "name": "晚上在家休息",
+      "description": "周三晚上9点，家WiFi，蓝牙音箱，已知围栏",
+      "input": {
+        "hour": 21,
+        "dayOfWeek": 3,
+        "motionState": "stationary",
+        "wifiSsid": "HomeWiFi",
+        "btDeviceNames": "HomePod mini",
+        "btFixedDevices": "HomePod mini",
+        "geofence": "home",
+        "batteryLevel": 45,
+        "isCharging": false,
+        "screenState": "on",
+        "networkType": "wifi"
+      },
+      "expected": {
+        "tier": 1,
+        "timeOfDay": "night",
+        "wifiMobility": "fixed",
+        "geofenceAssociated": true
+      }
+    },
+    {
+      "id": "tc003",
+      "name": "开车通勤",
+      "description": "早上8点，车载蓝牙连接，运动状态",
+      "input": {
+        "hour": 8,
+        "dayOfWeek": 2,
+        "motionState": "driving",
+        "btDeviceNames": "CarPlay",
+        "btVehicleDevices": "CarPlay",
+        "btInVehicle": "true",
+        "geofence": "",
+        "batteryLevel": 70,
+        "isCharging": true,
+        "screenState": "off",
+        "networkType": "cellular"
+      },
+      "expected": {
+        "tier": 2,
+        "motionState": "driving",
+        "timeOfDay": "morning",
+        "geofenceAssociated": false
+      }
+    },
+    {
+      "id": "tc004",
+      "name": "探索模式-未知WiFi",
+      "description": "新WiFi连接，无匹配围栏",
+      "input": {
+        "hour": 14,
+        "dayOfWeek": 5,
+        "motionState": "stationary",
+        "wifiSsid": "Starbucks-Guest",
+        "geofence": "",
+        "batteryLevel": 60,
+        "isCharging": false,
+        "screenState": "on",
+        "networkType": "wifi"
+      },
+      "expected": {
+        "tier": 2,
+        "timeOfDay": "afternoon",
+        "wifiMobility": "fixed",
+        "geofenceAssociated": false,
+        "llmWouldTrigger": true
+      }
+    },
+    {
+      "id": "tc005",
+      "name": "手机热点WiFi-应跳过",
+      "description": "连接到手机热点，不应关联围栏",
+      "input": {
+        "hour": 15,
+        "dayOfWeek": 4,
+        "motionState": "stationary",
+        "wifiSsid": "iPhone的热点",
+        "geofence": "",
+        "batteryLevel": 50,
+        "screenState": "on",
+        "networkType": "wifi"
+      },
+      "expected": {
+        "wifiMobility": "hotspot",
+        "geofenceAssociated": false
+      }
+    }
+  ]
+}
