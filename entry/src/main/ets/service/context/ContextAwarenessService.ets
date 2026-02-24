@@ -99,6 +99,7 @@ export class ContextAwarenessService {
   
   private initialized: boolean = false;
   private initializing: boolean = false;
+  private initPromise: Promise<void> | undefined;
   private isRunning: boolean = false;
   private starting: boolean = false;
   private context: common.UIAbilityContext | undefined;
@@ -167,6 +168,8 @@ export class ContextAwarenessService {
   private exploredFingerprints: Map<string, number> = new Map(); // fp → timestamp
   private static readonly FINGERPRINT_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24小时后过期，允许重新探索
   private lastExploreBtDevices: string = ''; // 上次探索时的 BT 设备
+  private static readonly EXPLORE_STATE_DISPLAY_COOLDOWN_MS = 5 * 60 * 1000; // 探索模式状态显示冷却 5分钟
+  private lastExploreStateDisplayTime: number = 0;
   private lastExploreWifiSsid: string = '';  // 上次探索时的 WiFi
   
   // 位置自动发现
@@ -264,8 +267,18 @@ export class ContextAwarenessService {
   }
   
   async init(context: common.UIAbilityContext): Promise<void> {
-    if (this.initialized || this.initializing) return;
+    if (this.initialized) return;
+    if (this.initializing && this.initPromise) {
+      // Another caller is initializing — wait for it to complete
+      await this.initPromise;
+      return;
+    }
     this.initializing = true;
+    this.initPromise = this.doInit(context);
+    await this.initPromise;
+  }
+
+  private async doInit(context: common.UIAbilityContext): Promise<void> {
     this.context = context;
     
     await this.geofenceMgr.init(context);
@@ -1610,20 +1623,23 @@ export class ContextAwarenessService {
           action: top.action as UserAction,
           reason: `基于当前情景推荐 (${Math.round(top.confidence * 100)}% 匹配)`
         };
-        // 探索模式：附带当前状态摘要
-        if (exploreTriggered) {
-          rec.exploreStateInfo = this.buildExploreStateInfo(snapshot);
-        }
 
         this.notifyRecommendation(rec);
         this.setOnCooldown(top.ruleId);
 
         // 记录训练数据
         this.trainingSync.recordRuleMatch(snapshot, top.ruleId, top.action.type || 'suggestion', top.confidence);
+      } else if (this.exploreMode) {
+        // 探索模式：规则在 cooldown，但仍定期显示当前状态 + 匹配的建议
+        this.sendExploreStateDisplay(snapshot, top);
       }
 
       // 非探索模式或已探索过的指纹：有引擎结果就够了
       if (!exploreTriggered) return;
+    } else if (this.exploreMode && !exploreTriggered) {
+      // 探索模式：无引擎匹配也定期显示状态
+      this.sendExploreStateDisplay(snapshot, null);
+      return;
     }
 
     // C++ engine returned no matches — try LLM fallback
@@ -2767,6 +2783,69 @@ export class ContextAwarenessService {
   }
 
   /**
+   * 探索模式：定期发送当前状态 + 匹配的建议到聊天窗口
+   * 有自己的 cooldown（5分钟），不依赖规则 cooldown
+   */
+  private sendExploreStateDisplay(snapshot: ContextSnapshot, topMatch: MatchResult | null): void {
+    let now = Date.now();
+    if (now - this.lastExploreStateDisplayTime < ContextAwarenessService.EXPLORE_STATE_DISPLAY_COOLDOWN_MS) {
+      return; // 状态显示在 cooldown 内
+    }
+    this.lastExploreStateDisplayTime = now;
+
+    let stateInfo = this.buildExploreStateInfo(snapshot);
+
+    // 构建建议文本：从匹配的规则中获取 payload
+    let suggestion = '';
+    if (topMatch !== null) {
+      let payload = topMatch.action.payload ?? '';
+      if (payload.length > 0) {
+        suggestion = payload;
+      } else {
+        suggestion = `规则 ${topMatch.ruleId} 匹配 (${Math.round(topMatch.confidence * 100)}%)`;
+      }
+    } else {
+      suggestion = '当前无匹配规则';
+    }
+
+    // 查找规则名称
+    let ruleName = topMatch !== null ? topMatch.ruleId : 'explore_state';
+    let ruleId = topMatch !== null ? topMatch.ruleId : 'explore_state';
+    if (topMatch !== null) {
+      try {
+        let allRulesJson = this.engine.exportRules();
+        let allRules: EngineRule[] = JSON.parse(allRulesJson) as EngineRule[];
+        for (let i = 0; i < allRules.length; i++) {
+          if (allRules[i].id === topMatch.ruleId) {
+            ruleName = allRules[i].name;
+            break;
+          }
+        }
+      } catch { /* ignore */ }
+    }
+
+    let rec: ContextRecommendation = {
+      rule: {
+        id: `explore_display_${ruleId}`,
+        trigger: {} as RuleTrigger,
+        action: { type: 'show_info', target: 'explore_state' } as UserAction,
+        confidence: topMatch !== null ? topMatch.confidence : 0,
+        triggerCount: 0,
+        acceptCount: 0,
+        createdAt: now,
+        updatedAt: now,
+        enabled: true
+      },
+      action: { type: 'show_info', target: 'explore_state' } as UserAction,
+      reason: suggestion,
+      exploreStateInfo: stateInfo
+    };
+
+    this.log.info(TAG, `[Explore] sending state display: stateLen=${stateInfo.length}, suggestion="${suggestion.substring(0, 50)}"`);
+    this.notifyRecommendation(rec);
+  }
+
+  /**
    * 用户对推荐的反馈（保留旧 API 兼容性）
    */
   async onRecommendationFeedback(
@@ -2842,7 +2921,13 @@ export class ContextAwarenessService {
   }
   
   private notifyRecommendation(rec: ContextRecommendation): void {
-    this.log.info(TAG, 'Recommendation: ' + rec.reason);
+    // 探索模式：确保每条推荐都带当前状态摘要
+    if (this.exploreMode && (!rec.exploreStateInfo || rec.exploreStateInfo.length === 0)) {
+      let snapshot = this.augmentSnapshot(this.tray.getSnapshot());
+      rec.exploreStateInfo = this.buildExploreStateInfo(snapshot);
+      this.log.info(TAG, `[Explore] attached stateInfo (${rec.exploreStateInfo.length} chars) to rec: ${rec.rule.id}`);
+    }
+    this.log.info(TAG, `Recommendation: ${rec.reason} (hasStateInfo=${rec.exploreStateInfo ? rec.exploreStateInfo.length > 0 : false})`);
     // 注册卡片到 FeedbackService（启动超时定时器）
     this.feedbackSvc.onCardShown(rec);
     for (let i = 0; i < this.recommendationListeners.length; i++) {

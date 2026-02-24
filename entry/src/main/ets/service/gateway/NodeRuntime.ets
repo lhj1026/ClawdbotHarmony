@@ -171,6 +171,7 @@ export class NodeRuntime {
   private _lastRecRuleName: string = '';
   private _lastRecReason: string = '';
   private _lastRecConfidence: number = 0;
+  private _contextListenersRegistered: boolean = false;
   private _identityListeners: Array<(identity: AgentIdentity | undefined) => void> = [];
 
   // App foreground/background state and chat page visibility for message notifications
@@ -352,6 +353,10 @@ export class NodeRuntime {
   private startContextAwareness(context: common.UIAbilityContext): void {
     let cas = ContextAwarenessService.getInstance();
     if (cas.isActive()) {
+      // CAS already started (by EntryAbility), just register listeners
+      this.log.info(TAG, '情景智能已运行，注册监听器');
+      Monitor.startModule('ContextAwareness');
+      this.registerContextListeners(cas);
       return;
     }
     cas.init(context).then(() => {
@@ -360,112 +365,146 @@ export class NodeRuntime {
       if (ok) {
         this.log.info(TAG, '情景智能已启动');
         Monitor.startModule('ContextAwareness');
-        // Listen for recommendations and dispatch as chat events
-        cas.addRecommendationListener((rec: ContextRecommendation) => {
-          this.log.info(TAG, `情景推荐: ${rec.reason}`);
-          let ruleId = rec.rule.id;
-          let confidence = Math.round((rec.rule.confidence ?? 1) * 100);
-
-          // Look up rule name from engine
-          let ruleName = ruleId;
-          try {
-            let engine = ContextEngineService.getInstance();
-            let allRulesJson = engine.exportRules();
-            let allRules: ContextRule[] = JSON.parse(allRulesJson) as ContextRule[];
-            for (let i = 0; i < allRules.length; i++) {
-              if (allRules[i].id === ruleId) {
-                ruleName = allRules[i].name;
-                break;
-              }
-            }
-          } catch { /* use ruleId as fallback */ }
-
-          // Store last recommendation for "back" functionality
-          this._lastRecRuleId = ruleId;
-          this._lastRecRuleName = ruleName;
-          this._lastRecReason = rec.reason;
-          this._lastRecConfidence = confidence;
-
-          // 探索模式：显示检测到的状态 + 建议
-          if (rec.exploreStateInfo && rec.exploreStateInfo.length > 0) {
-            let a2uiJsonl = this.buildExploreStateA2UI(ruleId, ruleName, rec.reason, confidence, rec.exploreStateInfo);
-
-            let event: GatewayChatEvent = {
-              runId: `ctx-${Date.now()}`,
-              sessionKey: '',
-              seq: 0,
-              state: 'final',
-              message: {
-                role: 'assistant',
-                content: [{ type: 'text', text: `🔍 探索模式检测到新状态\n${rec.exploreStateInfo}\n\n💡 ${rec.reason}` }],
-              },
-            };
-            this.dispatchChatEvent(event);
-            this.dispatchA2UI('push', a2uiJsonl);
-          } else {
-            // 普通模式：原有逻辑
-            let a2uiJsonl = this.buildContextRecommendationA2UI(ruleId, ruleName, rec.reason, confidence);
-
-            let event: GatewayChatEvent = {
-              runId: `ctx-${Date.now()}`,
-              sessionKey: '',
-              seq: 0,
-              state: 'final',
-              message: {
-                role: 'assistant',
-                content: [{ type: 'text', text: `💡 ${rec.reason}` }],
-              },
-            };
-            this.dispatchChatEvent(event);
-            this.dispatchA2UI('push', a2uiJsonl);
-          }
-
-          // Also send system notification if in background
-          if (!this._isInForeground) {
-            NotificationHelper.getInstance().send('💡 ' + I18n.t('context.notification.title'), rec.reason).catch(() => { /* ignore */ });
-          }
-        });
-
-        // Listen for geofence suggestions from location discovery
-        cas.addSuggestionListener((suggestions: GeofenceSuggestion[]) => {
-          let discoveredText = I18n.t('context.suggestion.discovered');
-          let goToSettingsText = I18n.t('context.suggestion.goToSettings');
-          for (let i = 0; i < suggestions.length; i++) {
-            let s = suggestions[i];
-            let text = `📍 ${discoveredText}：${s.name}\n${s.reason}\n${goToSettingsText}`;
-            this.log.info(TAG, `围栏建议: ${s.name}`);
-            let event: GatewayChatEvent = {
-              runId: `suggest-${Date.now()}-${i}`,
-              sessionKey: '',
-              seq: 0,
-              state: 'final',
-              message: {
-                role: 'assistant',
-                content: [{ type: 'text', text: text }],
-              },
-            };
-            this.dispatchChatEvent(event);
-          }
-          // Notification for first suggestion if in background
-          if (!this._isInForeground && suggestions.length > 0) {
-            let first = suggestions[0];
-            NotificationHelper.getInstance()
-              .send('📍 ' + I18n.t('context.notification.discoveredPlace'), `${first.name} — ${first.reason}`)
-              .catch(() => { /* ignore */ });
-          }
-        });
-
-        // Listen for A2UI events from ContextAwarenessService (new place discovery, etc.)
-        cas.addA2UIListener((type: string, content: string) => {
-          this.log.info(TAG, `ContextA2UI: type=${type} contentLen=${content.length}`);
-          this.dispatchA2UI(type, content);
-        });
+        this.registerContextListeners(cas);
       } else {
-        this.log.warn(TAG, '情景智能启动失败');
+        // start() returned false — CAS may have been started by EntryAbility
+        // Check again and register if already active
+        if (cas.isActive()) {
+          this.log.info(TAG, '情景智能已由其他路径启动，注册监听器');
+          Monitor.startModule('ContextAwareness');
+          this.registerContextListeners(cas);
+        } else {
+          this.log.warn(TAG, '情景智能启动失败');
+        }
       }
     }).catch((err: Error) => {
       this.log.warn(TAG, `情景智能初始化失败: ${err.message ?? ''}`);
+      // Even on error, CAS might be running (started by EntryAbility)
+      if (cas.isActive()) {
+        this.log.info(TAG, '情景智能初始化异常但已运行，注册监听器');
+        Monitor.startModule('ContextAwareness');
+        this.registerContextListeners(cas);
+      }
     });
+  }
+
+  private registerContextListeners(cas: ContextAwarenessService): void {
+    if (this._contextListenersRegistered) {
+      this.log.info(TAG, '情景智能监听器已注册，跳过');
+      return;
+    }
+    this._contextListenersRegistered = true;
+    this.log.info(TAG, '注册情景智能监听器');
+
+    // Listen for recommendations and dispatch as chat events
+    cas.addRecommendationListener((rec: ContextRecommendation) => {
+      this.log.info(TAG, `情景推荐: ${rec.reason}`);
+      let ruleId = rec.rule.id;
+      let confidence = Math.round((rec.rule.confidence ?? 1) * 100);
+
+      // Look up rule name from engine
+      let ruleName = ruleId;
+      try {
+        let engine = ContextEngineService.getInstance();
+        let allRulesJson = engine.exportRules();
+        let allRules: ContextRule[] = JSON.parse(allRulesJson) as ContextRule[];
+        for (let i = 0; i < allRules.length; i++) {
+          if (allRules[i].id === ruleId) {
+            ruleName = allRules[i].name;
+            break;
+          }
+        }
+      } catch { /* use ruleId as fallback */ }
+
+      // Store last recommendation for "back" functionality
+      this._lastRecRuleId = ruleId;
+      this._lastRecRuleName = ruleName;
+      this._lastRecReason = rec.reason;
+      this._lastRecConfidence = confidence;
+
+      // 探索模式：显示检测到的状态 + 建议
+      let stateInfo = rec.exploreStateInfo ?? '';
+      if (stateInfo.length === 0 && cas.isExploreMode()) {
+        // Fallback: build state from DigitalWorldService
+        stateInfo = this.buildExploreStateFromDigital(cas);
+        this.log.info(TAG, `[Explore] fallback stateInfo built (${stateInfo.length} chars)`);
+      }
+
+      if (stateInfo.length > 0) {
+        let a2uiJsonl = this.buildExploreStateA2UI(ruleId, ruleName, rec.reason, confidence, stateInfo);
+
+        let event: GatewayChatEvent = {
+          runId: `ctx-${Date.now()}`,
+          sessionKey: '',
+          seq: 0,
+          state: 'final',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: `🔍 探索模式检测到新状态\n${stateInfo}\n\n💡 ${rec.reason}` }],
+          },
+        };
+        this.dispatchChatEvent(event);
+        this.dispatchA2UI('push', a2uiJsonl);
+      } else {
+        // 普通模式：原有逻辑
+        let a2uiJsonl = this.buildContextRecommendationA2UI(ruleId, ruleName, rec.reason, confidence);
+
+        let event: GatewayChatEvent = {
+          runId: `ctx-${Date.now()}`,
+          sessionKey: '',
+          seq: 0,
+          state: 'final',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: `💡 ${rec.reason}` }],
+          },
+        };
+        this.dispatchChatEvent(event);
+        this.dispatchA2UI('push', a2uiJsonl);
+      }
+
+      // Also send system notification if in background
+      if (!this._isInForeground) {
+        NotificationHelper.getInstance().send('💡 ' + I18n.t('context.notification.title'), rec.reason).catch(() => { /* ignore */ });
+      }
+    });
+
+    // Listen for geofence suggestions from location discovery
+    cas.addSuggestionListener((suggestions: GeofenceSuggestion[]) => {
+      let discoveredText = I18n.t('context.suggestion.discovered');
+      let goToSettingsText = I18n.t('context.suggestion.goToSettings');
+      for (let i = 0; i < suggestions.length; i++) {
+        let s = suggestions[i];
+        let text = `📍 ${discoveredText}：${s.name}\n${s.reason}\n${goToSettingsText}`;
+        this.log.info(TAG, `围栏建议: ${s.name}`);
+        let event: GatewayChatEvent = {
+          runId: `suggest-${Date.now()}-${i}`,
+          sessionKey: '',
+          seq: 0,
+          state: 'final',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: text }],
+          },
+        };
+        this.dispatchChatEvent(event);
+      }
+      // Notification for first suggestion if in background
+      if (!this._isInForeground && suggestions.length > 0) {
+        let first = suggestions[0];
+        NotificationHelper.getInstance()
+          .send('📍 ' + I18n.t('context.notification.discoveredPlace'), `${first.name} — ${first.reason}`)
+          .catch(() => { /* ignore */ });
+      }
+    });
+
+    // Listen for A2UI events from ContextAwarenessService (new place discovery, etc.)
+    cas.addA2UIListener((type: string, content: string) => {
+      this.log.info(TAG, `ContextA2UI: type=${type} contentLen=${content.length}`);
+      this.dispatchA2UI(type, content);
+    });
+
+    this.log.info(TAG, '情景智能监听器注册完成');
   }
 
   private async startBackgroundTask(context: common.UIAbilityContext): Promise<void> {
@@ -3076,6 +3115,85 @@ export class NodeRuntime {
       `]}`;
 
     return jsonl;
+  }
+
+  /**
+   * Fallback: build explore state info directly from DigitalWorldService
+   * Used when rec.exploreStateInfo is not available (ArkTS optional field issue)
+   */
+  private buildExploreStateFromDigital(cas: ContextAwarenessService): string {
+    let digitalService = cas.getDigitalWorldService();
+    let d = digitalService.getDigitalData();
+    let lines: string[] = [];
+
+    // 时间
+    let now = new Date();
+    let dayNames: string[] = ['日', '一', '二', '三', '四', '五', '六'];
+    let h = now.getHours();
+    let m = now.getMinutes();
+    let todMap: Record<string, string> = {
+      'dawn': '黎明', 'morning': '上午', 'afternoon': '下午',
+      'evening': '傍晚', 'night': '深夜'
+    };
+    let tod = d['time_of_day'] ?? '';
+    let todLabel = todMap[tod] ?? tod;
+    let weekend = now.getDay() === 0 || now.getDay() === 6;
+    lines.push(`⏰ ${todLabel} ${h}:${m < 10 ? '0' + m : m} 周${dayNames[now.getDay()]}${weekend ? '（周末）' : ''}`);
+
+    // 运动状态
+    let motion = d['motion_state'] ?? d['motionState'] ?? '';
+    if (motion.length > 0) {
+      let motionMap: Record<string, string> = {
+        'stationary': '静止', 'walking': '步行', 'running': '跑步',
+        'driving': '驾车', 'transit': '乘车', 'cycling': '骑行'
+      };
+      lines.push(`🏃 ${motionMap[motion] ?? motion}`);
+    }
+
+    // 位置
+    let geofence = d['geofence'] ?? '';
+    if (geofence.length > 0) {
+      lines.push(`📍 ${geofence}`);
+    }
+    let wifiSsid = d['wifi_ssid'] ?? d['ssid'] ?? '';
+    if (wifiSsid.length > 0) {
+      lines.push(`📶 WiFi: ${wifiSsid}`);
+    }
+
+    // 蓝牙
+    let btDevices = d['bt_device_names'] ?? d['connected_devices'] ?? '';
+    if (btDevices.length > 0) {
+      lines.push(`🔵 蓝牙: ${btDevices}`);
+    }
+    let btInVehicle = d['bt_in_vehicle'] ?? '';
+    if (btInVehicle === 'true') {
+      lines.push(`🚗 车载蓝牙已连接`);
+    }
+
+    // 心率
+    let heartRate = d['heart_rate'] ?? '';
+    if (heartRate.length > 0 && heartRate !== '0') {
+      let hrStatus = d['heart_rate_status'] ?? '';
+      let hrMap: Record<string, string> = {
+        'resting': '休息', 'active': '活跃', 'exercise': '运动'
+      };
+      lines.push(`❤️ 心率: ${heartRate} bpm${hrMap[hrStatus] ? ' (' + hrMap[hrStatus] + ')' : ''}`);
+    }
+
+    // 步数
+    let steps = d['step_count_today'] ?? '';
+    if (steps.length > 0 && steps !== '0') {
+      lines.push(`🚶 今日 ${steps} 步`);
+    }
+
+    // 电量
+    let battery = d['battery_level'] ?? '';
+    if (battery.length > 0) {
+      let charging = d['is_charging'] ?? '';
+      lines.push(`🔋 ${battery}%${charging === 'true' ? ' 充电中' : ''}`);
+    }
+
+    return lines.join('\n');
   }
 
   private extractA2UIContent(paramsJson: string | undefined): string {
