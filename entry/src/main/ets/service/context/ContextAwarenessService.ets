@@ -34,6 +34,10 @@ import {
   FeedbackStats,
   LLMRecommendation,
   GeofenceCategory,
+  SensorTier,
+  WifiMobility,
+  DeviceMobility,
+  DeviceConnectionRecord,
 } from './ContextModels';
 import { LLMFallbackService } from './LLMFallbackService';
 import { TrainingDataSync } from './TrainingDataSync';
@@ -44,6 +48,7 @@ export interface ContextRecommendation {
   rule: ContextRule;
   action: UserAction;
   reason: string;
+  exploreStateInfo?: string;  // 探索模式：当前检测到的状态摘要
 }
 
 type RecommendationListener = (rec: ContextRecommendation) => void;
@@ -76,6 +81,12 @@ interface AccelSample {
   magnitude: number;
   gravityAngle: number;  // 重力方向与Z轴夹角
   timestamp: number;
+}
+
+/** 指纹持久化条目 */
+interface FingerprintEntry {
+  fp: string;
+  ts: number;
 }
 
 export class ContextAwarenessService {
@@ -153,7 +164,10 @@ export class ContextAwarenessService {
 
   // 积极探索模式：每个新状态指纹都触发 LLM 建议
   private exploreMode: boolean = false;
-  private exploredFingerprints: Set<string> = new Set();
+  private exploredFingerprints: Map<string, number> = new Map(); // fp → timestamp
+  private static readonly FINGERPRINT_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24小时后过期，允许重新探索
+  private lastExploreBtDevices: string = ''; // 上次探索时的 BT 设备
+  private lastExploreWifiSsid: string = '';  // 上次探索时的 WiFi
   
   // 位置自动发现
   private locationDiscovery: LocationDiscoveryService = LocationDiscoveryService.getInstance();
@@ -215,6 +229,27 @@ export class ContextAwarenessService {
   // 训练数据同步
   private trainingSync: TrainingDataSync = TrainingDataSync.getInstance();
 
+  // ==================== 分层传感器 (Sensor Tier System) ====================
+  private currentTier: SensorTier = 1;
+  private tierEscalationTime: number = 0;
+  private tierDeEscalationTimer: number = -1;
+  private stationarySinceMs: number = 0;
+  private unknownLocationSinceMs: number = 0;
+
+  // ==================== 设备分类 & 连接时长 ====================
+  private connectionRecords: Map<string, DeviceConnectionRecord> = new Map();
+  private lastKnownBtFixed: string = '';
+  private lastKnownBtVehicle: string = '';
+
+  // WiFi hotspot/public SSID patterns
+  private static readonly WIFI_HOTSPOT_PATTERNS: string[] = [
+    'iPhone', 'Android', 'Pixel', 'Galaxy', '的iPhone', 'HUAWEI-', '手机',
+    'Hotspot', '热点', 'DIRECT-'
+  ];
+  private static readonly WIFI_PUBLIC_PREFIXES: string[] = [
+    'CMCC', 'ChinaNet', 'ChinaUnicom', 'eduroam'
+  ];
+
   private constructor() {
     this.geofenceMgr = GeofenceManager.getInstance();
     this.behaviorLog = BehaviorLogger.getInstance();
@@ -263,6 +298,9 @@ export class ContextAwarenessService {
 
     // 加载积极探索模式状态
     await this.loadExploreMode();
+
+    // 加载设备连接记录
+    await this.loadConnectionRecords();
 
     // 初始化训练数据同步 (服务端与 Gateway 同机，端口 18790)
     await this.trainingSync.init(context, 'http://192.168.1.76:18790');
@@ -408,6 +446,7 @@ export class ContextAwarenessService {
         this.tray.put('wifiSsid', ssid, 1.0, 'wifi');
 
         // 遍历所有围栏查找匹配
+        let matched = false;
         let allGeofences = this.geofenceMgr.getAllGeofences();
         for (let gf of allGeofences) {
           let summary = this.locationFusion.getLearnedSignalsSummary(gf);
@@ -415,6 +454,7 @@ export class ContextAwarenessService {
             this.log.info(TAG, `WiFi connected: ${ssid} matches ${gf.category} geofence`);
             this.tray.put('wifiGeofence', gf.category, 0.9, 'wifi');
             this.engine.pushEvent('wifi_arrive_' + gf.category);
+            matched = true;
 
             // 立即触发评估
             this.refreshTray().then(() => {
@@ -423,6 +463,15 @@ export class ContextAwarenessService {
             });
             return;
           }
+        }
+
+        // 探索模式：WiFi 变化但未匹配围栏也触发评估（让 LLM 分析新环境）
+        if (!matched && this.exploreMode) {
+          this.log.info(TAG, `[Explore-DBG] WiFi connected to unmatched "${ssid}", triggering explore evaluation`);
+          this.refreshTray().then(() => {
+            let snapshot = this.augmentSnapshot(this.tray.getSnapshot());
+            this.evaluateAndDeliver(snapshot);
+          });
         }
       });
     } catch (err) {
@@ -654,6 +703,12 @@ export class ContextAwarenessService {
       }
     }
     
+    // 车载蓝牙覆盖：连接车载BT时，stationary/walking → driving
+    let btInVehicle = this.tray.get('bt_in_vehicle');
+    if (btInVehicle && btInVehicle.value === 'true' && (newState === 'stationary' || newState === 'walking')) {
+      newState = 'driving';
+    }
+
     if (newState !== 'stationary') {
       if (this.motionStartTime === 0) {
         this.motionStartTime = Date.now();
@@ -663,7 +718,7 @@ export class ContextAwarenessService {
       this.motionStartTime = 0;
       this.motionStepCountStart = 0;
     }
-    
+
     this.tray.put('motionState', newState, 0.9, 'accelerometer');
     this.tray.put('gpsSpeed', gpsSpeed.toFixed(2), 0.85, 'gps');
 
@@ -959,7 +1014,16 @@ export class ContextAwarenessService {
     try {
       // 先获取WiFi信息
       this.refreshWifiSync();
-      
+
+      // T1 + stationary + 已知围栏 → 跳过 GPS 请求
+      if (this.currentTier <= 1 && this.lastMotionState === 'stationary') {
+        let geofenceSlot = this.tray.get('geofence');
+        if (geofenceSlot !== undefined && geofenceSlot !== null && geofenceSlot.value !== null && geofenceSlot.value.length > 0 && this.lastLocation) {
+          this.log.debug(TAG, 'T1 skip GPS: stationary in known geofence');
+          return;
+        }
+      }
+
       // CellID优化：如果静止且CellID没变，跳过GPS请求
       if (this.lastMotionState === 'stationary') {
         let cellIdChanged = await this.checkCellIdChanged();
@@ -1111,8 +1175,18 @@ export class ContextAwarenessService {
     if (!this.isRunning) return;
     // Refresh tray with latest sensor data, then read snapshot from tray
     await this.refreshTray();
+
+    // Evaluate sensor tier escalation/de-escalation
+    this.evaluateTierEscalation();
+
+    // Detect BT device changes and track connections
+    this.detectBtChangesAndTrackConnections();
+
     let snapshot = this.tray.getSnapshot();
     await this.evaluateAndDeliver(snapshot);
+
+    // Periodically save connection records (every evaluation cycle)
+    this.saveConnectionRecords();
   }
 
 
@@ -1278,6 +1352,9 @@ export class ContextAwarenessService {
     }
     // 拿起手机状态（基于当前运动状态判断，不依赖瞬时检测器）
     this.tray.put('isPickup', this.lastMotionState === 'pickup' ? 'true' : 'false', 0.9, 'accelerometer');
+
+    // Sensor tier
+    this.tray.put('sensorTier', this.currentTier.toString(), 1.0, 'system');
 
     // CellID
     if (this.lastCellId.length > 0) {
@@ -1466,21 +1543,57 @@ export class ContextAwarenessService {
    */
   private async evaluateAndDeliver(snapshot: ContextSnapshot): Promise<void> {
     let results = this.engine.evaluate(snapshot, 3);
+    this.log.info(TAG, `[Explore-DBG] evaluateAndDeliver called: exploreMode=${this.exploreMode}, engineMatches=${results.length}, tod=${snapshot.timeOfDay}, motion=${snapshot.motionState}, geofence=${snapshot.geofence ?? 'none'}, wifi=${snapshot.wifiSsid ?? ''}`);
 
-    // 积极探索模式：新状态指纹 → 强制触发 LLM（即使有引擎匹配也不跳过）
+    // 积极探索模式：新/过期指纹 或 WiFi/BT 变化 → 强制触发 LLM
     let exploreTriggered = false;
     if (this.exploreMode) {
       let fp = this.computeFingerprint(snapshot);
-      if (!this.exploredFingerprints.has(fp)) {
-        this.exploredFingerprints.add(fp);
+      let now = Date.now();
+
+      // 清理过期指纹
+      let expiredCount = 0;
+      let keysToRemove: string[] = [];
+      this.exploredFingerprints.forEach((ts: number, key: string) => {
+        if (now - ts > ContextAwarenessService.FINGERPRINT_EXPIRY_MS) {
+          keysToRemove.push(key);
+        }
+      });
+      for (let k of keysToRemove) {
+        this.exploredFingerprints.delete(k);
+        expiredCount++;
+      }
+      if (expiredCount > 0) {
+        this.log.info(TAG, `[Explore-DBG] expired ${expiredCount} fingerprints`);
+      }
+
+      let lastTs = this.exploredFingerprints.get(fp);
+      let isNew = lastTs === undefined;
+      let isExpired = !isNew && (now - (lastTs as number) > ContextAwarenessService.FINGERPRINT_EXPIRY_MS);
+
+      // 检测 WiFi/BT 变化
+      let currentWifi = snapshot.wifiSsid || '';
+      let btSlot = this.tray.get('bt_device_names');
+      let currentBt = (btSlot && btSlot.value) ? btSlot.value : '';
+      let wifiChanged = currentWifi.length > 0 && currentWifi !== this.lastExploreWifiSsid;
+      let btChanged = currentBt.length > 0 && currentBt !== this.lastExploreBtDevices;
+
+      this.log.info(TAG, `[Explore-DBG] fp="${fp}", isNew=${isNew}, isExpired=${isExpired}, wifiChanged=${wifiChanged}, btChanged=${btChanged}, total=${this.exploredFingerprints.size}`);
+
+      if (isNew || isExpired || wifiChanged || btChanged) {
+        this.exploredFingerprints.set(fp, now);
         this.saveExploredFingerprints();
+        this.lastExploreWifiSsid = currentWifi;
+        this.lastExploreBtDevices = currentBt;
         exploreTriggered = true;
-        this.log.info(TAG, `Explore mode: new fingerprint "${fp}", will trigger LLM`);
+        let reason = isNew ? 'new fingerprint' : isExpired ? 'expired fingerprint' : wifiChanged ? 'WiFi changed' : 'BT changed';
+        this.log.info(TAG, `Explore mode: ${reason} "${fp}", will trigger LLM`);
       }
     }
 
     if (results.length > 0) {
       let top = results[0];
+      this.log.info(TAG, `[Explore-DBG] top match: ruleId=${top.ruleId}, confidence=${top.confidence.toFixed(2)}, cooldown=${this.isOnCooldown(top.ruleId)}, exploreTriggered=${exploreTriggered}`);
       if (!this.isOnCooldown(top.ruleId)) {
         let rec: ContextRecommendation = {
           rule: {
@@ -1497,6 +1610,10 @@ export class ContextAwarenessService {
           action: top.action as UserAction,
           reason: `基于当前情景推荐 (${Math.round(top.confidence * 100)}% 匹配)`
         };
+        // 探索模式：附带当前状态摘要
+        if (exploreTriggered) {
+          rec.exploreStateInfo = this.buildExploreStateInfo(snapshot);
+        }
 
         this.notifyRecommendation(rec);
         this.setOnCooldown(top.ruleId);
@@ -1510,11 +1627,17 @@ export class ContextAwarenessService {
     }
 
     // C++ engine returned no matches — try LLM fallback
-    this.log.info(TAG, 'No engine matches, trying LLM fallback');
+    this.log.info(TAG, `[Explore-DBG] entering LLM fallback path (exploreTriggered=${exploreTriggered}, engineMatches=${results.length})`);
+    // 传递 BT 设备信息给 LLM prompt
+    let btSlotForLlm = this.tray.get('bt_device_names');
+    this.llmFallback.btDeviceNames = (btSlotForLlm && btSlotForLlm.value) ? btSlotForLlm.value : '';
     let llmResult = await this.llmFallback.analyzeContext(snapshot);
+    this.log.info(TAG, `[Explore-DBG] LLM result: ${llmResult ? `title="${llmResult.title}", priority=${llmResult.priority}` : 'null (NO_ACTION or error)'}`);
     if (!llmResult) return;
 
-    if (this.isOnCooldown('llm_fallback')) return;
+    let llmCooldown = this.isOnCooldown('llm_fallback');
+    this.log.info(TAG, `[Explore-DBG] llm_fallback cooldown=${llmCooldown}`);
+    if (llmCooldown) return;
 
     // Don't repeat same LLM recommendation if user didn't give feedback on the last one
     let llmPayload = `${llmResult.title}: ${llmResult.content}`;
@@ -1547,6 +1670,10 @@ export class ContextAwarenessService {
       action: { type: 'show_info', target: 'llm_suggestion' } as UserAction,
       reason: llmPayload
     };
+    // 探索模式：附带当前状态摘要
+    if (exploreTriggered) {
+      rec.exploreStateInfo = this.buildExploreStateInfo(snapshot);
+    }
 
     this.notifyRecommendation(rec);
     this.setOnCooldown('llm_fallback');
@@ -1687,16 +1814,45 @@ export class ContextAwarenessService {
         
         let updated = false;
         
-        // 学习WiFi SSID
+        // 学习WiFi SSID (只学习 fixed WiFi, 跳过 hotspot/public)
         if (this.lastWifiSsid && this.lastWifiSsid.length > 0) {
-          if (!signals.wifiSSIDs!.includes(this.lastWifiSsid)) {
-            signals.wifiSSIDs!.push(this.lastWifiSsid);
-            this.log.info(TAG, `Learned WiFi for ${gf.name}: ${this.lastWifiSsid}`);
-            this.notifyGeofenceFeatureLearned(gf.name, 'WiFi', this.lastWifiSsid);
-            updated = true;
+          let wifiMobility = this.classifyWifi(this.lastWifiSsid);
+          if (wifiMobility === 'fixed') {
+            if (!signals.wifiSSIDs!.includes(this.lastWifiSsid)) {
+              signals.wifiSSIDs!.push(this.lastWifiSsid);
+              this.log.info(TAG, `Learned WiFi for ${gf.name}: ${this.lastWifiSsid}`);
+              this.notifyGeofenceFeatureLearned(gf.name, 'WiFi', this.lastWifiSsid);
+              updated = true;
+            }
+          } else {
+            this.log.debug(TAG, `${I18n.t(wifiMobility === 'hotspot' ? 'context.wifi.hotspot' : 'context.wifi.public')}: ${this.lastWifiSsid}`);
           }
         }
-        
+
+        // 学习蓝牙设备 (只学习 fixed 设备, 跳过 portable/vehicle)
+        let btFixedSlot = this.tray.get('bt_fixed_devices');
+        if (btFixedSlot && btFixedSlot.value && btFixedSlot.value.length > 0) {
+          let btNames = btFixedSlot.value.split(', ');
+          for (let b = 0; b < btNames.length; b++) {
+            let btName = btNames[b].trim();
+            if (btName.length > 0 && !signals.bluetoothDevices!.includes(btName)) {
+              signals.bluetoothDevices!.push(btName);
+              this.log.info(TAG, `Learned BT fixed for ${gf.name}: ${btName}`);
+              this.notifyGeofenceFeatureLearned(gf.name, 'Bluetooth', btName);
+              updated = true;
+            }
+          }
+        }
+        // Log vehicle/portable BT (not learned to geofence)
+        let btVehicleSlot = this.tray.get('bt_vehicle_devices');
+        if (btVehicleSlot && btVehicleSlot.value && btVehicleSlot.value.length > 0) {
+          this.log.debug(TAG, `BT vehicle (skip geofence): ${btVehicleSlot.value}`);
+        }
+        let btPortableSlot = this.tray.get('bt_portable_devices');
+        if (btPortableSlot && btPortableSlot.value && btPortableSlot.value.length > 0) {
+          this.log.debug(TAG, `BT portable (skip): ${btPortableSlot.value}`);
+        }
+
         // 学习CellID
         if (this.lastCellId && this.lastCellId.length > 0) {
           if (!signals.cellIds!.includes(this.lastCellId)) {
@@ -1848,7 +2004,419 @@ export class ContextAwarenessService {
     return R * c;
   }
 
-  
+  // ==================== WiFi 分类 ====================
+
+  /**
+   * 分类 WiFi SSID: hotspot (移动热点), public (公共), fixed (固定/家用/企业)
+   */
+  private classifyWifi(ssid: string): WifiMobility {
+    if (ssid.length === 0) return 'fixed';
+
+    // Check hotspot patterns (contains match)
+    for (let i = 0; i < ContextAwarenessService.WIFI_HOTSPOT_PATTERNS.length; i++) {
+      if (ssid.indexOf(ContextAwarenessService.WIFI_HOTSPOT_PATTERNS[i]) >= 0) {
+        return 'hotspot';
+      }
+    }
+
+    // Check public WiFi prefixes
+    for (let i = 0; i < ContextAwarenessService.WIFI_PUBLIC_PREFIXES.length; i++) {
+      if (ssid.startsWith(ContextAwarenessService.WIFI_PUBLIC_PREFIXES[i])) {
+        return 'public';
+      }
+    }
+
+    return 'fixed';
+  }
+
+  // ==================== 分层传感器管理 (Sensor Tier) ====================
+
+  /**
+   * 评估是否需要升级或降级传感器层级
+   * 在 periodicEvaluate() 开头调用
+   */
+  private evaluateTierEscalation(): void {
+    let now = Date.now();
+    let motionState = this.lastMotionState;
+    let geofenceSlot = this.tray.get('geofence');
+    let inKnownGeofence = geofenceSlot !== undefined && geofenceSlot !== null && geofenceSlot.value !== null && geofenceSlot.value.length > 0;
+
+    // 穿戴设备联动
+    let heartRateStatus = this.tray.get('heart_rate_status');
+    let wearingState = this.tray.get('wearing_state');
+
+    // Track stationary duration
+    if (motionState === 'stationary') {
+      if (this.stationarySinceMs === 0) this.stationarySinceMs = now;
+    } else {
+      this.stationarySinceMs = 0;
+    }
+
+    // Track unknown location duration
+    if (!inKnownGeofence) {
+      if (this.unknownLocationSinceMs === 0) this.unknownLocationSinceMs = now;
+    } else {
+      this.unknownLocationSinceMs = 0;
+    }
+
+    let stationaryDuration = this.stationarySinceMs > 0 ? now - this.stationarySinceMs : 0;
+    let unknownLocationDuration = this.unknownLocationSinceMs > 0 ? now - this.unknownLocationSinceMs : 0;
+
+    // === 降级检查 ===
+
+    // T3→T2: 2 分钟超时自动降级
+    if (this.currentTier === 3) {
+      let t3Duration = now - this.tierEscalationTime;
+      if (t3Duration > 2 * 60 * 1000) {
+        this.deEscalateTier(2, 'T3 timeout (2min)');
+        return;
+      }
+    }
+
+    // T2→T1: 已知围栏 + 静止 10 分钟
+    if (this.currentTier === 2) {
+      if (inKnownGeofence && stationaryDuration > 10 * 60 * 1000) {
+        this.deEscalateTier(1, 'known geofence + stationary 10min');
+        return;
+      }
+      // 穿戴 off_wrist → 降级
+      if (wearingState && wearingState.value === 'off_wrist') {
+        this.deEscalateTier(1, 'off_wrist');
+        return;
+      }
+    }
+
+    // === 升级检查 ===
+
+    // T1→T2 triggers
+    if (this.currentTier === 1) {
+      // 运动状态变化 (非静止)
+      if (motionState !== 'stationary' && motionState !== 'unknown' && motionState !== 'pickup') {
+        this.escalateTier(2, 'motion: ' + motionState);
+        return;
+      }
+      // 未知位置
+      if (!inKnownGeofence && unknownLocationDuration > 60 * 1000) {
+        this.escalateTier(2, 'unknown location');
+        return;
+      }
+      // 心率 exercise
+      if (heartRateStatus && heartRateStatus.value === 'exercise') {
+        this.escalateTier(2, 'exercise heart rate');
+        this.log.info(TAG, I18n.t('context.exercise.detected'));
+        return;
+      }
+    }
+
+    // T2→T3: 未知位置 + 静止 5 分钟 (arrived at new place)
+    if (this.currentTier === 2) {
+      if (!inKnownGeofence && stationaryDuration > 5 * 60 * 1000) {
+        this.escalateTier(3, 'unknown location + stationary 5min');
+        return;
+      }
+    }
+  }
+
+  /**
+   * 升级传感器层级
+   */
+  private escalateTier(target: SensorTier, reason: string): void {
+    if (target <= this.currentTier) return;
+    let prev = this.currentTier;
+    this.currentTier = target;
+    this.tierEscalationTime = Date.now();
+    this.tray.put('sensorTier', target.toString(), 1.0, 'system');
+    this.log.info(TAG, `Tier T${prev}->T${target}: ${reason}`);
+
+    if (target >= 2) this.onTier2Activated();
+    if (target >= 3) this.onTier3Activated();
+  }
+
+  /**
+   * 降级传感器层级
+   */
+  private deEscalateTier(target: SensorTier, reason: string): void {
+    if (target >= this.currentTier) return;
+    let prev = this.currentTier;
+
+    // Deactivate higher tiers
+    if (prev >= 3 && target < 3) this.onTier3Deactivated();
+    if (prev >= 2 && target < 2) this.onTier2Deactivated();
+
+    this.currentTier = target;
+    this.tray.put('sensorTier', target.toString(), 1.0, 'system');
+    this.log.info(TAG, `Tier T${prev}->T${target}: ${reason}`);
+  }
+
+  /**
+   * T2 激活: 确保 GPS 运行, AmbientSound 可启用
+   */
+  private onTier2Activated(): void {
+    // Ensure GPS is on at walking interval
+    if (this.locationIntervalMs > ContextAwarenessService.GPS_WALKING) {
+      this.locationIntervalMs = ContextAwarenessService.GPS_WALKING;
+      this.restartLocationTimer();
+    }
+    this.log.info(TAG, 'Tier T2 activated: GPS ensured, ambient sound eligible');
+  }
+
+  /**
+   * T2 停用: 降低 GPS 频率
+   */
+  private onTier2Deactivated(): void {
+    // Revert GPS to stationary interval
+    this.locationIntervalMs = ContextAwarenessService.GPS_STATIONARY;
+    this.restartLocationTimer();
+    this.log.info(TAG, 'Tier T2 deactivated: GPS reduced');
+  }
+
+  /**
+   * T3 激活: 高功耗传感器 (VisionAnalysis stub)
+   */
+  private onTier3Activated(): void {
+    this.log.info(TAG, 'Tier T3 activated: high-power sensors eligible');
+    // VisionAnalysis is disabled by default; T3 makes it eligible if user enables it
+  }
+
+  /**
+   * T3 停用
+   */
+  private onTier3Deactivated(): void {
+    this.log.info(TAG, 'Tier T3 deactivated');
+  }
+
+  // ==================== 设备围栏关联 & 自动创建 ====================
+
+  /**
+   * 为固定设备自动创建围栏 (GPS 精度 < 50m, 200m 内无已有围栏)
+   */
+  private autoCreateGeofenceForFixedDevice(lat: number, lng: number, accuracy: number, deviceName: string): void {
+    if (accuracy > 50) {
+      this.log.debug(TAG, `Skip auto-create geofence: GPS accuracy ${accuracy}m > 50m`);
+      return;
+    }
+
+    // Check if a geofence already exists within 200m
+    let allGeofences = this.geofenceMgr.getAllGeofences();
+    for (let i = 0; i < allGeofences.length; i++) {
+      let gf = allGeofences[i];
+      let dist = this.haversineDistance(lat, lng, gf.latitude, gf.longitude);
+      if (dist < 200) {
+        this.log.info(TAG, `Auto-create skipped: ${deviceName} within ${Math.round(dist)}m of ${gf.name}`);
+        // Associate device with existing geofence instead
+        this.learnDeviceToGeofence(gf, deviceName, 'bluetooth');
+        return;
+      }
+    }
+
+    // Create new geofence
+    let category = this.inferCategoryFromTime();
+    let gfId = 'auto_' + Date.now().toString();
+    let gf: Geofence = {
+      id: gfId,
+      name: deviceName,
+      latitude: lat,
+      longitude: lng,
+      radiusMeters: 100,
+      category: category as GeofenceCategory,
+      learnedSignals: {
+        wifiSSIDs: [],
+        bluetoothDevices: [deviceName],
+        cellIds: [],
+        typicalTimes: [],
+        lastSeen: Date.now(),
+        visitCount: 1,
+      }
+    };
+
+    this.addGeofence(gf);
+    this.log.info(TAG, `${I18n.t('context.geofence.autoCreated')}: ${deviceName} → ${gfId} (${category})`);
+  }
+
+  /**
+   * 将设备学习到围栏的 learnedSignals 中
+   */
+  private learnDeviceToGeofence(gf: Geofence, deviceName: string, deviceType: 'wifi' | 'bluetooth'): void {
+    let signals = gf.learnedSignals ?? {
+      wifiSSIDs: [], bluetoothDevices: [], cellIds: [], typicalTimes: [], lastSeen: 0, visitCount: 0
+    };
+
+    if (deviceType === 'bluetooth') {
+      if (!signals.bluetoothDevices!.includes(deviceName)) {
+        signals.bluetoothDevices!.push(deviceName);
+        this.log.info(TAG, `BT fixed: ${deviceName} -> learned for ${gf.name}`);
+        this.notifyGeofenceFeatureLearned(gf.name, 'Bluetooth', deviceName);
+      }
+    } else {
+      if (!signals.wifiSSIDs!.includes(deviceName)) {
+        signals.wifiSSIDs!.push(deviceName);
+        this.log.info(TAG, `WiFi fixed: ${deviceName} -> learned for ${gf.name}`);
+        this.notifyGeofenceFeatureLearned(gf.name, 'WiFi', deviceName);
+      }
+    }
+
+    signals.lastSeen = Date.now();
+    gf.learnedSignals = signals;
+    this.geofenceMgr.saveToFile();
+  }
+
+  // ==================== BT 变化检测 & 连接时长追踪 ====================
+
+  /**
+   * 检测 BT 固定设备变化, 关联围栏, 追踪连接时长
+   * 在 periodicEvaluate() 中调用
+   */
+  private detectBtChangesAndTrackConnections(): void {
+    let now = Date.now();
+
+    // Read current BT devices from tray
+    let btFixedSlot = this.tray.get('bt_fixed_devices');
+    let currentBtFixed = (btFixedSlot && btFixedSlot.value) ? btFixedSlot.value : '';
+    let btVehicleSlot = this.tray.get('bt_vehicle_devices');
+    let currentBtVehicle = (btVehicleSlot && btVehicleSlot.value) ? btVehicleSlot.value : '';
+
+    // Parse device names
+    let currentFixedSet: Set<string> = new Set();
+    if (currentBtFixed.length > 0) {
+      let parts = currentBtFixed.split(', ');
+      for (let p of parts) {
+        let trimmed = p.trim();
+        if (trimmed.length > 0) currentFixedSet.add(trimmed);
+      }
+    }
+
+    let previousFixedSet: Set<string> = new Set();
+    if (this.lastKnownBtFixed.length > 0) {
+      let parts = this.lastKnownBtFixed.split(', ');
+      for (let p of parts) {
+        let trimmed = p.trim();
+        if (trimmed.length > 0) previousFixedSet.add(trimmed);
+      }
+    }
+
+    // New fixed devices → associate with geofence or auto-create
+    currentFixedSet.forEach((name: string) => {
+      if (!previousFixedSet.has(name)) {
+        this.log.info(TAG, `BT fixed device appeared: ${name}`);
+        // Start connection session
+        this.startConnectionSession(name, 'bluetooth', 'fixed');
+        // Associate with geofence
+        if (this.lastLocation && this.lastLocation.accuracy < 50) {
+          this.autoCreateGeofenceForFixedDevice(
+            this.lastLocation.latitude, this.lastLocation.longitude,
+            this.lastLocation.accuracy, name
+          );
+        }
+      }
+    });
+
+    // Disappeared fixed devices → end session
+    previousFixedSet.forEach((name: string) => {
+      if (!currentFixedSet.has(name)) {
+        this.log.info(TAG, `BT fixed device disappeared: ${name}`);
+        this.endConnectionSession(name);
+      }
+    });
+
+    // Vehicle BT change detection
+    if (currentBtVehicle !== this.lastKnownBtVehicle) {
+      if (currentBtVehicle.length > 0 && this.lastKnownBtVehicle.length === 0) {
+        this.log.info(TAG, `${I18n.t('context.device.inVehicle')}: ${currentBtVehicle}`);
+      }
+    }
+
+    this.lastKnownBtFixed = currentBtFixed;
+    this.lastKnownBtVehicle = currentBtVehicle;
+  }
+
+  /**
+   * 开始设备连接会话
+   */
+  private startConnectionSession(deviceName: string, deviceType: 'wifi' | 'bluetooth', mobility: string): void {
+    let now = Date.now();
+    let existing = this.connectionRecords.get(deviceName);
+    if (existing) {
+      existing.sessionCount++;
+      existing.currentSessionStart = now;
+      existing.lastSeen = now;
+    } else {
+      let record: DeviceConnectionRecord = {
+        deviceName: deviceName,
+        deviceType: deviceType,
+        mobility: mobility as DeviceMobility,
+        geofenceId: '',
+        firstSeen: now,
+        lastSeen: now,
+        totalDurationMs: 0,
+        sessionCount: 1,
+        currentSessionStart: now,
+      };
+      this.connectionRecords.set(deviceName, record);
+    }
+  }
+
+  /**
+   * 结束设备连接会话
+   */
+  private endConnectionSession(deviceName: string): void {
+    let record = this.connectionRecords.get(deviceName);
+    if (record && record.currentSessionStart > 0) {
+      let sessionDuration = Date.now() - record.currentSessionStart;
+      record.totalDurationMs += sessionDuration;
+      record.currentSessionStart = 0;
+      record.lastSeen = Date.now();
+      this.log.info(TAG, `Connection ended: ${deviceName}, session=${Math.round(sessionDuration / 1000)}s, total=${Math.round(record.totalDurationMs / 1000)}s`);
+    }
+  }
+
+  /**
+   * 持久化连接记录
+   */
+  private async saveConnectionRecords(): Promise<void> {
+    if (!this.context) return;
+    try {
+      let prefs = await preferences.getPreferences(this.context, 'context_awareness');
+      let arr: Object[] = [];
+      this.connectionRecords.forEach((record: DeviceConnectionRecord) => {
+        arr.push(record as Object);
+      });
+      await prefs.put('device_connection_records', JSON.stringify(arr));
+      await prefs.flush();
+    } catch (err) {
+      this.log.warn(TAG, `Failed to save connection records: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * 加载连接记录
+   */
+  private async loadConnectionRecords(): Promise<void> {
+    if (!this.context) return;
+    try {
+      let prefs = await preferences.getPreferences(this.context, 'context_awareness');
+      let json = await prefs.get('device_connection_records', '[]') as string;
+      let arr = JSON.parse(json) as DeviceConnectionRecord[];
+      let now = Date.now();
+      for (let i = 0; i < arr.length; i++) {
+        let record = arr[i];
+        // Cap orphan sessions at 30 minutes
+        if (record.currentSessionStart > 0) {
+          let orphanDuration = now - record.currentSessionStart;
+          if (orphanDuration > 30 * 60 * 1000) {
+            record.totalDurationMs += 30 * 60 * 1000;
+          } else {
+            record.totalDurationMs += orphanDuration;
+          }
+          record.currentSessionStart = 0;
+        }
+        this.connectionRecords.set(record.deviceName, record);
+      }
+      this.log.info(TAG, `Loaded ${this.connectionRecords.size} connection records`);
+    } catch (err) {
+      this.log.warn(TAG, `Failed to load connection records: ${(err as Error).message}`);
+    }
+  }
+
   private async onGeofenceEvent(event: GeofenceEvent): Promise<void> {
     this.log.info(TAG, `Geofence ${event.type}: ${event.geofence.name}`);
 
@@ -2067,9 +2635,19 @@ export class ContextAwarenessService {
       let prefs = await preferences.getPreferences(this.context, 'context_awareness');
       this.exploreMode = await prefs.get('explore_mode', false) as boolean;
       let fpJson = await prefs.get('explored_fingerprints', '[]') as string;
-      let fpArr: string[] = JSON.parse(fpJson) as string[];
-      for (let i = 0; i < fpArr.length; i++) {
-        this.exploredFingerprints.add(fpArr[i]);
+      let parsed: Object[] = JSON.parse(fpJson) as Object[];
+      // 兼容旧格式 (string[]) 和新格式 ({fp: string, ts: number}[])
+      for (let i = 0; i < parsed.length; i++) {
+        let item: Object = parsed[i];
+        if (typeof item === 'string') {
+          // 旧格式：没有时间戳，视为已过期（会被重新探索）
+          this.exploredFingerprints.set(item as string, 0);
+        } else {
+          let entry = item as Record<string, string | number>;
+          if (entry['fp'] !== undefined && entry['ts'] !== undefined) {
+            this.exploredFingerprints.set(entry['fp'] as string, entry['ts'] as number);
+          }
+        }
       }
       this.log.info(TAG, `Explore mode loaded: enabled=${this.exploreMode}, fingerprints=${this.exploredFingerprints.size}`);
     } catch (err) {
@@ -2077,14 +2655,15 @@ export class ContextAwarenessService {
     }
   }
 
-  /** 持久化已探索指纹 */
+  /** 持久化已探索指纹 (带时间戳) */
   private async saveExploredFingerprints(): Promise<void> {
     if (!this.context) return;
     try {
       let prefs = await preferences.getPreferences(this.context, 'context_awareness');
-      let arr: string[] = [];
-      this.exploredFingerprints.forEach((fp: string) => {
-        arr.push(fp);
+      let arr: FingerprintEntry[] = [];
+      this.exploredFingerprints.forEach((ts: number, fp: string) => {
+        let entry: FingerprintEntry = { fp: fp, ts: ts };
+        arr.push(entry);
       });
       await prefs.put('explored_fingerprints', JSON.stringify(arr));
       await prefs.flush();
@@ -2093,9 +2672,98 @@ export class ContextAwarenessService {
     }
   }
 
-  /** 计算状态指纹：只取核心维度 */
+  /** 计算状态指纹：核心维度 + WiFi/BT 设备 + 小时段 */
   private computeFingerprint(snapshot: ContextSnapshot): string {
-    return `${snapshot.timeOfDay || 'unknown'}|${snapshot.isWeekend || 'false'}|${snapshot.motionState || 'unknown'}|${snapshot.geofence || 'none'}`;
+    // 小时段：将24小时分为 3 小时一组 (0-2, 3-5, 6-8, ...) → 更细粒度
+    let hourNum = parseInt(snapshot.hour || '0');
+    let hourBucket = Math.floor(hourNum / 3).toString();
+    let wifi = snapshot.wifiSsid || 'none';
+    // BT: 取已连接的设备名
+    let btSlot = this.tray.get('bt_device_names');
+    let bt = (btSlot && btSlot.value && btSlot.value.length > 0) ? btSlot.value : 'none';
+    return `${snapshot.timeOfDay || 'unknown'}|${snapshot.isWeekend || 'false'}|${snapshot.motionState || 'unknown'}|${snapshot.geofence || 'none'}|h${hourBucket}|w:${wifi}|bt:${bt}`;
+  }
+
+  /** 构建探索模式状态摘要：人类可读的当前检测状态 */
+  private buildExploreStateInfo(snapshot: ContextSnapshot): string {
+    let lines: string[] = [];
+
+    // 时段
+    let todMap: Record<string, string> = {
+      'dawn': '黎明', 'morning': '上午', 'afternoon': '下午',
+      'evening': '傍晚', 'night': '深夜'
+    };
+    let todLabel = todMap[snapshot.timeOfDay] ?? snapshot.timeOfDay;
+    let h = snapshot.hour ?? '';
+    let dayNames: string[] = ['日', '一', '二', '三', '四', '五', '六'];
+    let dayIdx = parseInt(snapshot.dayOfWeek || '0');
+    let dayLabel = dayIdx >= 0 && dayIdx < 7 ? `周${dayNames[dayIdx]}` : '';
+    let weekendTag = snapshot.isWeekend === 'true' ? '（周末）' : '';
+    lines.push(`⏰ ${todLabel} ${h}:00 ${dayLabel}${weekendTag}`);
+
+    // 运动状态
+    let motionMap: Record<string, string> = {
+      'stationary': '静止', 'walking': '步行', 'running': '跑步',
+      'driving': '驾车', 'transit': '乘车', 'cycling': '骑行'
+    };
+    let motionLabel = motionMap[snapshot.motionState] ?? snapshot.motionState;
+    let durationSec = parseInt(snapshot.activityDuration || '0');
+    let durationStr = durationSec > 0
+      ? ` (${durationSec >= 3600 ? Math.floor(durationSec / 3600) + '小时' : Math.floor(durationSec / 60) + '分钟'})`
+      : '';
+    lines.push(`🏃 ${motionLabel}${durationStr}`);
+
+    // 位置
+    if (snapshot.geofence && snapshot.geofence.length > 0) {
+      lines.push(`📍 ${snapshot.geofence}`);
+    }
+    if (snapshot.wifiSsid && snapshot.wifiSsid.length > 0) {
+      lines.push(`📶 WiFi: ${snapshot.wifiSsid}`);
+    }
+    if (snapshot.wifiGeofence && snapshot.wifiGeofence.length > 0) {
+      lines.push(`📡 WiFi围栏: ${snapshot.wifiGeofence}`);
+    }
+
+    // 蓝牙设备
+    let btSlot = this.tray.get('bt_device_names');
+    let btNames = (btSlot && btSlot.value && btSlot.value.length > 0) ? btSlot.value : '';
+    if (btNames.length > 0) {
+      lines.push(`🔵 蓝牙: ${btNames}`);
+    }
+    if (snapshot.bt_in_vehicle === 'true') {
+      lines.push(`🚗 车载蓝牙已连接`);
+    }
+
+    // 心率 & 穿戴
+    if (snapshot.heartRate && snapshot.heartRate.length > 0 && snapshot.heartRate !== '0') {
+      let hrStatusMap: Record<string, string> = {
+        'resting': '休息', 'active': '活跃', 'exercise': '运动',
+        'low': '偏低', 'unknown': '未知'
+      };
+      let hrLabel = hrStatusMap[snapshot.heart_rate_status ?? ''] ?? '';
+      lines.push(`❤️ 心率: ${snapshot.heartRate} bpm${hrLabel.length > 0 ? ' (' + hrLabel + ')' : ''}`);
+    }
+    if (snapshot.wearing_state && snapshot.wearing_state.length > 0) {
+      lines.push(`⌚ ${snapshot.wearing_state === 'on_wrist' ? '佩戴中' : '未佩戴'}`);
+    }
+
+    // 步数
+    if (snapshot.stepCount && snapshot.stepCount.length > 0 && snapshot.stepCount !== '0') {
+      lines.push(`🚶 今日 ${snapshot.stepCount} 步`);
+    }
+
+    // 电量
+    if (snapshot.batteryLevel && snapshot.batteryLevel.length > 0) {
+      let chargingTag = snapshot.isCharging === 'true' ? ' 充电中' : '';
+      lines.push(`🔋 ${snapshot.batteryLevel}%${chargingTag}`);
+    }
+
+    // 传感器层级
+    if (snapshot.sensorTier && snapshot.sensorTier.length > 0) {
+      lines.push(`📊 传感器层级: T${snapshot.sensorTier}`);
+    }
+
+    return lines.join('\n');
   }
 
   /**

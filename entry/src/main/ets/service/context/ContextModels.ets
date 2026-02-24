@@ -538,3 +538,41 @@ export interface SleepRecord {
   durationMs?: number;            // 睡眠时长
   source: 'wearable' | 'inferred' | 'manual';  // 来源
 }
+
+// ==================== 分层传感器 & 设备分类 ====================
+
+/** 传感器层级: T0常驻, T1低功耗, T2中功耗, T3高功耗 */
+export type SensorTier = 0 | 1 | 2 | 3;
+
+/** 蓝牙设备移动性分类 */
+export type DeviceMobility = 'fixed' | 'portable' | 'vehicle' | 'unknown';
+
+/** WiFi 移动性分类 */
+export type WifiMobility = 'hotspot' | 'public' | 'fixed';
+
+/** 蓝牙 Major/Minor Class 常量 (用于设备分类) */
+export const BT_MINOR_CLASS: Record<string, number> = {
+  'LOUDSPEAKER': 0x0414,
+  'HIFI_AUDIO': 0x0428,
+  'SET_TOP_BOX': 0x0424,
+  'VIDEO_DISPLAY_LOUDSPEAKER': 0x043C,
+  'WEARABLE_HEADSET': 0x0404,
+  'HEADPHONES': 0x0418,
+  'PORTABLE_AUDIO': 0x041C,
+  'MAJOR_WEARABLE': 0x0700,
+  'CAR_AUDIO': 0x0420,
+  'HANDSFREE': 0x0408,
+};
+
+/** 设备连接时长记录 */
+export interface DeviceConnectionRecord {
+  deviceName: string;
+  deviceType: 'wifi' | 'bluetooth';
+  mobility: DeviceMobility;
+  geofenceId: string;
+  firstSeen: number;
+  lastSeen: number;
+  totalDurationMs: number;
+  sessionCount: number;
+  currentSessionStart: number;
+}

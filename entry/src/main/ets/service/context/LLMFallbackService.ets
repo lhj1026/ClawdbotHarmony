@@ -38,16 +38,19 @@ export class LLMFallbackService {
   private static instance: LLMFallbackService | null = null;
   private log: LogService = LogService.getInstance();
 
-  // Rate limiting: max 3 calls per hour
-  private static readonly MAX_CALLS_PER_HOUR: number = 3;
+  // Rate limiting: max 6 calls per hour
+  private static readonly MAX_CALLS_PER_HOUR: number = 6;
   private callTimestamps: number[] = [];
 
-  // Cache: reuse results for same context within 10 min
-  private static readonly CACHE_TTL_MS: number = 10 * 60 * 1000;
+  // Cache: reuse results for same context within 5 min
+  private static readonly CACHE_TTL_MS: number = 5 * 60 * 1000;
   private cache: CacheEntry[] = [];
   private static readonly MAX_CACHE_SIZE: number = 10;
 
   private context: common.UIAbilityContext | null = null;
+
+  // 调用方在 analyzeContext 前设置，用于 prompt
+  btDeviceNames: string = '';
 
   private constructor() {}
 
@@ -68,26 +71,29 @@ export class LLMFallbackService {
    * or if rate-limited / error.
    */
   async analyzeContext(snapshot: ContextSnapshot): Promise<LLMRecommendation | null> {
+    this.log.info(TAG, `[Explore-DBG] analyzeContext called, tod=${snapshot.timeOfDay}, motion=${snapshot.motionState}, geofence=${snapshot.geofence ?? 'none'}`);
+
     // Check cache first
     let cacheKey = this.buildCacheKey(snapshot);
     let cached = this.getCached(cacheKey);
     if (cached !== undefined) {
-      this.log.info(TAG, 'Cache hit, reusing previous result');
+      this.log.info(TAG, `[Explore-DBG] Cache hit for key=${cacheKey}, result=${cached ? cached.title : 'null'}`);
       return cached;
     }
 
     // Check rate limit
     if (!this.canMakeCall()) {
-      this.log.warn(TAG, 'Rate limited, skipping LLM call');
+      this.log.warn(TAG, `[Explore-DBG] Rate limited (${this.callTimestamps.length}/${LLMFallbackService.MAX_CALLS_PER_HOUR} calls in last hour)`);
       return null;
     }
 
     // Load settings
     let settings = await this.loadSettings();
     if (!settings) {
-      this.log.warn(TAG, 'No API settings available, skipping LLM call');
+      this.log.warn(TAG, '[Explore-DBG] No API settings — provider has no key configured');
       return null;
     }
+    this.log.info(TAG, `[Explore-DBG] LLM settings loaded: provider=${settings.provider}, model=${settings.model}`);
 
     // Build prompt
     let systemPrompt = this.buildSystemPrompt();
@@ -130,13 +136,17 @@ export class LLMFallbackService {
 
     let geofenceStr = snapshot.geofence ? snapshot.geofence : '未知';
     let chargingStr = snapshot.isCharging === 'true' ? '充电中' : '未充电';
+    let wifiStr = snapshot.wifiSsid ? snapshot.wifiSsid : '未连接';
+    let btStr = this.btDeviceNames.length > 0 ? this.btDeviceNames : '无';
 
     return '当前状态:\n' +
       `- 时间: ${snapshot.timeOfDay} (${hour}:00), ${dayName}\n` +
       `- 位置: ${geofenceStr}\n` +
       `- 运动: ${snapshot.motionState}\n` +
       `- 电量: ${snapshot.batteryLevel}%, ${chargingStr}\n` +
-      `- 网络: ${snapshot.networkType}`;
+      `- 网络: ${snapshot.networkType}\n` +
+      `- WiFi: ${wifiStr}\n` +
+      `- 蓝牙设备: ${btStr}`;
   }
 
   // ==================== Response parsing ====================
@@ -230,10 +240,11 @@ export class LLMFallbackService {
   // ==================== Caching ====================
 
   private buildCacheKey(snapshot: ContextSnapshot): string {
-    // Key on the fields that meaningfully affect the recommendation
+    // Key on the fields that meaningfully affect the recommendation (including WiFi/BT)
     return `${snapshot.timeOfDay}_${snapshot.hour}_${snapshot.dayOfWeek}_` +
       `${snapshot.motionState}_${snapshot.geofence || 'none'}_` +
-      `${snapshot.networkType}_${snapshot.isCharging}`;
+      `${snapshot.networkType}_${snapshot.isCharging}_` +
+      `${snapshot.wifiSsid || 'none'}_${this.btDeviceNames || 'none'}`;
   }
 
   /**

@@ -120,6 +120,13 @@ export interface ContextSnapshot {
   prevActivityState?: string;   // 上一个活动状态: 'sitting', 'sleeping', 'standing', 'active'
   activityDuration?: string;    // 当前活动持续时间(秒)
   activityState?: string;       // 当前活动状态
+  // 设备分类 & 层级
+  bt_in_vehicle?: string;       // 'true' if vehicle BT connected
+  bt_fixed_devices?: string;    // comma-separated fixed device names
+  bt_vehicle_devices?: string;  // comma-separated vehicle device names
+  sensorTier?: string;          // current sensor tier '0'-'3'
+  heart_rate_status?: string;   // 'resting', 'normal', 'exercise'
+  wearing_state?: string;       // 'on_wrist', 'off_wrist'
 }
 
 /** Minimal geofence info for rule binding (avoids circular import) */
@@ -485,6 +492,12 @@ export class ContextEngineService {
       if (snapshot.stepCount !== undefined) snapshotRecord['stepCount'] = snapshot.stepCount;
       if (snapshot.speed !== undefined) snapshotRecord['speed'] = snapshot.speed;
       if (snapshot.transportMode !== undefined) snapshotRecord['transportMode'] = snapshot.transportMode;
+      if (snapshot.bt_in_vehicle !== undefined) snapshotRecord['bt_in_vehicle'] = snapshot.bt_in_vehicle;
+      if (snapshot.bt_fixed_devices !== undefined) snapshotRecord['bt_fixed_devices'] = snapshot.bt_fixed_devices;
+      if (snapshot.bt_vehicle_devices !== undefined) snapshotRecord['bt_vehicle_devices'] = snapshot.bt_vehicle_devices;
+      if (snapshot.sensorTier !== undefined) snapshotRecord['sensorTier'] = snapshot.sensorTier;
+      if (snapshot.heart_rate_status !== undefined) snapshotRecord['heart_rate_status'] = snapshot.heart_rate_status;
+      if (snapshot.wearing_state !== undefined) snapshotRecord['wearing_state'] = snapshot.wearing_state;
       let filtered: MatchResult[] = [];
       for (let i = 0; i < results.length; i++) {
         let result = results[i];

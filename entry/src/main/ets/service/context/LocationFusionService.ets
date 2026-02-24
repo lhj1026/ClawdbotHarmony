@@ -7,7 +7,7 @@
  * 学习机制：GPS 高精度确认用户在某围栏内时，自动记录当前 WiFi SSID
  * 和附近 BT 设备。累积 3 次以上观测后，该信号可用于位置确认。
  */
-import { wifiManager } from '@kit.ConnectivityKit';
+import { wifiManager, connection } from '@kit.ConnectivityKit';
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { LogService } from '../../common/LogService';
@@ -255,12 +255,21 @@ export class LocationFusionService {
   }
 
   private getCurrentBtDevices(): string[] {
-    // BLE 扫描需要持续监听，这里使用已配对设备列表作为替代
-    // HarmonyOS @kit.ConnectivityKit 的 ble/access 模块
+    // 使用已配对设备列表获取蓝牙设备名称
     try {
-      // 注意：HarmonyOS ble.getConnectedBLEDevices() 可能不可用或需要权限
-      // 降级策略：返回空数组，不影响 GPS-only 场景
-      return [];
+      let pairedDevices = connection.getPairedDevices();
+      let names: string[] = [];
+      for (let i = 0; i < pairedDevices.length; i++) {
+        try {
+          let deviceName = connection.getRemoteDeviceName(pairedDevices[i]);
+          if (deviceName && deviceName.length > 0) {
+            names.push(deviceName);
+          }
+        } catch {
+          // Device info unavailable, skip
+        }
+      }
+      return names;
     } catch {
       return [];
     }

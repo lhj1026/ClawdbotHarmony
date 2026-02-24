@@ -380,30 +380,45 @@ export class NodeRuntime {
             }
           } catch { /* use ruleId as fallback */ }
 
-          // Build A2UI card JSONL for the recommendation
-          let a2uiJsonl = this.buildContextRecommendationA2UI(ruleId, ruleName, rec.reason, confidence);
-
           // Store last recommendation for "back" functionality
           this._lastRecRuleId = ruleId;
           this._lastRecRuleName = ruleName;
           this._lastRecReason = rec.reason;
           this._lastRecConfidence = confidence;
 
-          // Send as a chat message (text fallback)
-          let event: GatewayChatEvent = {
-            runId: `ctx-${Date.now()}`,
-            sessionKey: '',
-            seq: 0,
-            state: 'final',
-            message: {
-              role: 'assistant',
-              content: [{ type: 'text', text: `💡 ${rec.reason}` }],
-            },
-          };
-          this.dispatchChatEvent(event);
+          // 探索模式：显示检测到的状态 + 建议
+          if (rec.exploreStateInfo && rec.exploreStateInfo.length > 0) {
+            let a2uiJsonl = this.buildExploreStateA2UI(ruleId, ruleName, rec.reason, confidence, rec.exploreStateInfo);
 
-          // Push A2UI card to chat inline view
-          this.dispatchA2UI('push', a2uiJsonl);
+            let event: GatewayChatEvent = {
+              runId: `ctx-${Date.now()}`,
+              sessionKey: '',
+              seq: 0,
+              state: 'final',
+              message: {
+                role: 'assistant',
+                content: [{ type: 'text', text: `🔍 探索模式检测到新状态\n${rec.exploreStateInfo}\n\n💡 ${rec.reason}` }],
+              },
+            };
+            this.dispatchChatEvent(event);
+            this.dispatchA2UI('push', a2uiJsonl);
+          } else {
+            // 普通模式：原有逻辑
+            let a2uiJsonl = this.buildContextRecommendationA2UI(ruleId, ruleName, rec.reason, confidence);
+
+            let event: GatewayChatEvent = {
+              runId: `ctx-${Date.now()}`,
+              sessionKey: '',
+              seq: 0,
+              state: 'final',
+              message: {
+                role: 'assistant',
+                content: [{ type: 'text', text: `💡 ${rec.reason}` }],
+              },
+            };
+            this.dispatchChatEvent(event);
+            this.dispatchA2UI('push', a2uiJsonl);
+          }
 
           // Also send system notification if in background
           if (!this._isInForeground) {
@@ -3021,6 +3036,37 @@ export class NodeRuntime {
     // Use simplified A2UI format: {"type":"form","children":[...]}
     let jsonl = `{"type":"form","id":"ctx_rec_${Date.now()}","children":[` +
       `{"type":"text","text":"💡 ${titleText}","style":{"fontSize":20,"fontWeight":"bold"}},` +
+      `{"type":"text","text":"${safeReason}","style":{"fontSize":15}},` +
+      `{"type":"text","text":"📋 ${safeRuleName}  |  ${confidenceText}: ${confidence}%","style":{"fontSize":12,"color":"#888"}},` +
+      `{"type":"button","text":"✅ ${usefulText}","variant":"primary","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"accept"}}}},` +
+      `{"type":"button","text":"❌ ${inaccurateText}","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"reject"}}}},` +
+      `{"type":"button","text":"🙈 ${dismissText}","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"dismiss"}}}},` +
+      `{"type":"button","text":"🔍 ${detailsText}","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"view_snapshot"}}}}` +
+      `]}`;
+
+    return jsonl;
+  }
+
+  /**
+   * Build A2UI card for explore mode: shows detected state + suggestion with action buttons.
+   */
+  private buildExploreStateA2UI(ruleId: string, ruleName: string, reason: string, confidence: number, stateInfo: string): string {
+    let safeReason = reason.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    let safeRuleId = ruleId.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    let safeRuleName = ruleName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    let safeState = stateInfo.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+
+    let usefulText = I18n.t('context.feedback.useful');
+    let inaccurateText = I18n.t('context.feedback.inaccurate');
+    let dismissText = I18n.t('context.feedback.dismiss');
+    let detailsText = I18n.t('context.feedback.viewDetails');
+    let confidenceText = I18n.t('context.confidence');
+
+    let jsonl = `{"type":"form","id":"ctx_explore_${Date.now()}","children":[` +
+      `{"type":"text","text":"🔍 探索模式 — 状态检测","style":{"fontSize":18,"fontWeight":"bold"}},` +
+      `{"type":"text","text":"${safeState}","style":{"fontSize":14}},` +
+      `{"type":"text","text":"─────────────────","style":{"fontSize":12,"color":"#ccc"}},` +
+      `{"type":"text","text":"💡 建议","style":{"fontSize":16,"fontWeight":"bold"}},` +
       `{"type":"text","text":"${safeReason}","style":{"fontSize":15}},` +
       `{"type":"text","text":"📋 ${safeRuleName}  |  ${confidenceText}: ${confidence}%","style":{"fontSize":12,"color":"#888"}},` +
       `{"type":"button","text":"✅ ${usefulText}","variant":"primary","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"accept"}}}},` +

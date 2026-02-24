@@ -701,6 +701,7 @@ function buildZh(): Map<string, string> {
   m.set('rule.name.rule_leave_work_music', '离开公司步行听音乐（围栏）');
   m.set('rule.name.rule_leave_work_music_wifi', '离开公司步行听音乐（WiFi丢失）');
   m.set('rule.name.rule_arrive_gym', '到达健身房');
+  m.set('rule.name.rule_arrive_home', '到家（围栏）');
   m.set('rule.name.rule_arrive_home_wifi', '到家（WiFi连接）');
   m.set('rule.name.rule_leave_home_wifi', '离家（WiFi丢失）');
   m.set('rule.name.rule_arrive_work_wifi', '到达公司（WiFi连接）');
@@ -750,6 +751,20 @@ function buildZh(): Map<string, string> {
   m.set('rules.key.networkType.short', '网络');
   m.set('rules.key.geofence.short', '位置');
   m.set('rules.opContains', '∈(包含)');
+
+  // Device classification & Sensor tier
+  m.set('context.device.fixed', '固定设备');
+  m.set('context.device.portable', '便携设备');
+  m.set('context.device.vehicle', '车载设备');
+  m.set('context.device.inVehicle', '检测到车载蓝牙');
+  m.set('context.tier.escalated', '传感器升级到 T{0}');
+  m.set('context.tier.deescalated', '传感器降级到 T{0}');
+  m.set('context.geofence.autoCreated', '自动创建新地点');
+  m.set('context.wifi.hotspot', '移动热点（跳过）');
+  m.set('context.wifi.public', '公共WiFi（跳过）');
+  m.set('context.exercise.detected', '运动心率，GPS追踪开启');
+  m.set('rule.name.rule_vehicle_bt_detected', '车载蓝牙驾驶模式');
+  m.set('rule.name.rule_exercise_heart_rate', '运动心率追踪');
 
   return m;
 }
@@ -1447,6 +1462,7 @@ function buildEn(): Map<string, string> {
   m.set('rule.name.rule_leave_work_music', 'Walking from Work - Music (Geofence)');
   m.set('rule.name.rule_leave_work_music_wifi', 'Walking from Work - Music (WiFi)');
   m.set('rule.name.rule_arrive_gym', 'Arrived at Gym');
+  m.set('rule.name.rule_arrive_home', 'Arrived Home (Geofence)');
   m.set('rule.name.rule_arrive_home_wifi', 'Arrived Home (WiFi)');
   m.set('rule.name.rule_leave_home_wifi', 'Leaving Home (WiFi Lost)');
   m.set('rule.name.rule_arrive_work_wifi', 'Arrived at Work (WiFi)');
@@ -1496,6 +1512,20 @@ function buildEn(): Map<string, string> {
   m.set('rules.key.networkType.short', 'Net');
   m.set('rules.key.geofence.short', 'Place');
   m.set('rules.opContains', '∈(contains)');
+
+  // Device classification & Sensor tier
+  m.set('context.device.fixed', 'Fixed Device');
+  m.set('context.device.portable', 'Portable Device');
+  m.set('context.device.vehicle', 'Vehicle Device');
+  m.set('context.device.inVehicle', 'Vehicle BT detected');
+  m.set('context.tier.escalated', 'Sensors escalated to T{0}');
+  m.set('context.tier.deescalated', 'Sensors de-escalated to T{0}');
+  m.set('context.geofence.autoCreated', 'Auto-created new place');
+  m.set('context.wifi.hotspot', 'Mobile hotspot (skipped)');
+  m.set('context.wifi.public', 'Public WiFi (skipped)');
+  m.set('context.exercise.detected', 'Exercise detected, GPS on');
+  m.set('rule.name.rule_vehicle_bt_detected', 'Vehicle BT Driving Mode');
+  m.set('rule.name.rule_exercise_heart_rate', 'Exercise Heart Rate Tracking');
 
   return m;
 }

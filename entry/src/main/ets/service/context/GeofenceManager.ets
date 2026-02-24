@@ -8,7 +8,7 @@ import { common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { LogService } from '../../common/LogService';
-import { Geofence, GeofenceCategory, LocationState } from './ContextModels';
+import { Geofence, GeofenceCategory, LocationState, LearnedPlaceSignals } from './ContextModels';
 import { ContextEngineService, GeofenceBinding } from './ContextEngine';
 import * as GeoUtils from './GeoUtils';
 
@@ -20,6 +20,22 @@ interface UserPlace {
   longitude: number;
   radiusMeters: number;
   category: string;
+  learnedSignals?: UserPlaceLearnedSignals;
+}
+
+/** Serializable learned signals for user_places.json */
+interface UserPlaceLearnedSignals {
+  wifiSSIDs?: string[];
+  bluetoothDevices?: string[];
+  cellIds?: string[];
+  typicalTimes?: UserPlaceTimeRange[];
+  lastSeen?: number;
+  visitCount?: number;
+}
+
+interface UserPlaceTimeRange {
+  start: string;
+  end: string;
 }
 interface UserPlacesConfig {
   version: number;
@@ -343,6 +359,19 @@ export class GeofenceManager {
             radiusMeters: place.radiusMeters,
             category: place.category as GeofenceCategory,
           };
+          // Restore learnedSignals from persisted data
+          if (place.learnedSignals) {
+            let ls = place.learnedSignals;
+            let signals: LearnedPlaceSignals = {
+              wifiSSIDs: ls.wifiSSIDs ?? [],
+              bluetoothDevices: ls.bluetoothDevices ?? [],
+              cellIds: ls.cellIds ?? [],
+              typicalTimes: ls.typicalTimes ?? [],
+              lastSeen: ls.lastSeen ?? 0,
+              visitCount: ls.visitCount ?? 0,
+            };
+            gf.learnedSignals = signals;
+          }
           this.geofences.set(gf.id, gf);
         }
         this.log.info(TAG, `Loaded ${config.places.length} places from ${CONFIG_FILENAME}`);
@@ -368,6 +397,24 @@ export class GeofenceManager {
           radiusMeters: gf.radiusMeters,
           category: gf.category,
         };
+        // Persist learnedSignals
+        if (gf.learnedSignals) {
+          let ls = gf.learnedSignals;
+          let times: UserPlaceTimeRange[] = [];
+          if (ls.typicalTimes) {
+            for (let t of ls.typicalTimes) {
+              times.push({ start: t.start, end: t.end });
+            }
+          }
+          place.learnedSignals = {
+            wifiSSIDs: ls.wifiSSIDs ?? [],
+            bluetoothDevices: ls.bluetoothDevices ?? [],
+            cellIds: ls.cellIds ?? [],
+            typicalTimes: times,
+            lastSeen: ls.lastSeen ?? 0,
+            visitCount: ls.visitCount ?? 0,
+          };
+        }
         places.push(place);
       });
       

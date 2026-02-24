@@ -341,6 +341,11 @@
         "value": "{{work}}"
       },
       {
+        "key": "geofence",
+        "op": "neq",
+        "value": "{{home}}"
+      },
+      {
         "key": "timeOfDay",
         "op": "in",
         "value": "evening,night"
@@ -467,6 +472,30 @@
     "enabled": true
   },
   {
+    "id": "rule_arrive_home",
+    "name": "到家（围栏）",
+    "conditions": [
+      {
+        "key": "geofence",
+        "op": "eq",
+        "value": "{{home}}"
+      },
+      {
+        "key": "timeOfDay",
+        "op": "in",
+        "value": "afternoon,evening,night"
+      }
+    ],
+    "action": {
+      "id": "suggest_arrive_home",
+      "type": "suggestion",
+      "payload": "到家了🏠 今天辛苦了，放松一下吧"
+    },
+    "priority": 1.5,
+    "cooldownMs": 28800000,
+    "enabled": true
+  },
+  {
     "id": "rule_arrive_home_wifi",
     "name": "到家（WiFi连接）",
     "conditions": [
@@ -555,6 +584,49 @@
     },
     "priority": 1.2,
     "cooldownMs": 14400000,
+    "enabled": true
+  },
+  {
+    "id": "rule_vehicle_bt_detected",
+    "name": "车载蓝牙驾驶模式",
+    "conditions": [
+      {
+        "key": "bt_in_vehicle",
+        "op": "eq",
+        "value": "true"
+      }
+    ],
+    "action": {
+      "id": "suggest_driving_mode",
+      "type": "suggestion",
+      "payload": "检测到车载蓝牙，已进入驾驶模式 🚗"
+    },
+    "priority": 2.5,
+    "cooldownMs": 3600000,
+    "enabled": true
+  },
+  {
+    "id": "rule_exercise_heart_rate",
+    "name": "运动心率追踪",
+    "conditions": [
+      {
+        "key": "heart_rate_status",
+        "op": "eq",
+        "value": "exercise"
+      },
+      {
+        "key": "wearing_state",
+        "op": "eq",
+        "value": "on_wrist"
+      }
+    ],
+    "action": {
+      "id": "suggest_exercise_tracking",
+      "type": "suggestion",
+      "payload": "检测到运动心率，GPS追踪已开启 🏃"
+    },
+    "priority": 2.0,
+    "cooldownMs": 1800000,
     "enabled": true
   }
 ]
