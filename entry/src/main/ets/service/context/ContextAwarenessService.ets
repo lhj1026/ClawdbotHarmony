@@ -1050,7 +1050,7 @@ export class ContextAwarenessService {
   }
 
   /**
-   * 获取单次位置并处理 (CellID优化：如果基站没变且静止，跳过GPS)
+   * 获取单次位置并处理 (环境信号优化：如果WiFi/BT没变且静止，跳过GPS)
    */
   private async fetchSingleLocation(): Promise<void> {
     try {
@@ -1066,18 +1066,18 @@ export class ContextAwarenessService {
         }
       }
 
-      // CellID优化：如果静止且CellID没变，跳过GPS请求
+      // 环境信号优化：如果静止且WiFi/BT没变，跳过GPS请求
       if (this.lastMotionState === 'stationary') {
-        let cellIdChanged = await this.checkCellIdChanged();
-        if (!cellIdChanged && this.lastLocation) {
-          // CellID没变，用户可能还在同一位置，使用缓存位置
-          this.log.debug(TAG, 'CellID unchanged, using cached location');
+        let envChanged = await this.checkEnvironmentChanged();
+        if (!envChanged && this.lastLocation) {
+          // 环境信号没变，用户可能还在同一位置，使用缓存位置
+          this.log.debug(TAG, 'Environment unchanged (WiFi/BT stable), using cached location');
           this.checkForNewPlaceSmart(this.lastLocation.latitude, this.lastLocation.longitude);
           return;
         }
       }
-      
-      // CellID变了或不在静止状态，请求GPS
+
+      // 环境变化或不在静止状态，请求GPS
       let request: geoLocationManager.CurrentLocationRequest = {
         priority: geoLocationManager.LocationRequestPriority.FIRST_FIX,
         scenario: geoLocationManager.LocationRequestScenario.UNSET,
@@ -1163,52 +1163,52 @@ export class ContextAwarenessService {
   }
 
   /**
-   * 获取当前CellID (用于低功耗位置变化检测)
-   * Note: GET_TELEPHONY_STATE is a system_basic permission unavailable to consumer apps.
-   * Returns empty string — checkCellIdChanged() uses WiFi SSID as fallback.
+   * 检查环境信号是否有变化 (用于决定是否需要请求GPS)
+   *
+   * CellID 不可用 (GET_TELEPHONY_STATE 是 system_basic 权限)。
+   * 替代策略：WiFi SSID 变化 + BT 设备变化 + WiFi 断连 作为位置变化信号。
+   *
+   * @return true=环境变化需要GPS, false=环境不变可跳过GPS
    */
-  private async getCurrentCellId(): Promise<string> {
-    return '';
-  }
-
-  /**
-   * 检查CellID是否变化 (用于决定是否需要请求GPS)
-   * @return true=变化了需要GPS, false=没变化可以跳过GPS
-   */
-  private async checkCellIdChanged(): Promise<boolean> {
-    let currentCellId = await this.getCurrentCellId();
-    if (currentCellId.length === 0) {
-      // CellID unavailable — use WiFi SSID change as fallback
-      if (this.lastWifiSsid.length > 0 && this.lastLocation) {
-        if (this.lastStationaryWifiSsid.length > 0 && this.lastWifiSsid !== this.lastStationaryWifiSsid) {
-          // WiFi SSID changed (e.g. home→airport) → location changed, request GPS
-          this.log.info(TAG, `WiFi SSID changed: ${this.lastStationaryWifiSsid} -> ${this.lastWifiSsid}, requesting GPS`);
-          this.lastStationaryWifiSsid = this.lastWifiSsid;
-          return true;
-        }
-        // Same WiFi or first time → mark as stationary
+  private async checkEnvironmentChanged(): Promise<boolean> {
+    // --- WiFi SSID 变化检测 ---
+    if (this.lastWifiSsid.length > 0 && this.lastLocation) {
+      if (this.lastStationaryWifiSsid.length > 0 && this.lastWifiSsid !== this.lastStationaryWifiSsid) {
+        this.log.info(TAG, `WiFi SSID changed: ${this.lastStationaryWifiSsid} -> ${this.lastWifiSsid}, requesting GPS`);
         this.lastStationaryWifiSsid = this.lastWifiSsid;
-        return false;
+        return true;
       }
-      // WiFi disconnected → might be moving, clear stationary tracking
-      if (this.lastStationaryWifiSsid.length > 0) {
-        this.log.info(TAG, 'WiFi disconnected, clearing stationary WiFi tracking');
-        this.lastStationaryWifiSsid = '';
-      }
-      return true; // No WiFi → conservative, request GPS
-    }
-
-    this.tray.put('cellId', currentCellId, 0.9, 'cellular');
-
-    if (currentCellId !== this.lastCellId) {
-      this.log.info(TAG, `CellID changed: ${this.lastCellId} -> ${currentCellId}`);
-      this.lastCellId = currentCellId;
-      this.lastCellIdTime = Date.now();
+      this.lastStationaryWifiSsid = this.lastWifiSsid;
+    } else if (this.lastStationaryWifiSsid.length > 0 && this.lastWifiSsid.length === 0) {
+      // WiFi disconnected → likely moving
+      this.log.info(TAG, 'WiFi disconnected, likely moving → request GPS');
+      this.lastStationaryWifiSsid = '';
       return true;
     }
 
-    // CellID没变，可能还在同一位置
-    return false;
+    // --- BT 设备变化检测 ---
+    try {
+      let btSlot = this.tray.get('bt_fixed_devices');
+      let currentBt = btSlot?.value ?? '';
+      if (this.lastCellId.length > 0 && currentBt !== this.lastCellId) {
+        // Reuse lastCellId field to track BT fingerprint (CellID never used)
+        this.log.info(TAG, `BT devices changed: "${this.lastCellId}" -> "${currentBt}", requesting GPS`);
+        this.lastCellId = currentBt;
+        this.lastCellIdTime = Date.now();
+        return true;
+      }
+      if (this.lastCellId.length === 0 && currentBt.length > 0) {
+        this.lastCellId = currentBt;  // First observation
+      }
+    } catch { /* ignore */ }
+
+    // WiFi available and stable → no GPS needed
+    if (this.lastWifiSsid.length > 0) {
+      return false;
+    }
+
+    // No WiFi at all → conservative, request GPS
+    return true;
   }
   private startPeriodicEvaluation(): void {
     if (this.evaluationTimer !== -1) return;
@@ -1411,11 +1411,9 @@ export class ContextAwarenessService {
     // Sensor tier
     this.tray.put('sensorTier', this.currentTier.toString(), 1.0, 'system');
 
-    // CellID
+    // BT 环境指纹 (替代不可用的 CellID)
     if (this.lastCellId.length > 0) {
-      this.tray.put('cellId', this.lastCellId, 0.9, 'cellular');
-    } else {
-      this.tray.put('cellId', '(unavailable)', 0.3, 'cellular');
+      this.tray.put('btFingerprint', this.lastCellId, 0.8, 'bluetooth');
     }
 
     // 插件数据 → 托盘（按物理/数字世界分类）
@@ -1858,7 +1856,7 @@ export class ContextAwarenessService {
       let dist = this.haversineDistance(lat, lng, gf.latitude, gf.longitude);
       
       if (dist < gf.radiusMeters) {
-        this.log.info(TAG, `Inside geofence: ${gf.name}, dist=${Math.round(dist)}m, wifi=${this.lastWifiSsid}, cellId=${this.lastCellId}`);
+        this.log.info(TAG, `Inside geofence: ${gf.name}, dist=${Math.round(dist)}m, wifi=${this.lastWifiSsid}`);
         
         // 在此围栏内，学习信号
         let signals = gf.learnedSignals ?? {
@@ -1911,14 +1909,7 @@ export class ContextAwarenessService {
           this.log.debug(TAG, `BT portable (skip): ${btPortableSlot.value}`);
         }
 
-        // 学习CellID
-        if (this.lastCellId && this.lastCellId.length > 0) {
-          if (!signals.cellIds!.includes(this.lastCellId)) {
-            signals.cellIds!.push(this.lastCellId);
-            this.log.info(TAG, `Learned CellID for ${gf.name}: ${this.lastCellId}`);
-            updated = true;
-          }
-        }
+        // CellID 不可用，跳过（使用 WiFi/BT 替代）
         
         // 更新访问统计
         signals.visitCount = (signals.visitCount ?? 0) + 1;
