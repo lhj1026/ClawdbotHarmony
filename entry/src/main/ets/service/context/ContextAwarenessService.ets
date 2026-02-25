@@ -1384,6 +1384,9 @@ export class ContextAwarenessService {
       );
       if (geofences.length > 0) {
         this.tray.put('geofence', geofences[0].id, 1.0, 'geofence');
+      } else {
+        // 不在任何围栏内，清除旧值（防止新地点检测被 T1 skip 阻断）
+        this.tray.put('geofence', '', 0, 'geofence');
       }
     }
 
@@ -1764,7 +1767,10 @@ export class ContextAwarenessService {
   }
 
   /**
-   * 检测新地点：GPS + WiFi 稳定 5 分钟且不在任何已知围栏内
+   * 检测新地点：GPS/WiFi 稳定 5 分钟且不在任何已知围栏内
+   *
+   * 漂移容忍策略：WiFi 不变时放宽到 300m（室内 GPS 漂移大），
+   * WiFi 变化了才严格按 100m 判断是否真正移动了。
    */
   private async checkForNewPlace(lat: number, lng: number, wifiSsid: string): Promise<void> {
     // 检查是否在任何已知围栏内
@@ -1778,50 +1784,51 @@ export class ContextAwarenessService {
         break;
       }
     }
-    
+
     if (inKnownGeofence) {
-      // 在已知围栏内，重置检测
       this.newPlaceDetectionStart = 0;
       return;
     }
-    
+
     let now = Date.now();
-    
-    // 检查位置是否稳定（与上次记录的差异 < 100m）
+
+    // 检查位置是否稳定
     if (this.newPlaceDetectionStart > 0) {
       let drift = this.haversineDistance(lat, lng, this.newPlaceLastLat, this.newPlaceLastLng);
-      if (drift > ContextAwarenessService.NEW_PLACE_MAX_DRIFT_M) {
-        // 位置漂移太大，重置
-        this.log.info(TAG, `New place reset: drifted ${Math.round(drift)}m`);
+      // WiFi 不变时容忍更大漂移（室内 GPS 漂移常 >100m）
+      let sameWifi = wifiSsid.length > 0 && wifiSsid === this.newPlaceWifiSsid;
+      let maxDrift = sameWifi ? 300 : ContextAwarenessService.NEW_PLACE_MAX_DRIFT_M;
+      if (drift > maxDrift) {
+        this.log.info(TAG, `New place reset: drifted ${Math.round(drift)}m > ${maxDrift}m (sameWifi=${sameWifi})`);
         this.newPlaceDetectionStart = 0;
-        return;
+        // Don't return — fall through to start new detection at current position
       }
     }
-    
+
     // 开始新检测或继续现有检测
     if (this.newPlaceDetectionStart === 0) {
       this.newPlaceDetectionStart = now;
       this.newPlaceLastLat = lat;
       this.newPlaceLastLng = lng;
       this.newPlaceWifiSsid = wifiSsid;
-      this.log.info(TAG, `New place detection started at (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
+      this.log.info(TAG, `New place detection started at (${lat.toFixed(4)}, ${lng.toFixed(4)}) wifi=${wifiSsid}`);
       return;
     }
-    
+
     // 检查是否稳定足够时间
     let stableMs = now - this.newPlaceDetectionStart;
     if (stableMs < ContextAwarenessService.NEW_PLACE_STABLE_MS) {
-      this.log.debug(TAG, `New place stable for ${Math.round(stableMs / 1000)}s, need ${ContextAwarenessService.NEW_PLACE_STABLE_MS / 1000}s`);
+      this.log.debug(TAG, `New place stable for ${Math.round(stableMs / 1000)}s/${ContextAwarenessService.NEW_PLACE_STABLE_MS / 1000}s wifi=${wifiSsid}`);
       return;
     }
-    
+
     // 稳定 5 分钟，检测到新地点！
     this.log.info(TAG, `New place detected! (${lat.toFixed(4)}, ${lng.toFixed(4)}) WiFi=${wifiSsid}`);
     this.newPlaceDetectionStart = 0;  // 重置防止重复
-    
+
     // 尝试逆地理编码获取地点名
     let placeName = await this.reverseGeocode(lat, lng);
-    
+
     // 显示 A2UI 卡片让用户确认
     this.showNewPlaceCard(lat, lng, wifiSsid, placeName);
   }
@@ -2477,6 +2484,10 @@ export class ContextAwarenessService {
     this.tray.put('longitude', event.location.longitude.toString(), 1.0, 'gps');
     if (event.type === 'enter') {
       this.tray.put('geofence', event.geofence.id, 1.0, 'geofence');
+    } else {
+      // Exit: 清除围栏标记，让新地点检测和 GPS 定时器正常工作
+      this.tray.put('geofence', '', 0, 'geofence');
+      this.log.info(TAG, `Geofence exit: cleared tray, left ${event.geofence.name}`);
     }
 
     // Push event to engine buffer for temporal/sequence rules
