@@ -11,6 +11,7 @@ import { FeedbackService } from '../service/context/FeedbackService';
 import { Geofence, GeofenceCategory, FeedbackStats, FeedbackRuleStat } from '../service/context/ContextModels';
 import { LocationDiscoveryService, GeofenceSuggestion } from '../service/context/LocationDiscoveryService';
 import { LearnedSignalsSummary } from '../service/context/LocationFusionService';
+import { GeoCodingService } from '../service/context/GeoCodingService';
 import { GeofenceSuggestionCard } from '../components/GeofenceSuggestionCard';
 import { TrayStatus } from '../service/context/DataTray';
 
@@ -33,6 +34,7 @@ struct ContextSettingsPage {
   @State newLon: string = '';
   @State newRadius: string = '100';
   @State selectedCat: number = 6;
+  @State geoSearching: boolean = false;
 
   // 反馈统计
   @State fbTotal: number = 0;
@@ -783,24 +785,35 @@ struct ContextSettingsPage {
               .fontWeight(FontWeight.Bold)
               .fontColor('#1A1A1A')
 
-            TextInput({ placeholder: I18n.t('ctx.dialog.namePlaceholder') })
-              .onChange((val: string) => { this.newName = val; })
-              .width('100%')
-              .height(44)
+            Row({ space: 8 }) {
+              TextInput({ placeholder: I18n.t('ctx.dialog.namePlaceholder') })
+                .onChange((val: string) => { this.newName = val; })
+                .layoutWeight(1)
+                .height(44)
+              Button(this.geoSearching ? '...' : '🔍')
+                .fontSize(16)
+                .width(48)
+                .height(44)
+                .backgroundColor('#007AFF')
+                .fontColor(Color.White)
+                .enabled(!this.geoSearching)
+                .onClick(() => { this.searchPlaceName(); })
+            }
+            .width('100%')
 
             Row({ space: 8 }) {
-              TextInput({ placeholder: I18n.t('ctx.dialog.latitude') })
+              TextInput({ placeholder: I18n.t('ctx.dialog.latitude'), text: this.newLat })
                 .onChange((val: string) => { this.newLat = val; })
                 .layoutWeight(1)
                 .height(44)
-              TextInput({ placeholder: I18n.t('ctx.dialog.longitude') })
+              TextInput({ placeholder: I18n.t('ctx.dialog.longitude'), text: this.newLon })
                 .onChange((val: string) => { this.newLon = val; })
                 .layoutWeight(1)
                 .height(44)
             }
             .width('100%')
 
-            TextInput({ placeholder: I18n.t('ctx.dialog.radiusPlaceholder') })
+            TextInput({ placeholder: I18n.t('ctx.dialog.radiusPlaceholder'), text: this.newRadius })
               .onChange((val: string) => { this.newRadius = val; })
               .width('100%')
               .height(44)
@@ -858,13 +871,53 @@ struct ContextSettingsPage {
     .height('100%')
   }
 
+  private async searchPlaceName(): Promise<void> {
+    if (this.newName.length === 0) {
+      promptAction.showToast({ message: I18n.t('ctx.dialog.namePlaceholder') });
+      return;
+    }
+    this.geoSearching = true;
+    try {
+      let geo = GeoCodingService.getInstance();
+      let result = await geo.forwardGeocode(this.newName);
+      if (result.success && result.latitude !== undefined && result.longitude !== undefined) {
+        this.newLat = result.latitude.toFixed(6);
+        this.newLon = result.longitude.toFixed(6);
+        // 如果查到了分类，自动选中
+        if (result.category) {
+          let catIdx = this.catIds.indexOf(result.category);
+          if (catIdx >= 0) {
+            this.selectedCat = catIdx;
+          }
+        }
+        promptAction.showToast({ message: `${result.displayName ?? this.newName}` });
+      } else {
+        promptAction.showToast({ message: I18n.t('ctx.dialog.searchFailed') + (result.error ? ': ' + result.error : '') });
+      }
+    } catch (err) {
+      promptAction.showToast({ message: I18n.t('ctx.dialog.searchFailed') });
+      this.log.error('CtxSettings', 'Search error: ' + (err as Error).message);
+    }
+    this.geoSearching = false;
+  }
+
   private doAddGeofence(): void {
     this.log.info('CtxSettings', 'Add: ' + this.newName + ' ' + this.newLat + ',' + this.newLon);
-    if (this.newName.length === 0 || this.newLat.length === 0 || this.newLon.length === 0) return;
+    if (this.newName.length === 0) {
+      promptAction.showToast({ message: I18n.t('ctx.dialog.namePlaceholder') });
+      return;
+    }
+    if (this.newLat.length === 0 || this.newLon.length === 0) {
+      promptAction.showToast({ message: I18n.t('ctx.dialog.searchFirst') });
+      return;
+    }
     let lat = parseFloat(this.newLat);
     let lon = parseFloat(this.newLon);
     let radius = this.newRadius.length > 0 ? parseFloat(this.newRadius) : 100;
-    if (isNaN(lat) || isNaN(lon) || isNaN(radius)) return;
+    if (isNaN(lat) || isNaN(lon) || isNaN(radius)) {
+      promptAction.showToast({ message: I18n.t('ctx.dialog.invalidCoords') });
+      return;
+    }
     try {
       let cas = ContextAwarenessService.getInstance();
       let gf: Geofence = {

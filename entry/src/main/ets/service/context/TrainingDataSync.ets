@@ -10,6 +10,7 @@ import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
 import { LogService } from '../../common/LogService';
 import { ContextSnapshot } from './ContextEngine';
+import { FederatedSync } from './FederatedSync';
 import trainingSyncNative from 'libtraining_sync.so';
 
 const TAG = 'TrainingDataSync';
@@ -368,6 +369,10 @@ export class TrainingDataSync {
         this.persist();
         
         this.log.info(TAG, `Sync successful: ${stats.pending} records`);
+
+        // 触发联邦同步（如果已启用且到达间隔）
+        this.triggerFederatedSync();
+
         return true;
       } else {
         this.log.error(TAG, `Sync failed: HTTP ${response.responseCode}`);
@@ -377,6 +382,22 @@ export class TrainingDataSync {
       let errorMsg = (err instanceof Error) ? err.message : String(err);
       this.log.error(TAG, `Sync error: ${errorMsg}`);
       return false;
+    }
+  }
+
+  /** 在训练数据同步成功后触发联邦同步 */
+  private triggerFederatedSync(): void {
+    try {
+      let fedSync = FederatedSync.getInstance();
+      if (fedSync.shouldSync()) {
+        fedSync.sync().then((ok: boolean) => {
+          this.log.info(TAG, `Federated sync triggered: ${ok}`);
+        }).catch((err: Error) => {
+          this.log.warn(TAG, `Federated sync error: ${err.message}`);
+        });
+      }
+    } catch (err) {
+      this.log.debug(TAG, `Federated sync not available: ${(err as Error).message}`);
     }
   }
   

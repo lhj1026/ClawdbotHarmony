@@ -20,6 +20,16 @@ export interface ReverseGeocodingResult {
   error?: string;
 }
 
+/** 正地理编码结果 (地名 → 经纬度) */
+export interface ForwardGeocodingResult {
+  success: boolean;
+  latitude?: number;
+  longitude?: number;
+  displayName?: string;
+  category?: string;
+  error?: string;
+}
+
 /** 地址详情 */
 export interface GeocodedAddress {
   houseNumber?: string;
@@ -113,11 +123,10 @@ export class GeoCodingService {
       let url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=18&addressdetails=1`;
 
       let request = http.createHttp();
-      request.setHeader('User-Agent', 'ClawdBotHarmony/1.0');
-      request.setHeader('Accept-Language', 'zh-CN,zh,en');
 
       let response = await request.request(url, {
         method: http.RequestMethod.GET,
+        header: { 'User-Agent': 'ClawdBotHarmony/1.0', 'Accept-Language': 'zh-CN,zh,en' },
         connectTimeout: 10000,
         readTimeout: 10000,
       });
@@ -170,6 +179,66 @@ export class GeoCodingService {
         error: (err as Error).message,
       };
       return result;
+    }
+  }
+
+  /**
+   * 正地理编码 - 将地名转换为经纬度
+   * @param query 地名（如 "首都机场", "北京大学"）
+   * @returns 地理编码结果
+   */
+  async forwardGeocode(query: string): Promise<ForwardGeocodingResult> {
+    if (!query || query.trim().length === 0) {
+      return { success: false, error: 'Empty query' };
+    }
+
+    await this.rateLimit();
+
+    try {
+      let encoded = encodeURIComponent(query.trim());
+      let url = `https://nominatim.openstreetmap.org/search?format=json&q=${encoded}&limit=1&addressdetails=1`;
+
+      let request = http.createHttp();
+
+      let response = await request.request(url, {
+        method: http.RequestMethod.GET,
+        header: { 'User-Agent': 'ClawdBotHarmony/1.0', 'Accept-Language': 'zh-CN,zh,en' },
+        connectTimeout: 10000,
+        readTimeout: 10000,
+      });
+
+      request.destroy();
+
+      if (response.responseCode !== 200) {
+        return { success: false, error: `HTTP ${response.responseCode}` };
+      }
+
+      let body = response.result as string;
+      let results = JSON.parse(body) as Record<string, Object>[];
+
+      if (!results || results.length === 0) {
+        return { success: false, error: 'No results found' };
+      }
+
+      let first = results[0];
+      let lat = parseFloat(String(first['lat']));
+      let lon = parseFloat(String(first['lon']));
+      let type = String(first['type'] || '');
+      let category = this.inferCategory(type, first);
+
+      this.log.info(TAG, `Forward geocoded "${query}" → (${lat}, ${lon}) type=${type}`);
+
+      return {
+        success: true,
+        latitude: lat,
+        longitude: lon,
+        displayName: String(first['display_name'] || query),
+        category: category,
+      };
+
+    } catch (err) {
+      this.log.warn(TAG, `Forward geocoding error: ${(err as Error).message}`);
+      return { success: false, error: (err as Error).message };
     }
   }
 

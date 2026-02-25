@@ -628,6 +628,9 @@ function buildZh(): Map<string, string> {
   m.set('ctx.dialog.category', '类别');
   m.set('ctx.dialog.cancel', '取消');
   m.set('ctx.dialog.add', '添加');
+  m.set('ctx.dialog.searchFailed', '未找到该地点');
+  m.set('ctx.dialog.searchFirst', '请先输入地名并点击🔍搜索');
+  m.set('ctx.dialog.invalidCoords', '坐标格式无效');
   m.set('ctx.status.morning', '上午');
   m.set('ctx.status.afternoon', '下午');
   m.set('ctx.status.evening', '傍晚');
@@ -1389,6 +1392,9 @@ function buildEn(): Map<string, string> {
   m.set('ctx.dialog.category', 'Category');
   m.set('ctx.dialog.cancel', 'Cancel');
   m.set('ctx.dialog.add', 'Add');
+  m.set('ctx.dialog.searchFailed', 'Place not found');
+  m.set('ctx.dialog.searchFirst', 'Enter a place name and tap 🔍 to search');
+  m.set('ctx.dialog.invalidCoords', 'Invalid coordinates');
   m.set('ctx.status.morning', 'Morning');
   m.set('ctx.status.afternoon', 'Afternoon');
   m.set('ctx.status.evening', 'Evening');

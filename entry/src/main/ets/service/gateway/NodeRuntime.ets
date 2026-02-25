@@ -57,6 +57,7 @@ import { ContextEngineService, ContextSnapshot, ContextRule, ContextCondition, C
 import { FeedbackService } from '../context/FeedbackService';
 import { GeofenceSuggestion } from '../context/LocationDiscoveryService';
 import { Geofence, GeofenceCategory, LearnedPlaceSignals } from '../context/ContextModels';
+import { FederatedSync } from '../context/FederatedSync';
 
 const TAG = 'NodeRuntime';
 const APP_VERSION = '2.54.0';
@@ -2618,6 +2619,11 @@ export class NodeRuntime {
           result = await this.handleContextListRules();
           break;
         }
+        case Command.CONTEXT_FEDERATED_SYNC: {
+          this.log.info(TAG, 'Executing context.federatedSync...');
+          result = await this.handleContextFederatedSync(paramsJson);
+          break;
+        }
         // ---- UI automation ----
         case Command.UI_SCREENSHOT: {
           this.log.info(TAG, 'Executing ui.screenshot...');
@@ -2941,6 +2947,43 @@ export class NodeRuntime {
     } catch (err) {
       let msg = (err as Error).message ?? 'unknown error';
       this.log.error(TAG, `context.listRules error: ${msg}`);
+      return `{"error":${JSON.stringify(msg)}}`;
+    }
+  }
+
+  /**
+   * Handle context.federatedSync: trigger or query federated learning sync.
+   * params: { action: 'sync' | 'stats' | 'enable' | 'disable' }
+   */
+  private async handleContextFederatedSync(paramsJson: string | undefined): Promise<string> {
+    try {
+      let fedSync = FederatedSync.getInstance();
+      let action = 'stats';
+      if (paramsJson && paramsJson.length > 0) {
+        let params = JSON.parse(paramsJson) as Record<string, Object>;
+        action = (params['action'] as string) || 'stats';
+      }
+
+      switch (action) {
+        case 'sync': {
+          let ok = await fedSync.forceSync();
+          return JSON.stringify({ 'ok': ok, 'stats': fedSync.getStats() });
+        }
+        case 'enable': {
+          fedSync.setEnabled(true);
+          return JSON.stringify({ 'ok': true, 'enabled': true });
+        }
+        case 'disable': {
+          fedSync.setEnabled(false);
+          return JSON.stringify({ 'ok': true, 'enabled': false });
+        }
+        case 'stats':
+        default:
+          return JSON.stringify(fedSync.getStats());
+      }
+    } catch (err) {
+      let msg = (err as Error).message ?? 'unknown error';
+      this.log.error(TAG, `context.federatedSync error: ${msg}`);
       return `{"error":${JSON.stringify(msg)}}`;
     }
   }
@@ -3688,6 +3731,7 @@ export class NodeRuntime {
     commands.push(Command.CONTEXT_ADD_RULE);
     commands.push(Command.CONTEXT_REMOVE_RULE);
     commands.push(Command.CONTEXT_LIST_RULES);
+    commands.push(Command.CONTEXT_FEDERATED_SYNC);
 
     return {
       role: 'node',

@@ -67,6 +67,7 @@ export class Command {
   static readonly CONTEXT_ADD_RULE: string = 'context.addRule';
   static readonly CONTEXT_REMOVE_RULE: string = 'context.removeRule';
   static readonly CONTEXT_LIST_RULES: string = 'context.listRules';
+  static readonly CONTEXT_FEDERATED_SYNC: string = 'context.federatedSync';
   // UI automation
   static readonly UI_SCREENSHOT: string = 'ui.screenshot';
   static readonly UI_NAVIGATE: string = 'ui.navigate';

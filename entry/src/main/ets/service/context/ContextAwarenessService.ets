@@ -41,6 +41,7 @@ import {
 } from './ContextModels';
 import { LLMFallbackService } from './LLMFallbackService';
 import { TrainingDataSync } from './TrainingDataSync';
+import { FederatedSync } from './FederatedSync';
 
 const TAG = 'ContextService';
 
@@ -197,6 +198,8 @@ export class ContextAwarenessService {
   // CellID 跟踪 (用于低功耗位置变化检测)
   private lastCellId: string = '';
   private lastCellIdTime: number = 0;
+  // WiFi SSID stationarity tracking (用于检测WiFi切换 → 触发GPS)
+  private lastStationaryWifiSsid: string = '';
   
   // ==================== 多级采集策略 (功耗优化) ====================
   // GPS间隔
@@ -317,6 +320,9 @@ export class ContextAwarenessService {
 
     // 初始化训练数据同步 (服务端与 Gateway 同机，端口 18790)
     await this.trainingSync.init(context, 'http://192.168.1.76:18790');
+
+    // 初始化联邦学习同步 (与训练同步共用端点)
+    await FederatedSync.getInstance().init(context, 'http://192.168.1.76:18790');
 
     // 监听地理围栏事件
     this.geofenceMgr.addListener((event) => this.onGeofenceEvent(event));
@@ -1149,9 +1155,22 @@ export class ContextAwarenessService {
   private async checkCellIdChanged(): Promise<boolean> {
     let currentCellId = await this.getCurrentCellId();
     if (currentCellId.length === 0) {
-      // CellID unavailable — use WiFi SSID as fallback stationarity signal
+      // CellID unavailable — use WiFi SSID change as fallback
       if (this.lastWifiSsid.length > 0 && this.lastLocation) {
-        return false; // WiFi connected + have cached location → likely stationary
+        if (this.lastStationaryWifiSsid.length > 0 && this.lastWifiSsid !== this.lastStationaryWifiSsid) {
+          // WiFi SSID changed (e.g. home→airport) → location changed, request GPS
+          this.log.info(TAG, `WiFi SSID changed: ${this.lastStationaryWifiSsid} -> ${this.lastWifiSsid}, requesting GPS`);
+          this.lastStationaryWifiSsid = this.lastWifiSsid;
+          return true;
+        }
+        // Same WiFi or first time → mark as stationary
+        this.lastStationaryWifiSsid = this.lastWifiSsid;
+        return false;
+      }
+      // WiFi disconnected → might be moving, clear stationary tracking
+      if (this.lastStationaryWifiSsid.length > 0) {
+        this.log.info(TAG, 'WiFi disconnected, clearing stationary WiFi tracking');
+        this.lastStationaryWifiSsid = '';
       }
       return true; // No WiFi → conservative, request GPS
     }

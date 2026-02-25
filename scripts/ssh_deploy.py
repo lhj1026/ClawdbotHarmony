@@ -5,6 +5,7 @@ import os
 
 MSI_HOST = '10.8.0.2'
 MSI_USER = 'liuhongjie'
+# Also try: hongjie
 MSI_PASS = 'Ljm040628'
 PHONE_ADDR = '192.168.137.188:34999'
 

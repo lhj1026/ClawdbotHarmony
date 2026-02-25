@@ -40,3 +40,6 @@ add_subdirectory(feedback_learner)
 
 # training_sync module - training data synchronization
 add_subdirectory(training_sync)
+
+# federated_sync module - federated learning sync (anonymization + model exchange)
+add_subdirectory(federated_sync)

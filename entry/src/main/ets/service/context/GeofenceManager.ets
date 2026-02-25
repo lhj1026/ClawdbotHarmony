@@ -172,6 +172,20 @@ export class GeofenceManager {
   getGeofencesByCategory(category: GeofenceCategory): Geofence[] {
     return this.getAllGeofences().filter(gf => gf.category === category);
   }
+
+  /** 获取围栏的类别 (联邦同步用) */
+  getCategoryForGeofence(geofenceId: string): string {
+    let gf = this.geofences.get(geofenceId);
+    return gf ? gf.category : '';
+  }
+
+  /** 根据类别获取第一个围栏 (联邦同步用: 反匿名化) */
+  getGeofenceByCategory(category: string): Geofence | undefined {
+    for (const gf of this.geofences.values()) {
+      if (gf.category === category) return gf;
+    }
+    return undefined;
+  }
   
   // ==================== 位置检测 ====================
   

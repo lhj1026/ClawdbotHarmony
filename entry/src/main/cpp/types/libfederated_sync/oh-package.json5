@@ -1,0 +1,6 @@
+{
+  "name": "libfederated_sync",
+  "types": "./index.d.ts",
+  "version": "1.0.0",
+  "description": "Native federated learning sync module for anonymized model exchange"
+}
