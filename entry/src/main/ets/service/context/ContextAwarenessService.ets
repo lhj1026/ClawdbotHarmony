@@ -42,8 +42,31 @@ import {
 import { LLMFallbackService } from './LLMFallbackService';
 import { TrainingDataSync } from './TrainingDataSync';
 import { FederatedSync } from './FederatedSync';
+import { GeoCodingService } from './GeoCodingService';
 
 const TAG = 'ContextService';
+
+/** 位置候选 */
+export interface LocationCandidate {
+  name: string;         // "首都机场 T3" or "家"
+  category: string;     // "transit" | "home" | "work" | ...
+  confidence: number;   // 0~1
+  source: string;       // "geofence" | "geocode" | "wifi"
+  emoji: string;        // "✈️" | "🏠"
+}
+
+/** 活动候选 */
+export interface ActivityCandidate {
+  name: string;         // "赶飞机"
+  emoji: string;        // "✈️"
+  confidence: number;
+}
+
+/** 围栏置信度排序辅助 */
+interface GeofenceConfEntry {
+  gf: Geofence;
+  conf: number;
+}
 
 export interface ContextRecommendation {
   rule: ContextRule;
@@ -3065,6 +3088,246 @@ export class ContextAwarenessService {
     await this.locationFusion.clearAllLearnedSignals();
   }
 
+  // ==================== 智能场景推断 ====================
+
+  /** emoji 映射 by category */
+  private categoryEmoji(category: string, name: string): string {
+    // Name-based overrides for transit sub-types
+    if (name.includes('机场') || name.toLowerCase().includes('airport')) return '✈️';
+    if (name.includes('火车站') || name.includes('高铁站') || name.toLowerCase().includes('train')) return '🚄';
+
+    let emojiMap: Record<string, string> = {
+      'home': '🏠', 'work': '🏢', 'transit': '🚇', 'restaurant': '🍜',
+      'shopping': '🛒', 'gym': '💪', 'custom': '📍',
+    };
+    return emojiMap[category] ?? '📍';
+  }
+
+  /**
+   * 获取位置候选列表 — 融合围栏、逆地理编码、WiFi SSID
+   */
+  async getLocationCandidates(): Promise<LocationCandidate[]> {
+    let candidates: LocationCandidate[] = [];
+    let addedGeofenceIds: Set<string> = new Set();
+
+    let allGeofences = this.geofenceMgr.getAllGeofences();
+    let location = this.lastLocation;
+
+    // --- A. 已知围栏融合匹配 ---
+    try {
+      let confidenceMap = await this.locationFusion.getLocationConfidence(allGeofences, location);
+      // Collect and sort by confidence
+      let entries: GeofenceConfEntry[] = [];
+      for (let i = 0; i < allGeofences.length; i++) {
+        let gf = allGeofences[i];
+        let conf = confidenceMap.get(gf.id) ?? 0;
+        if (conf > 0.3) {
+          let entry: GeofenceConfEntry = { gf: gf, conf: conf };
+          entries.push(entry);
+        }
+      }
+      entries.sort((a, b) => b.conf - a.conf);
+
+      for (let i = 0; i < entries.length; i++) {
+        let gf = entries[i].gf;
+        candidates.push({
+          name: gf.name,
+          category: gf.category,
+          confidence: entries[i].conf,
+          source: 'geofence',
+          emoji: this.categoryEmoji(gf.category, gf.name),
+        });
+        addedGeofenceIds.add(gf.id);
+      }
+    } catch (err) {
+      this.log.warn(TAG, `getLocationCandidates geofence fusion error: ${(err as Error).message}`);
+    }
+
+    // --- B. GPS 逆地理编码 (only if no high-confidence geofence) ---
+    let hasHighConf = candidates.length > 0 && candidates[0].confidence > 0.7;
+    if (!hasHighConf && location && location.latitude !== 0) {
+      try {
+        let geo = GeoCodingService.getInstance();
+        let result = await geo.reverseGeocode(location.latitude, location.longitude);
+        if (result.success && result.name) {
+          // Avoid duplicating a geofence name
+          let isDuplicate = false;
+          for (let i = 0; i < candidates.length; i++) {
+            if (candidates[i].name === result.name) { isDuplicate = true; break; }
+          }
+          if (!isDuplicate) {
+            let cat = result.category ?? 'custom';
+            candidates.push({
+              name: result.name,
+              category: cat,
+              confidence: 0.5,
+              source: 'geocode',
+              emoji: this.categoryEmoji(cat, result.name),
+            });
+          }
+        }
+      } catch (err) {
+        this.log.warn(TAG, `getLocationCandidates geocode error: ${(err as Error).message}`);
+      }
+    }
+
+    // --- C. WiFi SSID 直接匹配 ---
+    try {
+      let currentSsid = this.lastWifiSsid;
+      if (currentSsid.length > 0) {
+        for (let i = 0; i < allGeofences.length; i++) {
+          let gf = allGeofences[i];
+          if (addedGeofenceIds.has(gf.id)) continue;
+          let wifiList = gf.learnedSignals?.wifiSSIDs ?? [];
+          for (let j = 0; j < wifiList.length; j++) {
+            if (wifiList[j] === currentSsid) {
+              candidates.push({
+                name: gf.name,
+                category: gf.category,
+                confidence: 0.4,
+                source: 'wifi',
+                emoji: this.categoryEmoji(gf.category, gf.name),
+              });
+              addedGeofenceIds.add(gf.id);
+              break;
+            }
+          }
+        }
+      }
+    } catch (err) {
+      this.log.warn(TAG, `getLocationCandidates wifi match error: ${(err as Error).message}`);
+    }
+
+    // Sort by confidence descending, limit to 4 + "其他"
+    candidates.sort((a, b) => b.confidence - a.confidence);
+    if (candidates.length > 4) {
+      candidates = candidates.slice(0, 4);
+    }
+    // Append "Other"
+    candidates.push({
+      name: I18n.t('ctx.correction.otherPlace'),
+      category: 'custom',
+      confidence: 0,
+      source: 'manual',
+      emoji: '📍',
+    });
+
+    return candidates;
+  }
+
+  /**
+   * 推断活动候选列表
+   */
+  inferActivityCandidates(locations: LocationCandidate[]): ActivityCandidate[] {
+    let candidates: ActivityCandidate[] = [];
+    let addedActivities: Set<string> = new Set();
+
+    let now = new Date();
+    let hour = now.getHours();
+    let dayOfWeek = now.getDay(); // 0=Sun
+    let isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5;
+    let motion = this.lastMotionState;
+
+    // Top location category & name
+    let topCategory = locations.length > 1 ? locations[0].category : '';
+    let topName = locations.length > 1 ? locations[0].name : '';
+
+    // Helper to add candidate
+    let addCandidate = (name: string, emoji: string, conf: number): void => {
+      if (addedActivities.has(name)) return;
+      addedActivities.add(name);
+      candidates.push({ name, emoji, confidence: conf });
+    };
+
+    // --- Historical typicalActivities from current geofence ---
+    let geofenceSlot = this.tray.get('geofence');
+    let currentGfId = geofenceSlot?.value ?? '';
+    if (currentGfId.length > 0) {
+      let gf = this.geofenceMgr.getGeofence(currentGfId);
+      if (gf && gf.learnedSignals?.typicalActivities) {
+        let hourBucket = Math.floor(hour / 3) * 3;
+        let activities = gf.learnedSignals.typicalActivities;
+        let keys = Object.keys(activities);
+        let bestKey = '';
+        let bestCount = 0;
+        for (let i = 0; i < keys.length; i++) {
+          if (keys[i].startsWith(`${hourBucket}-`) && activities[keys[i]] > bestCount) {
+            bestCount = activities[keys[i]];
+            bestKey = keys[i];
+          }
+        }
+        if (bestKey.length > 0 && bestCount >= 2) {
+          let actName = bestKey.substring(bestKey.indexOf('-') + 1);
+          addCandidate(actName, '⭐', 0.9);
+        }
+      }
+    }
+
+    // --- Rule-based inference from location + time + motion ---
+    // Airport
+    if (topCategory === 'transit' && (topName.includes('机场') || topName.toLowerCase().includes('airport'))) {
+      addCandidate(I18n.t('ctx.activity.catchFlight'), '✈️', 0.85);
+    }
+    // Train station
+    if (topCategory === 'transit' && (topName.includes('火车') || topName.includes('高铁') || topName.toLowerCase().includes('train'))) {
+      addCandidate(I18n.t('ctx.activity.takeTrain'), '🚄', 0.85);
+    }
+    // Restaurant during meal times
+    if (topCategory === 'restaurant' && ((hour >= 11 && hour <= 14) || (hour >= 17 && hour <= 21))) {
+      addCandidate(I18n.t('ctx.activity.eating'), '🍽️', 0.8);
+    }
+    // Work during weekday hours
+    if (topCategory === 'work' && isWeekday && hour >= 9 && hour <= 18) {
+      addCandidate(I18n.t('ctx.activity.working'), '💻', 0.8);
+    }
+    // Home late night
+    if (topCategory === 'home' && (hour >= 22 || hour <= 6)) {
+      addCandidate(I18n.t('ctx.activity.sleeping'), '😴', 0.8);
+    }
+    // Home evening
+    if (topCategory === 'home' && hour >= 18 && hour < 22) {
+      addCandidate(I18n.t('ctx.activity.resting'), '🛋️', 0.7);
+    }
+    // Gym
+    if (topCategory === 'gym') {
+      addCandidate(I18n.t('ctx.activity.exercising'), '🏃', 0.8);
+    }
+    // Shopping + walking
+    if (topCategory === 'shopping' && (motion === 'walking' || motion === 'stationary')) {
+      addCandidate(I18n.t('ctx.activity.shopping'), '🛒', 0.75);
+    }
+    // Driving/vehicle
+    if (motion === 'driving') {
+      addCandidate(I18n.t('ctx.activity.driving'), '🚗', 0.8);
+    }
+    // Commuting hours + walking/transit
+    if ((hour >= 7 && hour <= 9) || (hour >= 17 && hour <= 19)) {
+      if (motion === 'walking' || topCategory === 'transit') {
+        addCandidate(I18n.t('ctx.activity.commuting'), '🚶', 0.6);
+      }
+    }
+
+    // Fill with general defaults if too few
+    if (candidates.length < 3) {
+      addCandidate(I18n.t('ctx.activity.working'), '💻', 0.3);
+      addCandidate(I18n.t('ctx.activity.resting'), '🛋️', 0.3);
+      addCandidate(I18n.t('ctx.activity.eating'), '🍽️', 0.3);
+      addCandidate(I18n.t('ctx.activity.commuting'), '🚶', 0.2);
+    }
+
+    // Sort and limit to 4 + "Other"
+    candidates.sort((a, b) => b.confidence - a.confidence);
+    if (candidates.length > 4) {
+      candidates = candidates.slice(0, 4);
+    }
+    candidates.push({
+      name: I18n.t('ctx.correction.otherAct'),
+      emoji: '📝',
+      confidence: 0,
+    });
+
+    return candidates;
+  }
 
 
   addSuggestionListener(listener: SuggestionListener): void {

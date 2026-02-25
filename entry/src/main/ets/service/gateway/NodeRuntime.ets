@@ -52,7 +52,7 @@ import { ExperienceStorage } from '../ExperienceStorage';
 import { ExperiencePack, Experience, Skill, Memory, ShareLevel, generateId } from '../../model/ExperiencePack';
 import { MemoryService } from '../MemoryService';
 import { Monitor } from '../ModuleMonitor';
-import { ContextAwarenessService, ContextRecommendation } from '../context/ContextAwarenessService';
+import { ContextAwarenessService, ContextRecommendation, LocationCandidate, ActivityCandidate } from '../context/ContextAwarenessService';
 import { ContextEngineService, ContextSnapshot, ContextRule, ContextCondition, ContextAction, MatchResult, GeofenceBinding } from '../context/ContextEngine';
 import { FeedbackService } from '../context/FeedbackService';
 import { GeofenceSuggestion } from '../context/LocationDiscoveryService';
@@ -1282,22 +1282,38 @@ export class NodeRuntime {
     // Map location/scene to keywords for matching
     let keywords: string[] = [];
     if (location.length > 0) {
-      // location: 家, 公司, 路上, 商场, 餐厅
       let locKeywords: Record<string, string[]> = {
         '家': ['家', 'home', 'evening', 'night'],
         '公司': ['公司', 'work', '工作', 'office'],
         '路上': ['路上', 'transit', '通勤', 'commute', 'driving'],
         '商场': ['商场', 'shopping', '购物'],
         '餐厅': ['餐厅', 'restaurant', '吃饭', 'dining'],
+        '机场': ['机场', 'airport', 'transit', '飞机'],
+        '火车站': ['火车站', 'train', 'transit', '高铁'],
+        '咖啡厅': ['咖啡', 'cafe', 'coffee'],
+        '健身房': ['健身', 'gym', '运动'],
       };
       if (locKeywords[location]) {
         for (let i = 0; i < locKeywords[location].length; i++) {
           keywords.push(locKeywords[location][i].toLowerCase());
         }
+      } else {
+        // Dynamic: use the location text itself and try geofence category match
+        keywords.push(location.toLowerCase());
+        // Check if location matches any geofence name → use its category
+        try {
+          let cas = ContextAwarenessService.getInstance();
+          let allGf = cas.getAllGeofences();
+          for (let g = 0; g < allGf.length; g++) {
+            if (allGf[g].name === location || allGf[g].name.includes(location)) {
+              keywords.push(allGf[g].category.toLowerCase());
+              break;
+            }
+          }
+        } catch { /* ignore */ }
       }
     }
     if (scene.length > 0) {
-      // scene: 工作, 休息, 运动, 吃饭, 通勤, 睡觉
       let sceneKeywords: Record<string, string[]> = {
         '工作': ['工作', 'work', 'office', '公司'],
         '休息': ['休息', 'relax', 'home', 'evening', '家'],
@@ -1305,11 +1321,19 @@ export class NodeRuntime {
         '吃饭': ['吃饭', 'dining', '餐厅', 'restaurant', 'lunch', 'dinner'],
         '通勤': ['通勤', 'commute', 'transit', 'driving', '路上'],
         '睡觉': ['睡觉', 'sleep', 'bedtime', 'night', '家'],
+        '准备睡觉': ['睡觉', 'sleep', 'bedtime', 'night', '家'],
+        '赶飞机': ['飞机', 'airport', 'transit', 'flight'],
+        '坐火车': ['火车', 'train', 'transit', '高铁'],
+        '逛街': ['逛街', 'shopping', '商场', '购物'],
+        '开车': ['开车', 'driving', 'vehicle', '路上'],
       };
       if (sceneKeywords[scene]) {
         for (let i = 0; i < sceneKeywords[scene].length; i++) {
           keywords.push(sceneKeywords[scene][i].toLowerCase());
         }
+      } else {
+        // Dynamic: use the scene text itself
+        keywords.push(scene.toLowerCase());
       }
     }
 
@@ -1394,20 +1418,63 @@ export class NodeRuntime {
     }
   }
 
-  private showSceneCorrectionCard(ruleId: string): void {
+  private async showSceneCorrectionCard(ruleId: string): Promise<void> {
     let safeRuleId = ruleId.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+
+    // Try smart inference
+    let locOptions: string[] = [];
+    let actOptions: string[] = [];
+    let detectedSummary = '';
+
+    try {
+      let cas = ContextAwarenessService.getInstance();
+      let locations = await cas.getLocationCandidates();
+      let activities = cas.inferActivityCandidates(locations);
+
+      // Build detected summary from top candidate (skip "Other")
+      if (locations.length > 1 && locations[0].source !== 'manual') {
+        detectedSummary = `📡 ${I18n.t('ctx.correction.detected')}: ${locations[0].emoji} ${locations[0].name}`;
+      }
+
+      // Build location options: "emoji name"
+      for (let i = 0; i < locations.length; i++) {
+        let loc = locations[i];
+        locOptions.push(`${loc.emoji} ${loc.name}`);
+      }
+
+      // Build activity options: "emoji name"
+      for (let i = 0; i < activities.length; i++) {
+        let act = activities[i];
+        actOptions.push(`${act.emoji} ${act.name}`);
+      }
+    } catch (err) {
+      this.log.warn(TAG, `Smart correction fallback: ${(err as Error).message}`);
+    }
+
+    // Fallback to hardcoded if inference failed
+    if (locOptions.length === 0) {
+      locOptions = ['🏠 在家', '🏢 在公司', '🚇 在路上', '🛒 在商场', '🍜 在餐厅'];
+    }
+    if (actOptions.length === 0) {
+      actOptions = ['💻 工作中', '🛋️ 休息中', '🏃 运动中', '🍽️ 吃饭中', '🚶 通勤中', '😴 要睡了'];
+    }
+
+    let locJson = JSON.stringify(locOptions);
+    let actJson = JSON.stringify(actOptions);
+
+    let summaryLine = detectedSummary.length > 0
+      ? `{"type":"text","text":"${detectedSummary}","style":{"fontSize":14,"color":"#4CAF50"}},`
+      : '';
+
     let jsonl = `{"type":"form","id":"scene_correct_${Date.now()}","children":[` +
       `{"type":"text","text":"你现在在哪儿，在干什么？","style":{"fontSize":16,"fontWeight":"bold"}},` +
+      summaryLine +
       `{"type":"text","text":"可同时选择位置和活动","style":{"fontSize":13,"color":"#888"}},` +
-      // Location choice picker
       `{"type":"text","text":"📍 位置","style":{"fontSize":14,"fontWeight":"bold"}},` +
-      `{"type":"choice","id":"loc_picker","options":["🏠 在家","🏢 在公司","🚇 在路上","🛒 在商场","🍜 在餐厅"]},` +
-      // Activity choice picker
+      `{"type":"choice","id":"loc_picker","options":${locJson}},` +
       `{"type":"text","text":"🎯 在做什么","style":{"fontSize":14,"fontWeight":"bold"}},` +
-      `{"type":"choice","id":"act_picker","options":["💻 工作中","🛋️ 休息中","🏃 运动中","🍽️ 吃饭中","🚶 通勤中","😴 要睡了"]},` +
-      // Confirm button - collects both picker values
+      `{"type":"choice","id":"act_picker","options":${actJson}},` +
       `{"type":"button","text":"✅ 确认","variant":"primary","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"scene_correct_combined"}}}},` +
-      // Skip button
       `{"type":"button","text":"🙅 跳过","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"dismiss"}}}}` +
       `]}`;
 

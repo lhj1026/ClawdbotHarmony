@@ -766,6 +766,22 @@ function buildZh(): Map<string, string> {
   m.set('context.wifi.hotspot', '移动热点（跳过）');
   m.set('context.wifi.public', '公共WiFi（跳过）');
   m.set('context.exercise.detected', '运动心率，GPS追踪开启');
+
+  // Smart scene correction
+  m.set('ctx.correction.detected', '检测到你可能在');
+  m.set('ctx.correction.otherPlace', '其他');
+  m.set('ctx.correction.otherAct', '其他');
+  m.set('ctx.activity.catchFlight', '赶飞机');
+  m.set('ctx.activity.takeTrain', '坐火车');
+  m.set('ctx.activity.shopping', '逛街');
+  m.set('ctx.activity.driving', '开车');
+  m.set('ctx.activity.eating', '吃饭');
+  m.set('ctx.activity.working', '工作');
+  m.set('ctx.activity.resting', '休息');
+  m.set('ctx.activity.exercising', '运动');
+  m.set('ctx.activity.commuting', '通勤');
+  m.set('ctx.activity.sleeping', '准备睡觉');
+
   m.set('rule.name.rule_vehicle_bt_detected', '车载蓝牙驾驶模式');
   m.set('rule.name.rule_exercise_heart_rate', '运动心率追踪');
 
@@ -1530,6 +1546,22 @@ function buildEn(): Map<string, string> {
   m.set('context.wifi.hotspot', 'Mobile hotspot (skipped)');
   m.set('context.wifi.public', 'Public WiFi (skipped)');
   m.set('context.exercise.detected', 'Exercise detected, GPS on');
+
+  // Smart scene correction
+  m.set('ctx.correction.detected', 'You might be at');
+  m.set('ctx.correction.otherPlace', 'Other');
+  m.set('ctx.correction.otherAct', 'Other');
+  m.set('ctx.activity.catchFlight', 'Catching flight');
+  m.set('ctx.activity.takeTrain', 'Taking train');
+  m.set('ctx.activity.shopping', 'Shopping');
+  m.set('ctx.activity.driving', 'Driving');
+  m.set('ctx.activity.eating', 'Eating');
+  m.set('ctx.activity.working', 'Working');
+  m.set('ctx.activity.resting', 'Resting');
+  m.set('ctx.activity.exercising', 'Exercising');
+  m.set('ctx.activity.commuting', 'Commuting');
+  m.set('ctx.activity.sleeping', 'Going to sleep');
+
   m.set('rule.name.rule_vehicle_bt_detected', 'Vehicle BT Driving Mode');
   m.set('rule.name.rule_exercise_heart_rate', 'Exercise Heart Rate Tracking');
 
