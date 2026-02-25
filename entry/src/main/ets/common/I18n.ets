@@ -782,6 +782,25 @@ function buildZh(): Map<string, string> {
   m.set('ctx.activity.commuting', '通勤');
   m.set('ctx.activity.sleeping', '准备睡觉');
 
+  // A2UI feedback messages
+  m.set('ctx.fb.accepted', '反馈已记录');
+  m.set('ctx.fb.rule', '规则');
+  m.set('ctx.fb.weightUp', '权重提升 +{0}，未来会更多推荐此类场景');
+  m.set('ctx.fb.rejected', '反馈已记录');
+  m.set('ctx.fb.ruleDisabled', '此规则已自动禁用，不会再推荐');
+  m.set('ctx.fb.weightDown', '权重降低，冷却时间翻倍，会大幅减少此类推荐');
+  m.set('ctx.fb.askScene', '请告诉我你现在的实际场景：');
+  m.set('ctx.fb.corrected', '场景已纠正');
+  m.set('ctx.fb.actualScene', '实际场景');
+  m.set('ctx.fb.learnPattern', '系统会学习这个模式，优化未来推荐');
+  m.set('ctx.fb.boosted', '已提升 {0} 条相关规则的权重');
+  m.set('ctx.fb.atPlace', '在{0}，{1}');
+  m.set('ctx.fb.atPlaceOnly', '在{0}');
+  m.set('ctx.fb.notSelected', '未选择');
+  m.set('ctx.fb.dismissed', '已忽略，不会影响未来推荐');
+  m.set('ctx.fb.dismissedShort', '已忽略');
+  m.set('ctx.fb.ignoredPlace', '已忽略此地点');
+
   m.set('rule.name.rule_vehicle_bt_detected', '车载蓝牙驾驶模式');
   m.set('rule.name.rule_exercise_heart_rate', '运动心率追踪');
 
@@ -1561,6 +1580,25 @@ function buildEn(): Map<string, string> {
   m.set('ctx.activity.exercising', 'Exercising');
   m.set('ctx.activity.commuting', 'Commuting');
   m.set('ctx.activity.sleeping', 'Going to sleep');
+
+  // A2UI feedback messages
+  m.set('ctx.fb.accepted', 'Feedback recorded');
+  m.set('ctx.fb.rule', 'Rule');
+  m.set('ctx.fb.weightUp', 'Weight +{0}, will recommend this more');
+  m.set('ctx.fb.rejected', 'Feedback recorded');
+  m.set('ctx.fb.ruleDisabled', 'Rule auto-disabled, won\'t recommend again');
+  m.set('ctx.fb.weightDown', 'Weight reduced, cooldown doubled, will significantly reduce this type');
+  m.set('ctx.fb.askScene', 'Tell me your current scene:');
+  m.set('ctx.fb.corrected', 'Scene corrected');
+  m.set('ctx.fb.actualScene', 'Actual scene');
+  m.set('ctx.fb.learnPattern', 'System will learn this pattern to improve future recommendations');
+  m.set('ctx.fb.boosted', 'Boosted {0} related rules');
+  m.set('ctx.fb.atPlace', 'At {0}, {1}');
+  m.set('ctx.fb.atPlaceOnly', 'At {0}');
+  m.set('ctx.fb.notSelected', 'Not selected');
+  m.set('ctx.fb.dismissed', 'Dismissed, won\'t affect future recommendations');
+  m.set('ctx.fb.dismissedShort', 'Dismissed');
+  m.set('ctx.fb.ignoredPlace', 'Place ignored');
 
   m.set('rule.name.rule_vehicle_bt_detected', 'Vehicle BT Driving Mode');
   m.set('rule.name.rule_exercise_heart_rate', 'Exercise Heart Rate Tracking');

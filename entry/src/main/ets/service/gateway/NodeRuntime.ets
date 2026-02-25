@@ -1098,9 +1098,9 @@ export class NodeRuntime {
         this.adjustRulePriority(engine, ruleId, delta);
         fbService.onThumbsUp(ruleId);
         let displayName = ruleName.length > 0 ? ruleName : ruleId;
-        let acceptMsg = `✅ 反馈已记录\n\n` +
-          `📋 规则：${displayName}\n` +
-          `📈 权重提升 +${delta}，未来会更多推荐此类场景`;
+        let acceptMsg = `✅ ${I18n.t('ctx.fb.accepted')}\n\n` +
+          `📋 ${I18n.t('ctx.fb.rule')}：${displayName}\n` +
+          `📈 ${I18n.t('ctx.fb.weightUp').replace('{0}', delta.toString())}`;
         this.sendFeedbackResponse(acceptMsg);
         this.pushA2UIConfirmation(acceptMsg);
       } else if (feedback === 'reject') {
@@ -1121,13 +1121,13 @@ export class NodeRuntime {
         }
         this.adjustRulePriority(engine, ruleId, delta);
         let actionText = willDisable
-          ? `🚫 此规则已自动禁用，不会再推荐`
-          : `📉 权重降低，冷却时间翻倍，会大幅减少此类推荐`;
+          ? `🚫 ${I18n.t('ctx.fb.ruleDisabled')}`
+          : `📉 ${I18n.t('ctx.fb.weightDown')}`;
         this.sendFeedbackResponse(
-          `❌ 反馈已记录\n\n` +
-          `📋 规则：${displayName}\n` +
+          `❌ ${I18n.t('ctx.fb.rejected')}\n\n` +
+          `📋 ${I18n.t('ctx.fb.rule')}：${displayName}\n` +
           `${actionText}\n\n` +
-          `👇 请告诉我你现在的实际场景：`
+          `👇 ${I18n.t('ctx.fb.askScene')}`
         );
         // Show follow-up: ask user what they're actually doing
         this.showSceneCorrectionCard(ruleId);
@@ -1144,20 +1144,20 @@ export class NodeRuntime {
 
         let detail = '';
         if (location.length > 0 && scene.length > 0) {
-          detail = `在${location}，${scene}`;
+          detail = I18n.t('ctx.fb.atPlace').replace('{0}', location).replace('{1}', scene);
         } else if (location.length > 0) {
-          detail = `在${location}`;
+          detail = I18n.t('ctx.fb.atPlaceOnly').replace('{0}', location);
         } else if (scene.length > 0) {
-          detail = `${scene}`;
+          detail = scene;
         } else {
-          detail = '未选择';
+          detail = I18n.t('ctx.fb.notSelected');
         }
         let boostText = boostedCount > 0
-          ? `\n📈 已提升 ${boostedCount} 条相关规则的权重`
+          ? `\n📈 ${I18n.t('ctx.fb.boosted').replace('{0}', boostedCount.toString())}`
           : '';
-        let feedbackMsg = `📝 场景已纠正\n\n` +
-          `🎯 实际场景：${detail}\n` +
-          `🧠 系统会学习这个模式，优化未来推荐${boostText}`;
+        let feedbackMsg = `📝 ${I18n.t('ctx.fb.corrected')}\n\n` +
+          `🎯 ${I18n.t('ctx.fb.actualScene')}：${detail}\n` +
+          `🧠 ${I18n.t('ctx.fb.learnPattern')}${boostText}`;
         this.sendFeedbackResponse(feedbackMsg);
         // Replace form card with confirmation
         this.pushA2UIConfirmation(feedbackMsg);
@@ -1178,18 +1178,18 @@ export class NodeRuntime {
 
         let detail = '';
         if (location.length > 0 && scene.length > 0) {
-          detail = `在${location}，${scene}`;
+          detail = I18n.t('ctx.fb.atPlace').replace('{0}', location).replace('{1}', scene);
         } else if (location.length > 0) {
-          detail = `在${location}`;
+          detail = I18n.t('ctx.fb.atPlaceOnly').replace('{0}', location);
         } else if (scene.length > 0) {
-          detail = `${scene}`;
+          detail = scene;
         }
         let boostText = boostedCount > 0
-          ? `\n📈 已提升 ${boostedCount} 条相关规则的权重`
+          ? `\n📈 ${I18n.t('ctx.fb.boosted').replace('{0}', boostedCount.toString())}`
           : '';
-        let legacyMsg = `📝 场景已纠正\n\n` +
-          `🎯 实际场景：${detail}\n` +
-          `🧠 系统会学习这个模式，优化未来推荐${boostText}`;
+        let legacyMsg = `📝 ${I18n.t('ctx.fb.corrected')}\n\n` +
+          `🎯 ${I18n.t('ctx.fb.actualScene')}：${detail}\n` +
+          `🧠 ${I18n.t('ctx.fb.learnPattern')}${boostText}`;
         this.sendFeedbackResponse(legacyMsg);
         this.pushA2UIConfirmation(legacyMsg);
       } else if (feedback === 'view_snapshot') {
@@ -1204,8 +1204,8 @@ export class NodeRuntime {
         }
       } else if (feedback === 'dismiss') {
         // Dismiss is a mild negative signal, don't record as thumbs_down
-        this.sendFeedbackResponse('🙈 已忽略，不会影响未来推荐');
-        this.pushA2UIConfirmation('🙈 已忽略');
+        this.sendFeedbackResponse('🙈 ' + I18n.t('ctx.fb.dismissed'));
+        this.pushA2UIConfirmation('🙈 ' + I18n.t('ctx.fb.dismissedShort'));
       }
       // Handle new place detection events
       else if (name === 'new_place_save') {
@@ -1222,7 +1222,7 @@ export class NodeRuntime {
         let lng = parseFloat(ctx['lng'] ?? '0');
         this.saveNewPlace(lat, lng, '', '新地点', 'other');
       } else if (name === 'new_place_ignore') {
-        this.sendFeedbackResponse('👌 已忽略此地点');
+        this.sendFeedbackResponse('👌 ' + I18n.t('ctx.fb.ignoredPlace'));
       }
     } catch (err) {
       this.log.warn(TAG, `handleA2UIAction error: ${(err as Error).message}`);

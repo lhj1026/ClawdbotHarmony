@@ -934,10 +934,15 @@ export class ContextAwarenessService {
         newAccelInterval = ContextAwarenessService.ACCEL_UNKNOWN;
     }
     
+    // T2+ 模式下保持高频 GPS（不降低到静止频率），确保新地点检测不被阻断
+    if (this.currentTier >= 2 && newGpsInterval > ContextAwarenessService.GPS_WALKING) {
+      newGpsInterval = ContextAwarenessService.GPS_WALKING;
+    }
+
     // 调整GPS采集
     if (newGpsInterval !== this.locationIntervalMs) {
       this.locationIntervalMs = newGpsInterval;
-      this.log.info(TAG, `GPS interval: ${newGpsInterval / 1000}s for ${state}`);
+      this.log.info(TAG, `GPS interval: ${newGpsInterval / 1000}s for ${state} (tier=T${this.currentTier})`);
       this.restartLocationTimer();
     }
     
@@ -1818,7 +1823,7 @@ export class ContextAwarenessService {
     // 检查是否稳定足够时间
     let stableMs = now - this.newPlaceDetectionStart;
     if (stableMs < ContextAwarenessService.NEW_PLACE_STABLE_MS) {
-      this.log.debug(TAG, `New place stable for ${Math.round(stableMs / 1000)}s/${ContextAwarenessService.NEW_PLACE_STABLE_MS / 1000}s wifi=${wifiSsid}`);
+      this.log.info(TAG, `New place stable for ${Math.round(stableMs / 1000)}s/${ContextAwarenessService.NEW_PLACE_STABLE_MS / 1000}s wifi=${wifiSsid} tier=T${this.currentTier}`);
       return;
     }
 
@@ -1838,11 +1843,19 @@ export class ContextAwarenessService {
    * 停留5分钟+有WiFi连接 → 立即发现，不等聚类
    */
   private async checkForNewPlaceSmart(lat: number, lng: number): Promise<void> {
-    // 同时学习当前围栏的特征（会先获取WiFi）
-    await this.learnPlaceSignals(lat, lng);
-    
-    // 检测新地点
-    await this.checkForNewPlace(lat, lng, this.lastWifiSsid);
+    try {
+      // 同时学习当前围栏的特征（会先获取WiFi）
+      await this.learnPlaceSignals(lat, lng);
+    } catch (err) {
+      this.log.warn(TAG, `learnPlaceSignals error: ${(err as Error).message}`);
+    }
+
+    try {
+      // 检测新地点
+      await this.checkForNewPlace(lat, lng, this.lastWifiSsid);
+    } catch (err) {
+      this.log.warn(TAG, `checkForNewPlace error: ${(err as Error).message}`);
+    }
   }
 
   /**
@@ -2012,11 +2025,11 @@ export class ContextAwarenessService {
     let jsonl = '{"type":"form","id":"new_place_' + Date.now() + '","children":[' +
       '{"type":"text","text":"📍 ' + titleText + '","style":{"fontSize":18,"fontWeight":"bold"}},' +
       '{"type":"text","text":"' + escapedName + '"},' +
-      '{"type":"text","text":"' + wifiLabel + ': ' + escapedWifi + '","style":{"fontSize":12,"color":"#666"}}},' +
+      '{"type":"text","text":"' + wifiLabel + ': ' + escapedWifi + '","style":{"fontSize":12,"color":"#666"}},' +
       '{"type":"row","children":[' +
         '{"type":"button","label":"✅ ' + saveAsLabel + ' ' + category + '","action":{"event":{"name":"new_place_save","context":{"lat":' + lat + ',"lng":' + lng + ',"wifi":"' + escapedWifi + '","name":"' + escapedName + '","category":"' + category + '"}}},"style":"primary"},' +
-        '{"type":"button","label":"✏️ ' + renameLabel + '","action":{"event":{"name":"new_place_rename","context":{"lat":' + lat + ',"lng":' + lng + '}}}},"style":"secondary"},' +
-        '{"type":"button","label":"❌ ' + ignoreLabel + '","action":{"event":{"name":"new_place_ignore","context":{}}}},"style":"secondary"}' +
+        '{"type":"button","label":"✏️ ' + renameLabel + '","action":{"event":{"name":"new_place_rename","context":{"lat":' + lat + ',"lng":' + lng + '}}},"style":"secondary"},' +
+        '{"type":"button","label":"❌ ' + ignoreLabel + '","action":{"event":{"name":"new_place_ignore","context":{}}},"style":"secondary"}' +
       ']}]}';
     
     this.dispatchA2UI('push', jsonl);
