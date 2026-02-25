@@ -1428,8 +1428,11 @@ export class NodeRuntime {
 
     try {
       let cas = ContextAwarenessService.getInstance();
+      this.log.info(TAG, `showSceneCorrectionCard: starting smart inference...`);
       let locations = await cas.getLocationCandidates();
+      this.log.info(TAG, `showSceneCorrectionCard: got ${locations.length} location candidates`);
       let activities = cas.inferActivityCandidates(locations);
+      this.log.info(TAG, `showSceneCorrectionCard: got ${activities.length} activity candidates`);
 
       // Build detected summary from top candidate (skip "Other")
       if (locations.length > 1 && locations[0].source !== 'manual') {
@@ -1448,7 +1451,7 @@ export class NodeRuntime {
         actOptions.push(`${act.emoji} ${act.name}`);
       }
     } catch (err) {
-      this.log.warn(TAG, `Smart correction fallback: ${(err as Error).message}`);
+      this.log.warn(TAG, `Smart correction error, using fallback: ${(err as Error).message}`);
     }
 
     // Fallback to hardcoded if inference failed

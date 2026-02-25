@@ -3108,63 +3108,71 @@ export class ContextAwarenessService {
    */
   async getLocationCandidates(): Promise<LocationCandidate[]> {
     let candidates: LocationCandidate[] = [];
-    let addedGeofenceIds: Set<string> = new Set();
+    let addedNames: string[] = [];  // 去重用
 
     let allGeofences = this.geofenceMgr.getAllGeofences();
     let location = this.lastLocation;
 
-    // --- A. 已知围栏融合匹配 ---
+    // Helper: 添加候选并去重
+    let addCand = (name: string, category: string, confidence: number, source: string): void => {
+      if (addedNames.includes(name)) return;
+      addedNames.push(name);
+      let c: LocationCandidate = {
+        name: name,
+        category: category,
+        confidence: confidence,
+        source: source,
+        emoji: this.categoryEmoji(category, name),
+      };
+      candidates.push(c);
+    };
+
+    // --- 0. 当前 DataTray 围栏（最可靠：系统已确认用户在此围栏内）---
+    try {
+      let geofenceSlot = this.tray.get('geofence');
+      let currentGfId = geofenceSlot?.value ?? '';
+      if (currentGfId.length > 0) {
+        let gf = this.geofenceMgr.getGeofence(currentGfId);
+        if (gf) {
+          addCand(gf.name, gf.category, 0.95, 'geofence');
+          this.log.info(TAG, `LocationCandidate[0]: DataTray geofence="${gf.name}" cat=${gf.category}`);
+        }
+      }
+    } catch (err) {
+      this.log.warn(TAG, `getLocationCandidates tray error: ${(err as Error).message}`);
+    }
+
+    // --- A. 已知围栏融合匹配（补充其他可能围栏）---
     try {
       let confidenceMap = await this.locationFusion.getLocationConfidence(allGeofences, location);
-      // Collect and sort by confidence
       let entries: GeofenceConfEntry[] = [];
       for (let i = 0; i < allGeofences.length; i++) {
         let gf = allGeofences[i];
         let conf = confidenceMap.get(gf.id) ?? 0;
-        if (conf > 0.3) {
+        if (conf > 0.15) {  // 低阈值：让更多候选进入列表
           let entry: GeofenceConfEntry = { gf: gf, conf: conf };
           entries.push(entry);
         }
       }
       entries.sort((a, b) => b.conf - a.conf);
-
-      for (let i = 0; i < entries.length; i++) {
+      for (let i = 0; i < entries.length && i < 3; i++) {
         let gf = entries[i].gf;
-        candidates.push({
-          name: gf.name,
-          category: gf.category,
-          confidence: entries[i].conf,
-          source: 'geofence',
-          emoji: this.categoryEmoji(gf.category, gf.name),
-        });
-        addedGeofenceIds.add(gf.id);
+        addCand(gf.name, gf.category, entries[i].conf, 'geofence');
       }
     } catch (err) {
-      this.log.warn(TAG, `getLocationCandidates geofence fusion error: ${(err as Error).message}`);
+      this.log.warn(TAG, `getLocationCandidates fusion error: ${(err as Error).message}`);
     }
 
-    // --- B. GPS 逆地理编码 (only if no high-confidence geofence) ---
-    let hasHighConf = candidates.length > 0 && candidates[0].confidence > 0.7;
-    if (!hasHighConf && location && location.latitude !== 0) {
+    // --- B. GPS 逆地理编码（始终尝试，获取实际地名）---
+    if (location && location.latitude !== 0) {
       try {
         let geo = GeoCodingService.getInstance();
         let result = await geo.reverseGeocode(location.latitude, location.longitude);
         if (result.success && result.name) {
-          // Avoid duplicating a geofence name
-          let isDuplicate = false;
-          for (let i = 0; i < candidates.length; i++) {
-            if (candidates[i].name === result.name) { isDuplicate = true; break; }
-          }
-          if (!isDuplicate) {
-            let cat = result.category ?? 'custom';
-            candidates.push({
-              name: result.name,
-              category: cat,
-              confidence: 0.5,
-              source: 'geocode',
-              emoji: this.categoryEmoji(cat, result.name),
-            });
-          }
+          let cat = result.category ?? 'custom';
+          let conf = candidates.length > 0 ? 0.4 : 0.6;
+          addCand(result.name, cat, conf, 'geocode');
+          this.log.info(TAG, `LocationCandidate[geocode]: name="${result.name}" cat=${cat}`);
         }
       } catch (err) {
         this.log.warn(TAG, `getLocationCandidates geocode error: ${(err as Error).message}`);
@@ -3177,25 +3185,42 @@ export class ContextAwarenessService {
       if (currentSsid.length > 0) {
         for (let i = 0; i < allGeofences.length; i++) {
           let gf = allGeofences[i];
-          if (addedGeofenceIds.has(gf.id)) continue;
           let wifiList = gf.learnedSignals?.wifiSSIDs ?? [];
           for (let j = 0; j < wifiList.length; j++) {
             if (wifiList[j] === currentSsid) {
-              candidates.push({
-                name: gf.name,
-                category: gf.category,
-                confidence: 0.4,
-                source: 'wifi',
-                emoji: this.categoryEmoji(gf.category, gf.name),
-              });
-              addedGeofenceIds.add(gf.id);
+              addCand(gf.name, gf.category, 0.4, 'wifi');
               break;
             }
           }
         }
       }
     } catch (err) {
-      this.log.warn(TAG, `getLocationCandidates wifi match error: ${(err as Error).message}`);
+      this.log.warn(TAG, `getLocationCandidates wifi error: ${(err as Error).message}`);
+    }
+
+    // --- D. 兜底：如果没有任何推断结果，用时间+运动状态生成默认候选 ---
+    if (candidates.length === 0) {
+      this.log.info(TAG, `LocationCandidate: no inference results, using defaults`);
+      let hour = new Date().getHours();
+      let motion = this.lastMotionState;
+      // 根据运动状态
+      if (motion === 'driving') {
+        addCand(I18n.t('ctx.status.driving'), 'transit', 0.3, 'infer');
+      }
+      if (motion === 'walking') {
+        addCand('在路上', 'transit', 0.3, 'infer');
+      }
+      // 根据时间推测：晚上大概率在家
+      if (hour >= 21 || hour <= 7) {
+        addCand('家', 'home', 0.3, 'infer');
+      } else if (hour >= 9 && hour <= 18) {
+        addCand('公司', 'work', 0.25, 'infer');
+      }
+      // 添加通用选项
+      addCand('家', 'home', 0.2, 'infer');
+      addCand('公司', 'work', 0.2, 'infer');
+      addCand('餐厅', 'restaurant', 0.15, 'infer');
+      addCand('在路上', 'transit', 0.15, 'infer');
     }
 
     // Sort by confidence descending, limit to 4 + "其他"
@@ -3204,14 +3229,20 @@ export class ContextAwarenessService {
       candidates = candidates.slice(0, 4);
     }
     // Append "Other"
-    candidates.push({
+    let other: LocationCandidate = {
       name: I18n.t('ctx.correction.otherPlace'),
       category: 'custom',
       confidence: 0,
       source: 'manual',
       emoji: '📍',
-    });
+    };
+    candidates.push(other);
 
+    let locLog: string[] = [];
+    for (let i = 0; i < candidates.length; i++) {
+      locLog.push(candidates[i].emoji + candidates[i].name + '(' + candidates[i].confidence.toFixed(2) + ')');
+    }
+    this.log.info(TAG, 'LocationCandidates: ' + locLog.join(', '));
     return candidates;
   }
 
@@ -3220,7 +3251,7 @@ export class ContextAwarenessService {
    */
   inferActivityCandidates(locations: LocationCandidate[]): ActivityCandidate[] {
     let candidates: ActivityCandidate[] = [];
-    let addedActivities: Set<string> = new Set();
+    let addedNames: string[] = [];  // 去重用
 
     let now = new Date();
     let hour = now.getHours();
@@ -3228,15 +3259,23 @@ export class ContextAwarenessService {
     let isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5;
     let motion = this.lastMotionState;
 
-    // Top location category & name
-    let topCategory = locations.length > 1 ? locations[0].category : '';
-    let topName = locations.length > 1 ? locations[0].name : '';
+    // Top location category & name (skip "Other" at end)
+    let topCategory = '';
+    let topName = '';
+    for (let i = 0; i < locations.length; i++) {
+      if (locations[i].source !== 'manual') {
+        topCategory = locations[i].category;
+        topName = locations[i].name;
+        break;
+      }
+    }
 
-    // Helper to add candidate
-    let addCandidate = (name: string, emoji: string, conf: number): void => {
-      if (addedActivities.has(name)) return;
-      addedActivities.add(name);
-      candidates.push({ name, emoji, confidence: conf });
+    // Helper to add candidate (explicit properties for ArkTS)
+    let addAct = (actName: string, actEmoji: string, conf: number): void => {
+      if (addedNames.includes(actName)) return;
+      addedNames.push(actName);
+      let c: ActivityCandidate = { name: actName, emoji: actEmoji, confidence: conf };
+      candidates.push(c);
     };
 
     // --- Historical typicalActivities from current geofence ---
@@ -3258,7 +3297,7 @@ export class ContextAwarenessService {
         }
         if (bestKey.length > 0 && bestCount >= 2) {
           let actName = bestKey.substring(bestKey.indexOf('-') + 1);
-          addCandidate(actName, '⭐', 0.9);
+          addAct(actName, '⭐', 0.9);
         }
       }
     }
@@ -3266,53 +3305,73 @@ export class ContextAwarenessService {
     // --- Rule-based inference from location + time + motion ---
     // Airport
     if (topCategory === 'transit' && (topName.includes('机场') || topName.toLowerCase().includes('airport'))) {
-      addCandidate(I18n.t('ctx.activity.catchFlight'), '✈️', 0.85);
+      addAct(I18n.t('ctx.activity.catchFlight'), '✈️', 0.85);
     }
     // Train station
     if (topCategory === 'transit' && (topName.includes('火车') || topName.includes('高铁') || topName.toLowerCase().includes('train'))) {
-      addCandidate(I18n.t('ctx.activity.takeTrain'), '🚄', 0.85);
+      addAct(I18n.t('ctx.activity.takeTrain'), '🚄', 0.85);
     }
     // Restaurant during meal times
     if (topCategory === 'restaurant' && ((hour >= 11 && hour <= 14) || (hour >= 17 && hour <= 21))) {
-      addCandidate(I18n.t('ctx.activity.eating'), '🍽️', 0.8);
+      addAct(I18n.t('ctx.activity.eating'), '🍽️', 0.8);
     }
     // Work during weekday hours
     if (topCategory === 'work' && isWeekday && hour >= 9 && hour <= 18) {
-      addCandidate(I18n.t('ctx.activity.working'), '💻', 0.8);
+      addAct(I18n.t('ctx.activity.working'), '💻', 0.8);
     }
     // Home late night
     if (topCategory === 'home' && (hour >= 22 || hour <= 6)) {
-      addCandidate(I18n.t('ctx.activity.sleeping'), '😴', 0.8);
+      addAct(I18n.t('ctx.activity.sleeping'), '😴', 0.8);
     }
     // Home evening
     if (topCategory === 'home' && hour >= 18 && hour < 22) {
-      addCandidate(I18n.t('ctx.activity.resting'), '🛋️', 0.7);
+      addAct(I18n.t('ctx.activity.resting'), '🛋️', 0.7);
+    }
+    // Home daytime weekday (WFH)
+    if (topCategory === 'home' && isWeekday && hour >= 9 && hour <= 18) {
+      addAct(I18n.t('ctx.activity.working'), '💻', 0.6);
+    }
+    // Home daytime weekend
+    if (topCategory === 'home' && !isWeekday && hour >= 8 && hour < 18) {
+      addAct(I18n.t('ctx.activity.resting'), '🛋️', 0.6);
     }
     // Gym
     if (topCategory === 'gym') {
-      addCandidate(I18n.t('ctx.activity.exercising'), '🏃', 0.8);
+      addAct(I18n.t('ctx.activity.exercising'), '🏃', 0.8);
     }
     // Shopping + walking
-    if (topCategory === 'shopping' && (motion === 'walking' || motion === 'stationary')) {
-      addCandidate(I18n.t('ctx.activity.shopping'), '🛒', 0.75);
+    if (topCategory === 'shopping') {
+      addAct(I18n.t('ctx.activity.shopping'), '🛒', 0.75);
     }
     // Driving/vehicle
     if (motion === 'driving') {
-      addCandidate(I18n.t('ctx.activity.driving'), '🚗', 0.8);
+      addAct(I18n.t('ctx.activity.driving'), '🚗', 0.8);
     }
     // Commuting hours + walking/transit
     if ((hour >= 7 && hour <= 9) || (hour >= 17 && hour <= 19)) {
       if (motion === 'walking' || topCategory === 'transit') {
-        addCandidate(I18n.t('ctx.activity.commuting'), '🚶', 0.6);
+        addAct(I18n.t('ctx.activity.commuting'), '🚶', 0.6);
       }
     }
+    // Meal times (regardless of location)
+    if ((hour >= 11 && hour <= 13) || (hour >= 17 && hour <= 19)) {
+      addAct(I18n.t('ctx.activity.eating'), '🍽️', 0.5);
+    }
 
-    // Fill with general defaults if too few
+    // Always fill with context-aware defaults if too few
     if (candidates.length < 3) {
-      addCandidate(I18n.t('ctx.activity.working'), '💻', 0.3);
-      addCandidate(I18n.t('ctx.activity.resting'), '🛋️', 0.3);
-      addCandidate(I18n.t('ctx.activity.eating'), '🍽️', 0.3);
-      addCandidate(I18n.t('ctx.activity.commuting'), '🚶', 0.2);
+      // Time-based defaults
+      if (hour >= 22 || hour <= 6) {
+        addAct(I18n.t('ctx.activity.sleeping'), '😴', 0.3);
+        addAct(I18n.t('ctx.activity.resting'), '🛋️', 0.25);
+      } else if (isWeekday && hour >= 9 && hour <= 18) {
+        addAct(I18n.t('ctx.activity.working'), '💻', 0.3);
+      } else {
+        addAct(I18n.t('ctx.activity.resting'), '🛋️', 0.3);
+      }
+      addAct(I18n.t('ctx.activity.eating'), '🍽️', 0.2);
+      addAct(I18n.t('ctx.activity.commuting'), '🚶', 0.15);
+      addAct(I18n.t('ctx.activity.exercising'), '🏃', 0.1);
     }
 
     // Sort and limit to 4 + "Other"
@@ -3320,12 +3379,14 @@ export class ContextAwarenessService {
     if (candidates.length > 4) {
       candidates = candidates.slice(0, 4);
     }
-    candidates.push({
-      name: I18n.t('ctx.correction.otherAct'),
-      emoji: '📝',
-      confidence: 0,
-    });
+    let other: ActivityCandidate = { name: I18n.t('ctx.correction.otherAct'), emoji: '📝', confidence: 0 };
+    candidates.push(other);
 
+    let actLog: string[] = [];
+    for (let i = 0; i < candidates.length; i++) {
+      actLog.push(candidates[i].emoji + candidates[i].name + '(' + candidates[i].confidence.toFixed(2) + ')');
+    }
+    this.log.info(TAG, 'ActivityCandidates: ' + actLog.join(', '));
     return candidates;
   }
 
