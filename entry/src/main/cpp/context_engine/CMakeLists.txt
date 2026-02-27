@@ -10,6 +10,7 @@ add_library(context_engine SHARED
     soft_match.cpp
     mab.cpp
     linucb.cpp
+    stream_mlp.cpp
 )
 
 target_include_directories(context_engine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

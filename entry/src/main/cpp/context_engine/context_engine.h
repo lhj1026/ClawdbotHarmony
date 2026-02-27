@@ -22,6 +22,9 @@
 #include <cerrno>
 #include <cstdlib>
 
+// Forward declare StreamRLEngine (defined in stream_mlp.h)
+namespace context_engine { class StreamRLEngine; }
+
 namespace context_engine {
 
 /** Safe stod replacement using strtod — never throws (HarmonyOS NDK stod can SIGABRT) */
@@ -255,6 +258,9 @@ public:
     /** Get the LinUCB bandit for contextual action selection */
     LinUCB& linucb() { return linucb_; }
 
+    /** Get the Stream RL engine for online learning */
+    StreamRLEngine& streamRL() { return *streamRL_; }
+
     /** Get rule count */
     size_t ruleCount() const { return rules_.size(); }
 
@@ -279,6 +285,7 @@ private:
     std::vector<TreeNode> tree_;
     MAB mab_;
     LinUCB linucb_;
+    std::unique_ptr<StreamRLEngine> streamRL_;
     std::unordered_map<std::string, int64_t> lastFired_;  // ruleId → timestamp
     EventBuffer eventBuffer_;
     RateLimits rateLimits_;

@@ -332,9 +332,11 @@ export class FeedbackService {
   }
 
   private async recordFeedback(ruleId: string, feedbackType: FeedbackType, reward: number): Promise<void> {
-    // 发送到 C++ 引擎
+    // 发送到 C++ 引擎（含 Stream RL 训练）
     try {
-      await this.engine.feedback(ruleId, reward);
+      let card = this.activeCards.get(ruleId);
+      let snapshot = card?.rec?.snapshot;
+      await this.engine.feedback(ruleId, reward, snapshot);
     } catch (err) {
       this.log.warn(TAG, 'Engine feedback failed: ' + (err as Error).message);
     }

@@ -71,3 +71,29 @@ export const getRuleCount: () => number;
 
 /** Export all rules as JSON string */
 export const exportRules: () => string;
+
+/** Export LinUCB state as JSON string */
+export const exportLinUCB: () => string;
+
+/** Import LinUCB state from JSON string */
+export const importLinUCB: (json: string) => void;
+
+/** Push a context event into the event buffer */
+export const pushEvent: (eventJson: string) => void;
+
+/** Configure rate limits */
+export const setLimits: (limitsJson: string) => void;
+
+/**
+ * Train Stream RL (MLP) with user feedback.
+ * @param actionId - The action ID that was shown
+ * @param reward - Reward value (0~1)
+ * @param contextJson - JSON object of the context snapshot at recommendation time
+ */
+export const trainStreamRL: (actionId: string, reward: number, contextJson: string) => void;
+
+/** Export Stream RL model state as JSON string (for persistence) */
+export const exportStreamRL: () => string;
+
+/** Import Stream RL model state from JSON string */
+export const importStreamRL: (json: string) => void;

@@ -53,6 +53,15 @@ function nativeExportLinUCB(): string {
 function nativeImportLinUCB(json: string): void {
   contextEngine.importLinUCB(json);
 }
+function nativeTrainStreamRL(actionId: string, reward: number, contextJson: string): void {
+  contextEngine.trainStreamRL(actionId, reward, contextJson);
+}
+function nativeExportStreamRL(): string {
+  return contextEngine.exportStreamRL() as string;
+}
+function nativeImportStreamRL(json: string): void {
+  contextEngine.importStreamRL(json);
+}
 function nativePushEvent(json: string): void {
   contextEngine.pushEvent(json);
 }
@@ -207,6 +216,13 @@ export class ContextEngineService {
       if (linucbJson.length > 0) {
         nativeImportLinUCB(linucbJson);
         log.info(TAG, 'LinUCB state restored');
+      }
+
+      // Load Stream RL state
+      let streamRLJson: string = String(await this.prefsStore.get('stream_rl_state', ''));
+      if (streamRLJson.length > 0) {
+        nativeImportStreamRL(streamRLJson);
+        log.info(TAG, 'Stream RL state restored');
       }
 
       // Deduplicate existing rules (clean up duplicates from previous LLM auto-persist)
@@ -570,15 +586,19 @@ export class ContextEngineService {
     }
   }
 
-  /** Record user feedback for MAB + LinUCB learning */
+  /** Record user feedback for MAB + LinUCB + Stream RL learning */
   async feedback(actionId: string, reward: number, snapshot?: ContextSnapshot): Promise<void> {
     if (snapshot) {
-      contextEngine.updateReward(actionId, reward, JSON.stringify(snapshot));
+      let ctxJson = JSON.stringify(snapshot);
+      contextEngine.updateReward(actionId, reward, ctxJson);
+      // Train Stream RL with the same context
+      nativeTrainStreamRL(actionId, reward, ctxJson);
     } else {
       nativeUpdateReward(actionId, reward);
     }
     await this.persistStats();
     await this.persistLinUCB();
+    await this.persistStreamRL();
   }
 
   /** Action selection from candidates. Uses LinUCB if context provided, MAB fallback otherwise. */
@@ -743,6 +763,13 @@ export class ContextEngineService {
     if (!this.prefsStore) return;
     let json = nativeExportLinUCB();
     await this.prefsStore.put('linucb_state', json);
+    await this.prefsStore.flush();
+  }
+
+  private async persistStreamRL(): Promise<void> {
+    if (!this.prefsStore) return;
+    let json = nativeExportStreamRL();
+    await this.prefsStore.put('stream_rl_state', json);
     await this.prefsStore.flush();
   }
 }

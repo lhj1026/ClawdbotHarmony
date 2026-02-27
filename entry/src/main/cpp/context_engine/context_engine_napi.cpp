@@ -16,6 +16,7 @@
  */
 #include <napi/native_api.h>
 #include "context_engine.h"
+#include "stream_mlp.h"
 #include <string>
 #include <memory>
 #include <sstream>
@@ -490,6 +491,46 @@ static napi_value SetLimits(napi_env env, napi_callback_info info) {
     return nullptr;
 }
 
+// ============================================================
+// Stream RL NAPI functions
+// ============================================================
+
+static napi_value TrainStreamRL(napi_env env, napi_callback_info info) {
+    size_t argc = 3;
+    napi_value args[3];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 3) {
+        napi_throw_error(env, nullptr, "trainStreamRL requires actionId, reward, contextJson");
+        return nullptr;
+    }
+
+    auto actionId = napiGetString(env, args[0]);
+    double reward;
+    napi_get_value_double(env, args[1], &reward);
+    auto contextJson = napiGetString(env, args[2]);
+
+    auto ctx = parseContextMap(contextJson);
+    double features[context_engine::STREAM_FEAT_DIM];
+    context_engine::StreamRLEngine::buildFeatures(ctx, features);
+    g_engine.streamRL().trainArm(actionId, features, reward);
+
+    return nullptr;
+}
+
+static napi_value ExportStreamRL(napi_env env, napi_callback_info info) {
+    return napiString(env, g_engine.streamRL().exportJson());
+}
+
+static napi_value ImportStreamRL(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 1) return nullptr;
+    auto json = napiGetString(env, args[0]);
+    g_engine.streamRL().importJson(json);
+    return nullptr;
+}
+
 // Module registration
 
 EXTERN_C_START
@@ -507,8 +548,11 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"exportRules",  nullptr, ExportRules,  nullptr, nullptr, nullptr, napi_default, nullptr},
         {"exportLinUCB", nullptr, ExportLinUCB, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"importLinUCB", nullptr, ImportLinUCB, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"pushEvent",    nullptr, PushEvent,    nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"setLimits",    nullptr, SetLimits,    nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"pushEvent",       nullptr, PushEvent,       nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"setLimits",       nullptr, SetLimits,       nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"trainStreamRL",   nullptr, TrainStreamRL,   nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"exportStreamRL",  nullptr, ExportStreamRL,  nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"importStreamRL",  nullptr, ImportStreamRL,  nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     return exports;

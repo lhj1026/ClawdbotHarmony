@@ -7,6 +7,7 @@
  *   - Enhanced cooldown: per-rule, per-category, global rate limit
  */
 #include "context_engine.h"
+#include "stream_mlp.h"
 #include <algorithm>
 #include <chrono>
 #include <sstream>
@@ -89,7 +90,9 @@ void EventBuffer::expireOld() {
 // RuleEngine implementation
 // ============================================================
 
-RuleEngine::RuleEngine() : mab_(0.1), eventBuffer_(100) {}
+RuleEngine::RuleEngine()
+    : mab_(0.1), eventBuffer_(100),
+      streamRL_(std::make_unique<StreamRLEngine>()) {}
 RuleEngine::~RuleEngine() = default;
 
 bool RuleEngine::loadRules(const std::vector<Rule>& rules) {
@@ -274,11 +277,39 @@ std::vector<MatchResult> RuleEngine::evaluate(const ContextMap& ctx, int maxResu
         priorityMap[rule.id] = rule.priority;
     }
 
+    // Build Stream RL features once for hybrid scoring
+    double rlFeats[STREAM_FEAT_DIM];
+    StreamRLEngine::buildFeatures(ctx, rlFeats);
+
+    // Hybrid scoring: rule confidence × priority, boosted by Stream RL prediction
+    auto hybridScore = [&](const MatchResult& r) -> double {
+        double pa = priorityMap.count(r.ruleId) ? priorityMap[r.ruleId] : 1.0;
+        double ruleScore = r.confidence * pa;
+
+        int samples = streamRL_->getArmSamples(r.action.id);
+
+        if (samples < STREAM_MIN_SAMPLES) {
+            // Cold start: pure rule score (LinUCB has no per-arm scoring API)
+            return ruleScore;
+        }
+
+        double mlpScore = streamRL_->scoreArm(r.action.id, rlFeats);
+        double normalizedMlp = std::tanh(mlpScore);  // bound to [-1, 1]
+
+        double rlWeight;
+        if (samples >= STREAM_RAMP_SAMPLES) {
+            rlWeight = 0.3;  // full RL influence
+        } else {
+            rlWeight = static_cast<double>(samples - STREAM_MIN_SAMPLES)
+                     / (STREAM_RAMP_SAMPLES - STREAM_MIN_SAMPLES) * 0.3;
+        }
+
+        return ruleScore * (1.0 + rlWeight * normalizedMlp);
+    };
+
     auto sortByScore = [&](std::vector<MatchResult>& results) {
         std::sort(results.begin(), results.end(), [&](const MatchResult& a, const MatchResult& b) {
-            double pa = priorityMap.count(a.ruleId) ? priorityMap[a.ruleId] : 1.0;
-            double pb = priorityMap.count(b.ruleId) ? priorityMap[b.ruleId] : 1.0;
-            return a.confidence * pa > b.confidence * pb;
+            return hybridScore(a) > hybridScore(b);
         });
     };
 

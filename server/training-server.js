@@ -14,7 +14,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
-const PORT = 18793;
+const PORT = 18790;
 const DATA_DIR = path.join(__dirname, 'training-data');
 const FEDERATED_DIR = path.join(__dirname, 'federated-data');
 const FEDERATED_UPLOADS_DIR = path.join(FEDERATED_DIR, 'uploads');

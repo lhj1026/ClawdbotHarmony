@@ -1,6 +1,6 @@
 # Context Intelligence Framework Design Document
-> Version: 6.0
-> Date: 2026-02-24
+> Version: 7.0
+> Date: 2026-02-27
 > Author: 刘洪杰 (Hongjie Liu)
 
 ### Revision History
@@ -12,7 +12,7 @@
 | 3.0 | 2026-02-19 | 刘洪杰 (Hongjie Liu) | Full document restructured following DDD 7-step method: Boundary -> Use Case -> Sub-domain -> Layer -> Architecture -> Narrow-down -> Entity; added system boundary definition, four problem domain partitioning, six-layer architecture model, execution domain design, implementation roadmap |
 | 4.0 | 2026-02-20 | 刘洪杰 (Hongjie Liu) | C++ NAPI migration implementation (4 new modules); context.test remote testing capability; 21-scenario full coverage test suite; cooldown loadRules fix; actual directory structure update |
 | 5.0 | 2026-02-22 | 刘洪杰 (Hongjie Liu) | LLM fallback rule feedback loop (pending -> promote/remove); rule deduplication mechanism; recommendation anti-duplication; active exploration mode design; FeedbackService card lifecycle; merged context_awareness_design.md (collection strategy, geofence learning, app learning, silent mode enhancement, wearable integration, data tray, training sync, feedback learning) |
-| 6.0 | 2026-02-24 | 刘洪杰 (Hongjie Liu) | Federated learning sync system (C++ core implementation): three-tier federated architecture (rules/LinUCB/behavior patterns), SHA256 anonymization, community rule merging; integrated v2 design document (data classification framework, perception plugin system, encoder probability distribution, composite reward function) |
+| 7.0 | 2026-02-27 | 刘洪杰 (Hongjie Liu) | Stream Deep RL online reinforcement learning engine: Per-Arm StreamMLP (16→64→32→1) online training; Sparse Init + LayerNorm + ObGD stable training; Welford observation/reward normalization; LinUCB cold-start fallback + linear transition; NAPI bridge + ArkTS persistence; hybrid scoring formula |
 
 ---
 
@@ -109,23 +109,17 @@
   - [19.4 Data Flow](#194-data-flow)
   - [19.5 Server-side Interface](#195-server-side-interface)
 - [20. Feedback Learning System Detailed Design](#20-feedback-learning-system-detailed-design)
-- [21. Federated Learning Sync System (C++)](#21-federated-learning-sync-system-c)
-  - [21.1 Design Motivation](#211-design-motivation)
-  - [21.2 Three-tier Federated Architecture](#212-three-tier-federated-architecture)
-  - [21.3 Anonymization Strategy](#213-anonymization-strategy)
-  - [21.4 C++ Core Implementation](#214-c-core-implementation)
-  - [21.5 NAPI Interface](#215-napi-interface)
-  - [21.6 ArkTS Service Layer](#216-arkts-service-layer)
-  - [21.7 Server API Contract](#217-server-api-contract)
-  - [21.8 Full Data Flow](#218-full-data-flow)
-  - [21.9 Privacy Guarantees](#219-privacy-guarantees)
-  - [21.10 Gateway Command](#2110-gateway-command)
-- [22. v2 Design Core Concepts (Reference)](#22-v2-design-core-concepts-reference)
-  - [22.1 Data Classification Framework](#221-data-classification-framework)
-  - [22.2 Perception Plugin System](#222-perception-plugin-system)
-  - [22.3 Encoder Probability Distribution Output](#223-encoder-probability-distribution-output)
-  - [22.4 Composite Reward Function](#224-composite-reward-function)
-  - [22.5 Five-layer Robustness Protection](#225-five-layer-robustness-protection)
+- [21. Stream Deep RL — Online Reinforcement Learning Engine](#21-stream-deep-rl--online-reinforcement-learning-engine)
+  - [21.1 Overview](#211-overview)
+  - [21.2 Data Flow Architecture](#212-data-flow-architecture)
+  - [21.3 Key Techniques](#213-key-techniques)
+  - [21.4 MLP Model Architecture (Per-Arm)](#214-mlp-model-architecture-per-arm)
+  - [21.5 Hybrid Scoring and Cold-Start Strategy](#215-hybrid-scoring-and-cold-start-strategy)
+  - [21.6 C++ Implementation Design](#216-c-implementation-design)
+  - [21.7 NAPI Bridge Interface](#217-napi-bridge-interface)
+  - [21.8 ArkTS Integration](#218-arkts-integration)
+  - [21.9 File Manifest and Implementation Order](#219-file-manifest-and-implementation-order)
+  - [21.10 Test Plan](#2110-test-plan)
 - [Appendix: TODO Items](#appendix-todo-items)
 
 ---
@@ -1969,573 +1963,387 @@ After clicking "Adjust Time":
 
 ---
 
-## 21. Federated Learning Sync System (C++)
+## 21. Stream Deep RL — Online Reinforcement Learning Engine
 
-### 21.1 Design Motivation
+### 21.1 Overview
 
-The current context intelligence system learns entirely on-device locally:
+The Context Intelligence Engine employs a three-layer progressive decision architecture. Stream Deep RL serves as Layer 2:
 
-- **ContextEngine (C++)**: MAB + LinUCB contextual bandit algorithm; parameters exportable/importable via `exportLinUCB()`/`importLinUCB()`
-- **BehaviorLogger**: Local rule learning (confidence = acceptCount/triggerCount)
-- **TrainingDataSync**: Uploads raw training data to server (`POST /training/upload`), but server returns no model
+| Layer | Method | Responsibility | Status |
+|-------|--------|---------------|--------|
+| **Layer 1** | Rule Engine (Decision Tree + Soft Matching) | Generate candidate recommendation list from predefined rules | Completed |
+| **Layer 2** | **Stream Deep RL (MLP Online Learning)** | Rerank candidates based on learned user preferences | **This Section** |
+| **Layer 3** | LLM Fallback | Generate recommendations via LLM when no rules match | Completed |
 
-**Core Problem:** Each device learns independently and cannot share learning outcomes. New devices must accumulate data from scratch. Good rules learned by User A cannot benefit User B.
+**Core Idea**: Each time a user provides feedback on a recommendation card (thumbs up/down/ignore), the MLP performs a single-sample online gradient update (no replay buffer), progressively learning user preferences across different contexts. LinUCB is retained as a cold-start fallback.
 
-**Goal:** Implement federated training to enable multi-device collaborative learning while protecting user privacy.
+**Technical Reference**: Elsayed et al. 2024 *"Streaming Deep Reinforcement Learning Finally Works"*
 
-```
-Device A ─── Anonymized model update ───┐
-Device B ─── Anonymized model update ───┼── Server (aggregation) ─── Aggregated model ──→ All Devices
-Device C ─── Anonymized model update ───┘
-```
-
-### 21.2 Three-tier Federated Architecture
-
-| Tier | Content | Upload Frequency | Privacy Risk | Value |
-|------|---------|-----------------|--------------|-------|
-| **L1: Rule Federation** | High-confidence rules (anonymized conditions) | Every sync | Low | High |
-| **L2: LinUCB Federation** | Bandit model parameters (A matrix, b vector) | Every sync | Very low | Medium |
-| **L3: Behavior Patterns** | Aggregated statistics (time period x place category x action frequency) | Every sync | Low | Medium |
-
-**Sync interval:** Every 6 hours, embedded in TrainingDataSync's sync flow.
-
-### 21.3 Anonymization Strategy
-
-**Safe key whitelist (no PII, transmitted directly):**
+### 21.2 Data Flow Architecture
 
 ```
-timeOfDay, hour, dayOfWeek, isWeekend, motionState,
-batteryLevel, isCharging, networkType, sensorTier,
-heart_rate_status, transportMode, activityState
+Sensor Data → DataTray → ContextSnapshot
+                              │
+                    ┌─────────┼──────────┐
+                    │ Layer 1: Rule Engine│
+                    │ (Decision Tree +   │
+                    │  Soft Matching)     │
+                    │ → Candidate List   │
+                    └─────────┬──────────┘
+                              │ candidates[]
+                    ┌─────────┼──────────┐
+                    │ Layer 2: Stream RL  │
+                    │ (MLP Reranking)     │
+                    │ hybrid_score =      │
+                    │   rule_score ×      │
+                    │   (1 + w × mlp)     │
+                    └─────────┬──────────┘
+                              │ reranked top-1
+                    ┌─────────┼──────────┐
+                    │ Push Recommendation │
+                    └─────────┬──────────┘
+                              │ User Feedback (reward)
+                    ┌─────────┼──────────┐
+                    │ Single-Sample       │
+                    │ Online Training     │
+                    │ MLP.update(ctx, r)  │
+                    └─────────┴──────────┘
+No match → Layer 3: LLM Fallback (unchanged)
 ```
 
-**Keys requiring anonymization:**
+### 21.3 Key Techniques
 
-| Original Key | Processing | Anonymized Result |
-|-------------|-----------|-------------------|
-| `geofence` | Replaced with geofence category | `placeCategory: home/work/gym/transit/...` |
-| `wifiSsid` | **Not uploaded** | — |
-| `wifiGeofence` | **Not uploaded** | — |
-| Bluetooth device name | Replaced with device class | `bt_fixed/bt_vehicle/bt_wearable` |
-| GPS coordinates | **Not uploaded** | — |
-| Geofence name | **Not uploaded** | — |
+Based on Elsayed et al. 2024, six key techniques ensure stable MLP training in a purely online (no replay buffer) setting:
 
-**Upload threshold:**
-- Rules with `confidence >= 0.6` and `triggerCount >= 5` only
-- At least 2 meaningful conditions after anonymization
-- Device ID hashed with SHA256 (irreversible)
+| # | Technique | Description | Implementation |
+|---|-----------|-------------|----------------|
+| 1 | **Layer Normalization** | Pre-activation LayerNorm on each hidden layer (non-learnable params) | `(x - mean(x)) / sqrt(var(x) + 1e-5)` |
+| 2 | **Sparse Initialization** | 90% of weights initialized to 0, remainder use LeCun init | `U[-1/√fan_in, 1/√fan_in]`, mask rate 0.9 |
+| 3 | **ObGD** | Overshooting-Bounded Gradient Descent, step-size limiting to prevent large destabilizing updates | `step = min(lr, lr / (κ × \|δ\| × ‖grad‖₁))` when product > 1 |
+| 4 | **Observation Normalization** | Running mean/std normalization on input features | Welford's online algorithm for mean/var |
+| 5 | **Reward Normalization** | Running mean/std normalization on rewards | Same as above |
+| 6 | **No Replay Buffer** | Immediate single-sample gradient update upon each new observation | Single-sample SGD, zero extra memory overhead |
 
-### 21.4 C++ Core Implementation
+### 21.4 MLP Model Architecture (Per-Arm)
 
-Files: `entry/src/main/cpp/federated_sync/`
+Each rule/action owns an independent StreamMLP:
 
-**Core data structures:**
+```
+Input (16-dim) → Linear(16, 64) → LayerNorm → LeakyReLU(α=0.01)
+              → Linear(64, 32)  → LayerNorm → LeakyReLU(α=0.01)
+              → Linear(32, 1)   // Predicted reward value
+```
+
+**Sparse Init**: 90% weights = 0, 10% weights ~ LeCun distribution.
+
+#### 21.4.1 Feature Vector Definition (16-dim)
+
+| Dim | Feature | Encoding | Range |
+|-----|---------|----------|-------|
+| 0-1 | hour | sin/cos cyclic encoding | [-1, 1] |
+| 2-3 | dayOfWeek | sin/cos cyclic encoding | [-1, 1] |
+| 4 | isWeekend | binary | {0, 1} |
+| 5 | timeOfDay | enum mapping | dawn=0.1, morning=0.3, afternoon=0.5, evening=0.7, night=0.9 |
+| 6 | batteryLevel | /100 normalized | [0, 1] |
+| 7 | isCharging | binary | {0, 1} |
+| 8-11 | motionState | one-hot | stationary, walking, running, driving |
+| 12 | hasGeofence | binary | {0, 1} |
+| 13 | wifiConnected | binary | {0, 1} |
+| 14-15 | networkType | one-hot | wifi, cellular (none = both 0) |
+
+#### 21.4.2 Resource Overhead Estimation
+
+| Item | Value | Notes |
+|------|-------|-------|
+| Parameters per Arm | 3,169 | 16×64+64+64×32+32+32×1+1 |
+| Memory per Arm | ~25 KB | 3169 × 8 bytes (double) |
+| Total for 30 Arms | ~750 KB | Fully acceptable for on-device |
+| Single forward pass | < 0.01 ms | Pure CPU matrix operations |
+| Single backward pass | < 0.05 ms | Including gradient + ObGD |
+
+#### 21.4.3 Feature Vector Extensibility
+
+The feature dimension is designed to be extensible. When adding new features, only two changes are needed:
+
+1. **Update `STREAM_FEAT_DIM` constant** (e.g., 16 → 20)
+2. **Append new feature encoding at the end of `buildFeatures()`**
+
+MLP layer sizes are template parameters (`DenseLayer<STREAM_FEAT_DIM, STREAM_H1>`) that automatically adapt to the dimension change — no manual network structure modification required.
+
+**Model migration strategy**: After a dimension change, persisted weight matrices will have mismatched shapes (e.g., old 16×64 vs new 20×64). `importJson()` checks the dimension; on mismatch it skips the import, causing the MLP to re-initialize with sparse init and automatically fall back to LinUCB cold-start. The model recovers after a few rounds of user feedback.
+
+**Candidate extension features**:
+
+| Dim | Candidate Feature | Encoding |
+|-----|-------------------|----------|
+| 16 | Bluetooth connected device count | /10 normalized |
+| 17 | Step activity level | steps in last 30 min / 1000 |
+| 18 | Screen brightness | /255 normalized |
+| 19 | Altitude / floor level | normalized |
+
+### 21.5 Hybrid Scoring and Cold-Start Strategy
+
+```
+if arm.samples < 5:                      // Cold-start phase
+    score = LinUCB.scoreArm(actionId, ctx)   // Use LinUCB fallback
+elif arm.samples < 20:                    // Linear transition phase
+    w = (samples - 5) / 15
+    score = (1-w) * linucb_score + w * mlp_score
+else:                                     // MLP-dominant phase
+    score = mlp_score
+```
+
+**Hybrid scoring formula** (in RuleEngine's `evaluate()` sort stage):
+
+```
+ruleScore = confidence × priorityAdjustment
+
+// Cold-start phase (samples < 5)
+hybridScore = ruleScore  (or LinUCB fallback)
+
+// Transition phase (5 ≤ samples < 20)
+rlWeight = (samples - 5) / 15 × 0.3
+normalizedMlp = tanh(mlp_score)              // Bound to [-1, 1]
+hybridScore = ruleScore × (1 + rlWeight × normalizedMlp)
+
+// MLP-dominant phase (samples ≥ 20)
+hybridScore = ruleScore × (1 + 0.3 × tanh(mlp_score))
+```
+
+### 21.6 C++ Implementation Design
+
+#### 21.6.1 Core Class Structure
 
 ```cpp
-namespace federated_sync {
+namespace context_engine {
 
-struct AnonymizedCondition {
-    std::string key;    // timeOfDay, motionState, placeCategory, etc.
-    std::string op;     // eq, neq, gt, lt, etc.
-    std::string value;  // Anonymized value
+constexpr int STREAM_FEAT_DIM = 16;       // Input feature dimension
+constexpr int STREAM_H1 = 64;             // Hidden layer 1
+constexpr int STREAM_H2 = 32;             // Hidden layer 2
+constexpr double STREAM_LR = 0.01;        // Learning rate
+constexpr double STREAM_KAPPA = 2.0;      // ObGD step-size bound
+constexpr double STREAM_WEIGHT_DECAY = 1e-4;
+constexpr double STREAM_LEAKY_ALPHA = 0.01;  // LeakyReLU negative slope
+constexpr double SPARSE_RATIO = 0.9;      // Sparse init ratio
+constexpr int STREAM_MIN_SAMPLES = 5;     // Cold-start minimum samples
+constexpr int STREAM_RAMP_SAMPLES = 20;   // Transition end sample count
+
+// Online statistics (Welford's algorithm)
+struct RunningStats {
+    std::array<double, STREAM_FEAT_DIM> mean;
+    std::array<double, STREAM_FEAT_DIM> var;
+    int count;
+    void update(const double* x);
+    void normalize(const double* x, double* out) const;
 };
 
-struct AnonymizedRule {
-    std::string conditionFingerprint;  // SHA256(sorted condition set)
-    std::vector<AnonymizedCondition> conditions;
-    std::string actionType;            // suggestion/automation/notification
-    std::string actionPayloadHash;     // SHA256(payload) — for dedup
-    double confidence;
-    int triggerCount;
-    int acceptCount;
+// Dense layer
+template<int IN, int OUT>
+struct DenseLayer {
+    double W[OUT][IN];
+    double b[OUT];
+    void sparseInit();
+    void forward(const double* in, double* out) const;
+    static void layerNorm(double* x, int dim);
 };
 
-struct BehaviorPattern {
-    std::string placeCategory;  // home/work/gym/unknown
-    std::string timeOfDay;      // dawn/morning/afternoon/evening/night
-    std::string dayType;        // weekday/weekend
-    std::string motionState;
-    std::string actionType;
-    int frequency;
-};
-
-struct CommunityRule {
-    std::string id;             // 'community_' prefix
-    std::vector<AnonymizedCondition> conditions;
-    std::string actionType;
-    std::string actionPayload;
-    double communityConfidence;
-    int deviceCount;
-    std::string name;
-};
-
-struct FederatedModel {
-    int protocolVersion;
-    int64_t aggregatedAt;
-    int participantCount;
-    std::vector<CommunityRule> communityRules;
-    std::string linucbState;    // optional
-    std::vector<BehaviorPattern> topPatterns;
-    int modelVersion;
-};
-
-}  // namespace federated_sync
-```
-
-**Core class methods:**
-
-```cpp
-class FederatedSync {
+// Per-Arm StreamMLP
+class StreamMLP {
 public:
-    static FederatedSync& getInstance();
-    void init(const std::string& deviceId);
-    void setGeofenceCategories(const std::vector<GeofenceCategoryEntry>& categories);
-
-    // Export anonymized rules
-    std::vector<AnonymizedRule> exportAnonymizedRules(
-        const std::string& rulesJson, const std::string& statsJson);
-
-    // Export aggregated behavior patterns (top-20, sorted by frequency)
-    std::vector<BehaviorPattern> exportBehaviorPatterns(
-        const std::vector<BehaviorRecord>& records);
-
-    // Build federated model update JSON (device → server)
-    std::string buildModelUpdate(
-        const std::string& rulesJson, const std::string& statsJson,
-        const std::string& linucbJson,
-        const std::vector<BehaviorRecord>& records,
-        int localDataPoints);
-
-    // Parse federated model returned by server
-    FederatedModel parseFederatedModel(const std::string& modelJson);
-
-    // Community rules → engine rule JSON (for addPendingRule)
-    std::string communityRulesToEngineJson(
-        const std::vector<CommunityRule>& rules);
-
-    std::string getDeviceFingerprint() const;
-
+    StreamMLP();  // sparse init
+    double predict(const double* features);
+    void update(const double* features, double reward);
+    std::string exportJson() const;
+    void importJson(const std::string& json);
+    int samples() const { return sampleCount_; }
 private:
-    bool anonymizeCondition(const RuleCondition& cond, AnonymizedCondition& out) const;
-    std::string sha256(const std::string& input) const;  // Self-implemented, no external deps
-    static const std::set<std::string>& safeKeys();      // Safe key whitelist
+    DenseLayer<STREAM_FEAT_DIM, STREAM_H1> layer1_;
+    DenseLayer<STREAM_H1, STREAM_H2> layer2_;
+    DenseLayer<STREAM_H2, 1> output_;
+    RunningStats inputStats_;
+    double rewardMean_, rewardVar_;
+    int rewardCount_, sampleCount_;
+};
+
+// Per-Arm manager
+class StreamRLEngine {
+public:
+    double scoreArm(const std::string& actionId, const double* features);
+    void trainArm(const std::string& actionId, const double* features, double reward);
+    static std::array<double, STREAM_FEAT_DIM> buildFeatures(const ContextMap& ctx);
+    int getArmSamples(const std::string& actionId) const;
+    std::string exportJson() const;
+    void importJson(const std::string& json);
+private:
+    std::unordered_map<std::string, StreamMLP> arms_;
+    mutable std::mutex mu_;
+};
+
+}  // namespace context_engine
+```
+
+#### 21.6.2 Key Algorithm Implementations
+
+**Sparse Initialization**:
+```cpp
+void sparseInit() {
+    double limit = 1.0 / std::sqrt((double)IN);
+    for (int o = 0; o < OUT; ++o)
+        for (int i = 0; i < IN; ++i)
+            W[o][i] = (rand01() >= SPARSE_RATIO) ? uniform(-limit, limit) : 0.0;
+}
+```
+
+**ObGD Step-size Limiting**:
+```cpp
+double product = STREAM_KAPPA * std::abs(delta) * gradL1;
+double effectiveLR = (product > 1.0) ? STREAM_LR / product : STREAM_LR;
+// W -= effectiveLR * grad + weight_decay * W
+```
+
+**LayerNorm (non-learnable parameters)**:
+```cpp
+static void layerNorm(double* x, int dim) {
+    double mean = 0, var = 0;
+    for (int i = 0; i < dim; ++i) mean += x[i];
+    mean /= dim;
+    for (int i = 0; i < dim; ++i) var += (x[i]-mean)*(x[i]-mean);
+    double invStd = 1.0 / std::sqrt(var/dim + 1e-5);
+    for (int i = 0; i < dim; ++i) x[i] = (x[i] - mean) * invStd;
+}
+```
+
+**Welford Online Statistics**:
+```cpp
+void RunningStats::update(const double* x) {
+    count++;
+    for (int i = 0; i < STREAM_FEAT_DIM; ++i) {
+        double d = x[i] - mean[i];
+        mean[i] += d / count;
+        var[i] += d * (x[i] - mean[i]);  // M2 accumulator
+    }
+}
+```
+
+#### 21.6.3 RuleEngine Integration
+
+In `evaluate()`, after deduplication and before sorting, inject hybrid scoring:
+
+```cpp
+auto feats = StreamRLEngine::buildFeatures(ctx);
+
+auto hybridScore = [&](const MatchResult& r) -> double {
+    double ruleScore = r.confidence * priorityMap[r.ruleId];
+    int samples = streamRL_.getArmSamples(r.action.id);
+
+    if (samples < STREAM_MIN_SAMPLES) {
+        // Cold-start: LinUCB fallback
+        auto ls = linucb_.scoreArm(r.action.id, ctx);
+        if (ls.pulls < 5) return ruleScore;
+        double w = std::min(1.0, ls.pulls / 20.0) * 0.2;
+        return ruleScore * (1.0 + w * std::tanh(ls.exploit));
+    }
+
+    double mlpScore = streamRL_.scoreArm(r.action.id, feats.data());
+    double rlWeight = (samples >= STREAM_RAMP_SAMPLES)
+        ? 0.3
+        : (double)(samples - STREAM_MIN_SAMPLES)
+          / (STREAM_RAMP_SAMPLES - STREAM_MIN_SAMPLES) * 0.3;
+
+    return ruleScore * (1.0 + rlWeight * std::tanh(mlpScore));
 };
 ```
 
-**Key implementation details:**
+### 21.7 NAPI Bridge Interface
 
-1. **SHA256**: Self-implemented (no external crypto library dependency), used for device ID fingerprints and condition set fingerprints
-2. **Anonymization**: Whitelist mode — safe keys pass through directly, geofence converted to placeCategory, everything else dropped
-3. **Behavior pattern aggregation**: Aggregates BehaviorRecords by counting, takes top-20 by frequency
-4. **JSON serialization/parsing**: Manual implementation (project pattern, no third-party JSON library)
-5. **Thread safety**: Mutex protects all data access
-
-### 21.5 NAPI Interface
-
-File: `entry/src/main/cpp/federated_sync/federated_sync_napi.cpp`
-
-| NAPI Function | Parameters | Return | Description |
-|--------------|-----------|--------|-------------|
-| `init` | `{deviceId: string}` | `void` | Initialize, SHA256 device ID |
-| `setGeofenceCategories` | `{categories: [{id, category}]}` | `void` | Set geofence category mapping |
-| `buildModelUpdate` | `{rulesJson, statsJson, linucbJson, records[], dataPoints}` | `string` | Build upload JSON |
-| `parseFederatedModel` | `{modelJson: string}` | `ParsedFederatedModel` | Parse download JSON |
-| `getDeviceFingerprint` | — | `string` | Get device fingerprint |
-
-**TypeScript type declarations** (`entry/src/main/cpp/types/libfederated_sync/index.d.ts`):
+Three new NAPI functions exposed to ArkTS:
 
 ```typescript
-export interface FederatedInitConfig {
-  deviceId: string;
-}
-
-export interface ParsedFederatedModel {
-  modelVersion: number;
-  participantCount: number;
-  communityRulesJson: string;   // JSON array — community rules in engine rule format
-  linucbState: string;
-  topPatternsJson: string;
-}
-
-export function init(config: FederatedInitConfig): void;
-export function setGeofenceCategories(config: { categories: Array<{id: string, category: string}> }): void;
-export function buildModelUpdate(config: { ... }): string;
-export function parseFederatedModel(config: { modelJson: string }): ParsedFederatedModel;
-export function getDeviceFingerprint(): string;
+// libcontext_engine/index.d.ts additions
+export const trainStreamRL: (actionId: string, reward: number, contextJson: string) => void;
+export const exportStreamRL: () => string;
+export const importStreamRL: (json: string) => void;
 ```
 
-### 21.6 ArkTS Service Layer
+Registered in `context_engine_napi.cpp`'s `Init()` function.
 
-File: `entry/src/main/ets/service/context/FederatedSync.ets`
+### 21.8 ArkTS Integration
 
-The ArkTS layer is a thin wrapper responsible for HTTP communication, Preferences management, and service orchestration:
-
-```
-FederatedSync.init(context, endpoint)
-    │
-    ├── Read toggle/version from Preferences
-    ├── Call nativeInit(deviceId)
-    └── Get geofence mapping from GeofenceManager → nativeSetGeofenceCategories()
-
-FederatedSync.sync()
-    │
-    ├── shouldSync() — Check toggle + 6h interval
-    ├── uploadModelUpdate()
-    │   ├── Collect: ContextEngine.exportRules()/exportLinUCB()
-    │   ├── Collect: BehaviorLogger.getAllRules() → build BehaviorRecord[]
-    │   ├── nativeBuildModelUpdate() → JSON
-    │   └── POST /training/federated/upload
-    └── downloadAggregatedModel()
-        ├── GET /training/federated/model?since={version}
-        ├── nativeParseFederatedModel() → ParsedFederatedModel
-        ├── mergeCommunityRules() → addPendingRule()
-        └── Update Preferences (version, lastSync)
-```
-
-**Community rule merge strategy:** Community rules are added in pending status via `ContextEngineService.addPendingRule()`. They are only formally activated after positive user feedback (reusing the LLM fallback rule promote mechanism). Community rules are set with `priority: 0.5` (lower than user-defined rules) and `cooldownMs: 7200000` (2 hours).
-
-**De-anonymization:** The `placeCategory` conditions in downloaded community rules are mapped to local geofence IDs by looking up GeofenceManager. If no local geofence of the matching category exists, the condition is downgraded to `wifiGeofence`.
-
-**User controls (Preferences):**
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `federated_sync_enabled` | boolean | false | Must be manually enabled by user |
-| `federated_last_sync` | number | 0 | Last sync timestamp |
-| `federated_model_version` | number | 0 | Current model version |
-
-### 21.7 Server API Contract
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/training/federated/upload` | Upload anonymized model update |
-| GET | `/training/federated/model?since={version}` | Download aggregated model |
-
-**Upload request body (`FederatedModelUpdate`):**
-
-```json
-{
-  "protocolVersion": 1,
-  "deviceFingerprint": "a3f2...(SHA256)",
-  "timestamp": 1708761600000,
-  "dataPoints": 150,
-  "rules": [
-    {
-      "conditionFingerprint": "b4e1...",
-      "conditions": [
-        {"key": "timeOfDay", "op": "eq", "value": "evening"},
-        {"key": "placeCategory", "op": "eq", "value": "home"}
-      ],
-      "actionType": "suggestion",
-      "actionPayloadHash": "c7d3...",
-      "confidence": 0.78,
-      "triggerCount": 12,
-      "acceptCount": 9
-    }
-  ],
-  "linucbState": "{...LinUCB JSON...}",
-  "patterns": [
-    {
-      "placeCategory": "home",
-      "timeOfDay": "evening",
-      "dayType": "weekday",
-      "motionState": "still",
-      "actionType": "suggestion",
-      "frequency": 8
-    }
-  ]
-}
-```
-
-**Download response body (`FederatedModel`):**
-
-```json
-{
-  "protocolVersion": 1,
-  "aggregatedAt": 1708848000000,
-  "participantCount": 15,
-  "communityRules": [
-    {
-      "id": "community_001",
-      "conditions": [
-        {"key": "timeOfDay", "op": "eq", "value": "evening"},
-        {"key": "placeCategory", "op": "eq", "value": "home"},
-        {"key": "isWeekend", "op": "eq", "value": "false"}
-      ],
-      "actionType": "suggestion",
-      "actionPayload": "Back home after work, time to relax",
-      "communityConfidence": 0.72,
-      "deviceCount": 8,
-      "name": "After-work relaxation reminder"
-    }
-  ],
-  "linucbState": "{...aggregated...}",
-  "topPatterns": [...],
-  "modelVersion": 42
-}
-```
-
-**Server aggregation logic (brief, not in device-side implementation scope):**
-1. Collect rules from multiple devices; aggregate confidence for rules with the same `conditionFingerprint`
-2. LinUCB parameters: FedAvg weighted average
-3. Behavior patterns: top-K statistics
-4. Community rule generation: 3+ device verification + confidence > 0.5 → create community rule
-
-### 21.8 Full Data Flow
+#### 21.8.1 Feedback Chain
 
 ```
-┌──────────────────────── Device Side ────────────────────────┐
-│                                                              │
-│  ContextEngine ──exportRules()──┐                           │
-│  ContextEngine ──exportLinUCB()──┼── FederatedSync (C++)    │
-│  ContextEngine ──getStats()─────┘    │                      │
-│  BehaviorLogger ──getAllRules()───────┘                      │
-│  GeofenceManager ──categories───────────────────────────────│
-│                                                              │
-│  C++ Core:                                                  │
-│    Anonymize → SHA256 → JSON serialize                      │
-│         ↓                                                   │
-│  ArkTS Service Layer:                                       │
-│    HTTP POST → /training/federated/upload                   │
-│    HTTP GET  ← /training/federated/model                    │
-│         ↓                                                   │
-│  C++ Core:                                                  │
-│    JSON parse → Community rules to engine rules             │
-│         ↓                                                   │
-│  ContextEngine ──addPendingRule()── pending → promote        │
-│                                                              │
-└──────────────────────────────────────────────────────────────┘
-                        ↕ HTTP
-┌──────────── Server ────────────┐
-│  Aggregate rules + FedAvg +    │
-│  top-K patterns                │
-│  Port 18790 (training-server)  │
-└────────────────────────────────┘
+User thumbs up/down/ignore
+  → FeedbackService.recordFeedback(actionId, reward)
+    → ContextEngine.feedback(actionId, reward, snapshot)
+      → nativeUpdateReward(...)        // MAB + LinUCB update (unchanged)
+      → nativeTrainStreamRL(...)       // Stream RL online training (new)
+      → persistStreamRL()             // JSON persistence to Preferences
 ```
 
-### 21.9 Privacy Guarantees
+#### 21.8.2 State Persistence
 
-1. **Anonymization**: All uploaded data passes through whitelist filtering + anonymization; contains no WiFi SSID, geofence names, GPS coordinates, or Bluetooth device names
-2. **Irreversible fingerprints**: Device ID is SHA256-hashed; the server cannot recover the original device ID
-3. **Minimum upload**: Only rules with `confidence >= 0.6` and `triggerCount >= 5` are uploaded
-4. **User control**: Federated training is off by default (`federated_sync_enabled = false`); requires manual user opt-in
-5. **No raw data on server**: Server only receives anonymized model parameters; cannot reconstruct user behavior details
-6. **HTTPS transport**: All communication encrypted via HTTPS
+- **Save timing**: After each user feedback via `persistStreamRL()`
+- **Restore timing**: During app startup `init()` from Preferences
+- **Storage key**: `stream_rl_state`
+- **Data format**: JSON (consistent with LinUCB persistence)
 
-### 21.10 Gateway Command
+#### 21.8.3 ContextRecommendation Extension
 
-The server can proactively trigger federated sync via WebSocket Gateway:
-
-```
-Command: context.federatedSync
-Parameters:
-  action: 'sync'    — Immediately trigger federated sync (bypass 6h interval)
-  action: 'stats'   — Return federated sync status
-  action: 'enable'  — Enable federated training
-  action: 'disable' — Disable federated training
-```
-
-Registered as `Command.CONTEXT_FEDERATED_SYNC` in `GatewayProtocol.ts`, handled in `NodeRuntime.ets`.
-
----
-
-## 22. v2 Design Core Concepts (Reference)
-
-> The following content is integrated from the v2.0 design document (2026-02-19), containing the design philosophy and advanced concepts from that version.
-> Some concepts have been implemented in subsequent versions (e.g., LinUCB, robustness protection); others serve as forward-looking design references.
-
-### 22.1 Data Classification Framework
-
-v2 proposed classifying all input data along **Physical World + Digital World (Maslow's Hierarchy of Needs)** dimensions:
-
-**Three categories of the physical world:**
-
-| Category | Data Dimensions | Source |
-|----------|----------------|--------|
-| **Human** | Vital signs (heart rate/HRV/blood oxygen), motion state (still/walk/run/bike/ride), mental state (sleep/fatigue/stress) | Watch/band/accelerometer/inference |
-| **Phone** | Posture (grip/orientation), location (GPS/place type), power (battery/charging), connectivity (WiFi/BT/signal) | System API |
-| **Environment (Five Senses)** | Illumination, noise, air quality, temperature/humidity/pressure | Sensors/API |
-
-**Digital world divided into 5 layers by Maslow's hierarchy, each with three privacy levels:**
-
-| Privacy Level | Symbol | AI Visible Content |
-|--------------|--------|-------------------|
-| Open | Green | Full original text |
-| Summary | Yellow | Summary + metadata |
-| Forbidden | Red | Only "new message" |
-| Temporary Authorization | Blue | Visible after authorization, revoked after use |
-
-**Privacy principles:** Default minimum permissions (new data sources default to Red) → User proactive authorization → Temporary authorization auto-revoked → Audit logs available
-
-### 22.2 Perception Plugin System
-
-v2 designed a three-element registration model for perception plugins:
-
-```
-┌─────────────────────────────────────────┐
-│           Perception Plugin             │
-├─────────────────────────────────────────┤
-│ 1. Category Registration                │
-│    - Physical/digital world             │
-│    - Domain/sub-domain                  │
-│    - Default privacy level              │
-├─────────────────────────────────────────┤
-│ 2. Classifier                           │
-│    - Small model or rule function       │
-│    - Input: raw data → Output: label +  │
-│      confidence                         │
-├─────────────────────────────────────────┤
-│ 3. Encoder                              │
-│    - Output feature vector (for RL)     │
-│    - Output summary (for LLM)          │
-└─────────────────────────────────────────┘
-```
-
-**Plugin differences between physical and digital worlds:**
-
-| Dimension | Physical World | Digital World |
-|-----------|---------------|---------------|
-| Raw data | Numeric stream (continuous) | Text/structured (discrete) |
-| Classifier | Signal classification | Content classification + NLP |
-| Output | Feature vector primarily | Raw content + features |
-| Privacy handling | Uniform desensitization | Tiered filtering |
-
-### 22.3 Encoder Probability Distribution Output
-
-v1 encoders output a single label (e.g., `label: "home"`), but in reality sensor data is fuzzy.
-
-**v2 improvement: Encoders output a confidence distribution over all candidate categories, not a single label.**
+Add `snapshot` field to `ContextRecommendation` interface:
 
 ```typescript
-interface EncodedOutput {
-  distribution: Map<string, number>;  // Category → confidence (0~1), multi-label, non-exclusive
-  features: number[];                 // Feature vector (for RL)
-  summary?: string;                   // Text summary (for LLM)
-  quality: number;                    // Data quality 0~1 (sensor accuracy, timeliness)
+export interface ContextRecommendation {
+    rule: ContextRule;
+    action: UserAction;
+    reason: string;
+    exploreStateInfo?: string;
+    snapshot?: ContextSnapshot;  // Context snapshot at recommendation time (for Stream RL training)
 }
 ```
 
-**Examples:**
+Set `rec.snapshot = snapshot` in `evaluateAndDeliver()` to ensure FeedbackService can pass context to Stream RL training.
 
-| Plugin | Distribution Output | Explanation |
-|--------|-------------------|-------------|
-| Location | `{home: 0.8, market: 0.7, office: 0.02}` | Poor GPS accuracy: multiple locations probable |
-| Motion | `{still: 0.6, walking: 0.3, driving: 0.1}` | Waiting at red light: both still and driving possible |
-| Time period | `{morning: 0.9, commute: 0.7}` | 7:00 is both morning and commute time |
+### 21.9 File Manifest and Implementation Order
 
-**Fusion with decision tree:** Soft-matching decision tree directly consumes probability distributions, traversing multiple paths with confidence multiplied along the path. Combined with LinUCB semantic fusion approach (weighted leaf nodes → semantic vector → global LinUCB), fixed dimensionality, continuous semantics.
+#### File Operations
 
-```
-Perception layer → Probability distribution
-    ↓
-Decision tree (soft matching) → Multiple leaf nodes + confidence
-    ↓
-Semantic fusion → Smooth scene vector
-    ↓
-State = [raw features, scene semantics, history] (~40 dimensions)
-    ↓
-LinUCB → score = θᵀx + α√(xᵀA⁻¹x) → Select optimal action
-```
+| File | Operation | Description |
+|------|-----------|-------------|
+| `entry/src/main/cpp/context_engine/stream_mlp.h` | **New** | StreamMLP + StreamRLEngine class definitions |
+| `entry/src/main/cpp/context_engine/stream_mlp.cpp` | **New** | Forward/backward propagation, ObGD, LayerNorm, serialization |
+| `entry/src/main/cpp/context_engine/CMakeLists.txt` | Modify | Add `stream_mlp.cpp` to build sources |
+| `entry/src/main/cpp/context_engine/context_engine.h` | Modify | Add `StreamRLEngine` member to RuleEngine |
+| `entry/src/main/cpp/context_engine/rule_engine.cpp` | Modify | Hybrid scoring logic in `evaluate()` |
+| `entry/src/main/cpp/context_engine/context_engine_napi.cpp` | Modify | Add 3 new NAPI functions |
+| `entry/src/main/cpp/types/libcontext_engine/index.d.ts` | Modify | Add TypeScript type declarations |
+| `entry/src/main/ets/service/context/ContextEngine.ets` | Modify | NAPI wrappers + persistence |
+| `entry/src/main/ets/service/context/ContextAwarenessService.ets` | Modify | Add snapshot to ContextRecommendation |
+| `entry/src/main/ets/service/context/FeedbackService.ets` | Modify | Pass snapshot to feedback |
+| `tests/context_ai/unit/test_stream_mlp.js` | **New** | Stream MLP unit tests |
 
-### 22.4 Composite Reward Function
+#### Implementation Order
 
-v2 designed a three-part composite reward that goes beyond simple +1/-1 feedback:
+| Phase | Steps | Content |
+|-------|-------|---------|
+| Phase 1 | Step 1-2 | C++ StreamMLP core implementation + CMake |
+| Phase 2 | Step 3 | Integrate into RuleEngine evaluate() |
+| Phase 3 | Step 4 | NAPI bridge (3 new functions) |
+| Phase 4 | Step 5-7 | ArkTS layer integration + type declarations |
+| Phase 5 | Step 6 | Fix feedback chain (snapshot passing) |
+| Phase 6 | Step 8 | Unit tests |
 
-```
-reward = base_feedback + disturbance_penalty + accuracy_bonus
-```
+### 21.10 Test Plan
 
-**Base feedback:**
-
-| Signal | Reward |
-|--------|--------|
-| Says "thanks", thumbs up | +2.0 |
-| Clicked within 1 minute | +0.5 |
-| Clicked within 10 minutes | +0.2 |
-| No feedback (default) | +0.05 |
-| Ignored >1 hour | -0.3 |
-| Quickly swiped away (<2s) | -0.8 |
-| Says "stop bothering me", closed | -2.0 |
-
-**Disturbance penalty:**
-
-```python
-disturbance = -0.1 * (recent_pushes_30min ** 1.5)
-# 1 push→-0.1, 2→-0.28, 3→-0.52, 5→-1.12
-
-# Time period weighting
-if sleeping:   disturbance *= 3    # 3x cost during sleep
-elif meeting:  disturbance *= 2    # 2x during meetings
-elif driving:  disturbance *= 2.5  # 2.5x while driving
-```
-
-**Accuracy bonus:**
-
-| Scenario | Reward |
-|----------|--------|
-| Correct notification (notify + user quick click/thanks) | +0.5 |
-| Correctly silent (silent + unimportant) | +0.3 |
-| Should have notified but didn't (silent + actually urgent) | -1.0 |
-
-### 22.5 Five-layer Robustness Protection
-
-v2 designed a complete five-layer protection system against online learning threats (anomalous feedback, concept drift, sensor failure, model degradation):
-
-```
-┌───────────────────────────────────────────────┐
-│  Layer 1: Input Protection                     │
-│  • Feature range check (GPS reasonable?        │
-│    Battery 0-100?)                             │
-│  • Sensor health (how long since last update?) │
-│  • Missing value handling (sensor disconnected │
-│    → use historical mean)                      │
-├───────────────────────────────────────────────┤
-│  Layer 2: Feedback Protection                  │
-│  • Anomaly detection (deviate 3σ from mean     │
-│    → flag as anomalous)                        │
-│  • Rate limiting (max 5 valid feedbacks        │
-│    per minute)                                 │
-│  • Reward clipping (clamp to [-3, +3])         │
-├───────────────────────────────────────────────┤
-│  Layer 3: Model Protection                     │
-│  • Discounted LinUCB: A = γA + xxᵀ (γ=0.998)  │
-│    - γ=0.999 → half-life ≈ 693 updates (~1mo) │
-│    - γ=0.998 → half-life ≈ 346 updates (~2wk) │
-│  • Parameter change limit (max 5% per update)  │
-│  • Matrix condition number monitoring          │
-│    (prevent A from becoming singular)          │
-├───────────────────────────────────────────────┤
-│  Layer 4: Output Protection                    │
-│  • Confidence check (uncertain → fall back     │
-│    to rule engine)                             │
-│  • Action reasonability (lunch push at 3 AM?   │
-│    Block it)                                   │
-│  • Emergency events forced through rules       │
-│    (bypass RL)                                 │
-├───────────────────────────────────────────────┤
-│  Layer 5: System Protection                    │
-│  • Daily checkpoints (auto-snapshot params)    │
-│  • Performance monitoring (sliding window      │
-│    average reward)                             │
-│  • Auto-rollback (30% performance drop         │
-│    → restore checkpoint)                       │
-│  • User manual reset ("forget my habits,       │
-│    start fresh")                               │
-└───────────────────────────────────────────────┘
-```
-
-**Core effect of time decay:** After a user changes jobs or moves, old habits automatically fade out within 2-4 weeks without manual reset.
-
-**Confidence check (output layer):**
-
-```cpp
-// Uncertainty larger than expected reward → not enough data, fall back to rules
-if (uncertainty > abs(exploit)) return FALLBACK_TO_RULE;
-// Gap between best and second-best too small → uncertain, fall back to rules
-if (scores[bestArm] - scores[secondBest] < 0.1) return FALLBACK_TO_RULE;
-```
-
-> **Implementation status:** Layer 2 (reward clipping) and Layer 3 (Discounted LinUCB γ=0.998) are implemented in `context_engine.cpp`. Layers 1/4/5 are partially implemented in ContextEngine and FeedbackService.
+| # | Test Case | Expected Result |
+|---|-----------|-----------------|
+| 1 | Forward pass (zero input) | All-zero input → output near 0 (sparse init) |
+| 2 | Single-sample training | Train (ctx, +1.0) → predict(ctx) should increase |
+| 3 | Multi-sample convergence | Train same context 50× with reward=1.0 → predict approaches 1.0 |
+| 4 | Context discrimination | Train positive reward for morning, negative for evening → model differentiates |
+| 5 | ObGD step-size limiting | Extreme reward (e.g., 1000) does not cause weight explosion |
+| 6 | Cold-start fallback | samples < 5 → hybrid score equals pure rule score or LinUCB fallback |
+| 7 | Serialization/deserialization | export → import → predict yields identical results |
+| 8 | Observation normalization | Input features of different scales are correctly normalized |
 
 ---
 
@@ -2545,7 +2353,7 @@ if (scores[bestArm] - scores[secondBest] < 0.1) return FALLBACK_TO_RULE;
 
 | # | Item | Status |
 |---|------|--------|
-| 1 | C++ module NAPI bindings (motion_detector, sampling_strategy, place_learner, sleep_pattern, feedback_learner, training_sync, federated_sync) | Completed |
+| 1 | C++ module NAPI bindings (motion_detector, sampling_strategy, place_learner, sleep_pattern, feedback_learner, training_sync) | Completed |
 | 2 | Wearable device data retrieval (Health Kit) | Partially completed |
 | 3 | Rule matching issue | Fixed |
 | 4 | Feedback learning system integration (card buttons, context recording, parameter adjustment) | Partially completed |

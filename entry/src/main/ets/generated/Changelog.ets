@@ -8,9 +8,26 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.54.0';
+export const APP_VERSION: string = '2.55.0';
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '2.55.0',
+    date: '2026-02-27',
+    features: [
+      'Stream Deep RL 在线强化学习引擎: 基于 Elsayed et al. 2024 论文，Per-Arm MLP (16→64→32→1) 实现用户偏好在线学习',
+      '混合评分系统: 规则引擎分数 × (1 + RL权重 × tanh(MLP预测))，支持冷启动平滑过渡',
+      'ObGD 步长限制: Overshooting-Bounded Gradient Descent 防止单样本更新导致权重爆炸',
+      'Welford 在线归一化: 输入特征和奖励值的实时 running mean/variance 归一化',
+      '16维情景特征向量: 时间周期编码、运动状态独热、电量/充电/WiFi/围栏/网络类型',
+      'Stream RL 状态持久化: 模型权重自动保存/恢复，支持跨会话学习',
+      '反馈链路完善: 推荐卡片携带上下文快照，用户反馈同时训练 MAB + LinUCB + Stream RL',
+      '设计文档更新至 v7.0: 中英文同步，含 Stream Deep RL 架构和特征扩展性设计',
+    ],
+    fixes: [
+
+    ],
+  },
   {
     version: '2.54.0',
     date: '2026-02-23',
@@ -523,4 +540,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.54.0';
+export const LATEST_VERSION: string = '2.55.0';
