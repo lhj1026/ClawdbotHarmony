@@ -1,5 +1,5 @@
 # Context Intelligence Framework Design Document
-> Version: 7.0
+> Version: 8.0
 > Date: 2026-02-27
 > Author: 刘洪杰 (Hongjie Liu)
 
@@ -13,6 +13,7 @@
 | 4.0 | 2026-02-20 | 刘洪杰 (Hongjie Liu) | C++ NAPI migration implementation (4 new modules); context.test remote testing capability; 21-scenario full coverage test suite; cooldown loadRules fix; actual directory structure update |
 | 5.0 | 2026-02-22 | 刘洪杰 (Hongjie Liu) | LLM fallback rule feedback loop (pending -> promote/remove); rule deduplication mechanism; recommendation anti-duplication; active exploration mode design; FeedbackService card lifecycle; merged context_awareness_design.md (collection strategy, geofence learning, app learning, silent mode enhancement, wearable integration, data tray, training sync, feedback learning) |
 | 7.0 | 2026-02-27 | 刘洪杰 (Hongjie Liu) | Stream Deep RL online reinforcement learning engine: Per-Arm StreamMLP (16→64→32→1) online training; Sparse Init + LayerNorm + ObGD stable training; Welford observation/reward normalization; LinUCB cold-start fallback + linear transition; NAPI bridge + ArkTS persistence; hybrid scoring formula |
+| 8.0 | 2026-02-27 | 刘洪杰 (Hongjie Liu) | Action Execution System: ActionExecutor routes accepted recommendations to system capabilities (calendar, app launch, mode switch); CalendarPlugin extension (getUpcomingEvents, findConflicts, formatEventsMarkdown); Stream RL UI Display: recommendation cards show RL learning labels (探索中/学习中/已学习); ContextSettingsPage RL stats panel; NAPI getStreamRLStats/getStreamRLArmSamples; Explore mode RL phase info |
 
 ---
 
@@ -120,6 +121,18 @@
   - [21.8 ArkTS Integration](#218-arkts-integration)
   - [21.9 File Manifest and Implementation Order](#219-file-manifest-and-implementation-order)
   - [21.10 Test Plan](#2110-test-plan)
+- [22. Recommendation Action Execution System](#22-recommendation-action-execution-system)
+  - [22.1 Overview](#221-overview)
+  - [22.2 ActionExecutor Design](#222-actionexecutor-design)
+  - [22.3 CalendarPlugin Extension](#223-calendarplugin-extension)
+  - [22.4 NodeRuntime Integration](#224-noderuntime-integration)
+  - [22.5 Active Recommendation Cache](#225-active-recommendation-cache)
+- [23. Stream Deep RL UI Display](#23-stream-deep-rl-ui-display)
+  - [23.1 Overview](#231-overview)
+  - [23.2 New NAPI Functions](#232-new-napi-functions)
+  - [23.3 Recommendation Card RL Labels](#233-recommendation-card-rl-labels)
+  - [23.4 ContextSettingsPage Stats Panel](#234-contextsettingspage-stats-panel)
+  - [23.5 Explore Mode RL Info](#235-explore-mode-rl-info)
 - [Appendix: TODO Items](#appendix-todo-items)
 
 ---
@@ -2344,6 +2357,251 @@ Set `rec.snapshot = snapshot` in `evaluateAndDeliver()` to ensure FeedbackServic
 | 6 | Cold-start fallback | samples < 5 → hybrid score equals pure rule score or LinUCB fallback |
 | 7 | Serialization/deserialization | export → import → predict yields identical results |
 | 8 | Observation normalization | Input features of different scales are correctly normalized |
+
+---
+
+## 22. Recommendation Action Execution System
+
+### 22.1 Overview
+
+Previously, when a user tapped "useful" (thumbs up) on a recommendation card, the system only recorded feedback and showed a generic toast message. The Action Execution System bridges the gap between **recommendation acceptance** and **actual system capability execution**.
+
+**Design Goal:** When a user accepts a recommendation, the system should automatically execute the recommended action (e.g., read calendar events, open an app, switch a mode) and display the result in the chat window.
+
+**Data Flow:**
+
+```
+User taps "有用" on recommendation card
+    → NodeRuntime.handleA2UIAction(feedback='accept')
+        → FeedbackService.onActionTaken(ruleId)       // existing reward path
+        → ActionExecutor.execute(cachedRecommendation.action)  // NEW
+            → CalendarPlugin.getUpcomingEvents()       // for calendar actions
+            → CalendarPlugin.findConflicts()
+            → CalendarPlugin.formatEventsMarkdown()
+        → dispatchChatEvent('assistant', result.message)  // show in chat
+```
+
+### 22.2 ActionExecutor Design
+
+**File:** `entry/src/main/ets/service/context/ActionExecutor.ets`
+
+The `ActionExecutor` class acts as a router that dispatches actions by `type` to the appropriate system capability handler.
+
+**ActionResult Interface:**
+
+```typescript
+export interface ActionResult {
+  success: boolean;
+  message: string;      // Markdown text for chat window display
+  actionType: string;   // For telemetry and UI routing
+}
+```
+
+**Routing Table:**
+
+| action.type | Handler | Output |
+|-------------|---------|--------|
+| `show_info` | → `executeShowInfo()` → routes by `target`/`params.category` | Calendar info, generic info |
+| `open_app` | Direct response | "🚀 正在打开 {target}..." |
+| `set_mode` | Direct response | "⚙️ 已切换到 {target}" |
+| `show_notification` | Direct response | "🔔 {params.info}" |
+| (default) | Generic acknowledgment | "✅ 动作 \"{type}\" 已记录" |
+
+**show_info Sub-routing:**
+
+| Condition | Handler |
+|-----------|---------|
+| `target` contains "calendar" OR `params.category === 'calendar'` | `executeCalendarInfo()` |
+| Otherwise | Generic info display |
+
+**Error Handling:** All execution is wrapped in try-catch. On failure, returns `{ success: false, message: "执行失败: {error}" }`.
+
+### 22.3 CalendarPlugin Extension
+
+**File:** `entry/src/main/ets/service/context/plugins/CalendarPlugin.ets`
+
+Three new public methods were added to the existing `CalendarPlugin`:
+
+**1. getUpcomingEvents(hoursAhead?: number): Promise\<EventInfo[]\>**
+
+Returns calendar events within the specified look-ahead window (default 8 hours). Uses the existing `calendarManager.getEvents()` API with a query filter for `startTime` in range `[now, now + hoursAhead * 3600000]`.
+
+**2. findConflicts(events: EventInfo[]): EventConflict[]**
+
+Detects overlapping event pairs using pairwise comparison:
+
+```
+For each pair (i, j) where i < j:
+  overlapStart = max(events[i].startTime, events[j].startTime)
+  overlapEnd   = min(events[i].endTime,   events[j].endTime)
+  if overlapStart < overlapEnd → conflict found
+    overlapMinutes = round((overlapEnd - overlapStart) / 60000)
+```
+
+**EventConflict interface:**
+
+```typescript
+export interface EventConflict {
+  event1: EventInfo;
+  event2: EventInfo;
+  overlapMinutes: number;
+}
+```
+
+**3. formatEventsMarkdown(events: EventInfo[], conflicts?: EventConflict[]): string**
+
+Formats events into a human-readable Markdown string for chat display:
+
+- Empty list → `"📅 接下来没有日程安排"`
+- Non-empty → Header with count + numbered event list with time/location + optional conflict warnings
+
+Example output:
+```
+📅 **接下来有 2 个日程**
+
+1. **早会**
+   🕐 09:00 - 10:00 📍 A101
+2. **项目评审**
+   🕐 11:00 - 12:00 📍 B201
+
+⚠️ **发现 1 个时间冲突：**
+   - "会议A" 与 "会议B" 重叠 30 分钟
+```
+
+### 22.4 NodeRuntime Integration
+
+**File:** `entry/src/main/ets/service/gateway/NodeRuntime.ets`
+
+**Modified: `handleA2UIAction()` accept branch**
+
+After the existing `fbService.onActionTaken(ruleId)` call, the system now:
+1. Looks up the cached recommendation by `ruleId`
+2. If found and has an `action`, calls `ActionExecutor.execute(action)`
+3. Dispatches the result message as an assistant chat event via `dispatchChatEvent()`
+
+```typescript
+// In handleA2UIAction(), feedback === 'accept' branch:
+let cachedRec = this._activeRecommendations.get(ruleId);
+if (cachedRec?.action) {
+  await this.executeRecommendedAction(cachedRec.action);
+}
+```
+
+**New method: `executeRecommendedAction(action)`**
+
+Lazy-initializes the `ActionExecutor` (fetching `CalendarPlugin` from `ContextAwarenessService`) and executes the action. On success, dispatches the result message to the chat window.
+
+### 22.5 Active Recommendation Cache
+
+**File:** `entry/src/main/ets/service/gateway/NodeRuntime.ets`
+
+A `Map<string, ContextRecommendation>` stores active recommendations keyed by `rule.id`.
+
+**Lifecycle:**
+- **Set:** When the recommendation listener fires and an A2UI card is pushed to the WebView
+- **Expire:** Each entry has a 5-minute timeout (`setTimeout(() => delete, 5 * 60 * 1000)`) aligned with the FeedbackService card lifecycle
+- **Consumed:** When the user accepts the recommendation and the action is executed
+
+This cache ensures that when the user taps "useful" on a card, the original recommendation's `action` object is available for execution, even though the A2UI only carries serialized display data.
+
+---
+
+## 23. Stream Deep RL UI Display
+
+### 23.1 Overview
+
+The Stream Deep RL engine (Section 21) learns from user feedback to improve recommendation quality over time. However, this learning process was invisible to users. The RL UI Display feature makes the learning process transparent through three touchpoints:
+
+1. **Recommendation Cards** — RL learning phase badge (探索中/学习中/已学习)
+2. **Settings Page** — RL statistics panel with active models, sample counts, top arms
+3. **Explore Mode** — RL phase info in explore state display
+
+### 23.2 New NAPI Functions
+
+**C++ Layer:** `entry/src/main/cpp/context_engine/stream_mlp.h/.cpp`
+
+Added `getSummaryJson()` to `StreamRLEngine`:
+
+```cpp
+std::string StreamRLEngine::getSummaryJson() const {
+    // Thread-safe (mutex-locked)
+    // Returns: { "totalArms": N, "totalSamples": N,
+    //            "arms": [{ "id": "...", "samples": N, "avgReward": X }, ...] }
+}
+```
+
+Also added `avgReward()` public accessor to `StreamMLP` class to expose per-arm average reward.
+
+**NAPI Bridge:** `entry/src/main/cpp/context_engine/context_engine_napi.cpp`
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `GetStreamRLStats` | `() → string` | Returns JSON summary of all RL arms |
+| `GetStreamRLArmSamples` | `(actionId: string) → number` | Returns sample count for a specific arm |
+
+**TypeScript Declarations:** `entry/src/main/cpp/types/libcontext_engine/index.d.ts`
+
+```typescript
+export const getStreamRLStats: () => string;
+export const getStreamRLArmSamples: (actionId: string) => number;
+```
+
+**ArkTS Wrapper:** `entry/src/main/ets/service/context/ContextEngine.ets`
+
+Public methods `getStreamRLStats()` and `getStreamRLArmSamples(actionId)` added to `ContextEngineService`, with error handling that returns safe defaults (`"{}"` / `0`) if the native call fails.
+
+### 23.3 Recommendation Card RL Labels
+
+**File:** `entry/src/main/ets/service/gateway/NodeRuntime.ets`
+
+When building A2UI JSON for recommendation cards (`buildContextRecommendationA2UI()` and `buildExploreStateA2UI()`), an RL label is appended to the card metadata.
+
+**Label Logic (`getStreamRLLabel`):**
+
+| Condition | Label | Meaning |
+|-----------|-------|---------|
+| `armSamples < 5` | `探索中` | Cold start — not enough data, exploring |
+| `5 ≤ armSamples < 20` | `学习中 (N次)` | Active learning — accumulating feedback |
+| `armSamples ≥ 20` | `已学习 (N次)` | Converged — stable prediction model |
+
+The label appears as a `🧠` badge in the A2UI card metadata, giving users a sense of how well-trained the system is for each recommendation type.
+
+### 23.4 ContextSettingsPage Stats Panel
+
+**File:** `entry/src/main/ets/pages/ContextSettingsPage.ets`
+
+A new "Stream Deep RL 学习状态" panel is added below the existing feedback statistics section.
+
+**Displayed Information:**
+
+| Field | Source | Description |
+|-------|--------|-------------|
+| Active models count | `rlStats.totalArms` | Number of distinct action types with RL models |
+| Total training samples | `rlStats.totalSamples` | Cumulative feedback events processed |
+| RL Phase | Derived from `totalSamples` | 冷启动 (<10) / 学习中 (10-49) / 已收敛 (≥50) |
+| Top-5 arms table | `rlStats.arms` sorted by samples | Shows arm ID, sample count, average reward |
+
+**Data Loading:** `refreshStreamRLStats()` is called during `aboutToAppear()` lifecycle. It calls `ContextEngineService.getStreamRLStats()`, parses the JSON, sorts arms by sample count descending, and takes the top 5.
+
+### 23.5 Explore Mode RL Info
+
+**File:** `entry/src/main/ets/service/context/ContextAwarenessService.ets`
+
+In `buildExploreStateInfo()`, after the existing context state lines (time, location, sensors, rules, etc.), the system appends a global RL summary line:
+
+```
+🧠 RL: 学习中 (5模型, 42样本)
+```
+
+**Phase Thresholds:**
+
+| totalSamples | Phase |
+|-------------|-------|
+| < 10 | 冷启动 |
+| 10 – 49 | 学习中 |
+| ≥ 50 | 已收敛 |
+
+This gives the Explore mode panel a quick view of the overall RL engine maturity.
 
 ---
 

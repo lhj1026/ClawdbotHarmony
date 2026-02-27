@@ -62,6 +62,12 @@ function nativeExportStreamRL(): string {
 function nativeImportStreamRL(json: string): void {
   contextEngine.importStreamRL(json);
 }
+function nativeGetStreamRLStats(): string {
+  return contextEngine.getStreamRLStats() as string;
+}
+function nativeGetStreamRLArmSamples(actionId: string): number {
+  return contextEngine.getStreamRLArmSamples(actionId) as number;
+}
 function nativePushEvent(json: string): void {
   contextEngine.pushEvent(json);
 }
@@ -618,6 +624,16 @@ export class ContextEngineService {
   /** Get MAB stats */
   getStats(): string {
     return nativeGetStats();
+  }
+
+  /** Get Stream RL summary stats as JSON */
+  getStreamRLStats(): string {
+    return nativeGetStreamRLStats();
+  }
+
+  /** Get Stream RL sample count for a specific arm */
+  getStreamRLArmSamples(actionId: string): number {
+    return nativeGetStreamRLArmSamples(actionId);
   }
 
   /** Export rules as JSON */

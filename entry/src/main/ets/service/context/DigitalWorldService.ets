@@ -156,6 +156,14 @@ export class DigitalWorldService {
     return this.lastSnapshots.get(pluginName);
   }
 
+  /** Get CalendarPlugin instance for action execution */
+  getCalendarPlugin(): CalendarPlugin | undefined {
+    let reg = this.registrations.find((r: PluginRegistration): boolean =>
+      r.plugin.name === 'calendar'
+    );
+    return reg ? reg.plugin as CalendarPlugin : undefined;
+  }
+
   /**
    * Toggle a plugin on or off. Persists to preferences.
    */

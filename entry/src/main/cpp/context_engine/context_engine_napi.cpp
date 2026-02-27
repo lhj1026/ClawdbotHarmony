@@ -531,6 +531,26 @@ static napi_value ImportStreamRL(napi_env env, napi_callback_info info) {
     return nullptr;
 }
 
+static napi_value GetStreamRLStats(napi_env env, napi_callback_info info) {
+    return napiString(env, g_engine.streamRL().getSummaryJson());
+}
+
+static napi_value GetStreamRLArmSamples(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 1) {
+        napi_value val;
+        napi_create_int32(env, 0, &val);
+        return val;
+    }
+    auto actionId = napiGetString(env, args[0]);
+    int samples = g_engine.streamRL().getArmSamples(actionId);
+    napi_value val;
+    napi_create_int32(env, samples, &val);
+    return val;
+}
+
 // Module registration
 
 EXTERN_C_START
@@ -550,9 +570,11 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"importLinUCB", nullptr, ImportLinUCB, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"pushEvent",       nullptr, PushEvent,       nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setLimits",       nullptr, SetLimits,       nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"trainStreamRL",   nullptr, TrainStreamRL,   nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"exportStreamRL",  nullptr, ExportStreamRL,  nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"importStreamRL",  nullptr, ImportStreamRL,  nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"trainStreamRL",        nullptr, TrainStreamRL,        nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"exportStreamRL",       nullptr, ExportStreamRL,       nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"importStreamRL",       nullptr, ImportStreamRL,       nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"getStreamRLStats",     nullptr, GetStreamRLStats,     nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"getStreamRLArmSamples", nullptr, GetStreamRLArmSamples, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     return exports;

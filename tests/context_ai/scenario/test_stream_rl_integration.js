@@ -565,3 +565,59 @@ describe('场景: 冷启动 fallback 正确性', function () {
     }
   });
 });
+
+// ============================================================
+// v8.0: Stream RL UI Display — 学习标签
+// ============================================================
+
+describe('Stream RL UI 标签显示', function () {
+  function getLabel(samples) {
+    if (samples < 5) return '探索中';
+    if (samples < 20) return `学习中 (${samples}次)`;
+    return `已学习 (${samples}次)`;
+  }
+
+  it('冷启动阶段 (0-4) → 探索中', function () {
+    assertEqual(getLabel(0), '探索中');
+    assertEqual(getLabel(1), '探索中');
+    assertEqual(getLabel(4), '探索中');
+  });
+
+  it('学习阶段 (5-19) → 学习中 (N次)', function () {
+    assertEqual(getLabel(5), '学习中 (5次)');
+    assertEqual(getLabel(10), '学习中 (10次)');
+    assertEqual(getLabel(19), '学习中 (19次)');
+  });
+
+  it('收敛阶段 (20+) → 已学习 (N次)', function () {
+    assertEqual(getLabel(20), '已学习 (20次)');
+    assertEqual(getLabel(50), '已学习 (50次)');
+    assertEqual(getLabel(100), '已学习 (100次)');
+  });
+
+  it('标签边界值精确', function () {
+    // Boundary: 4 → 探索中, 5 → 学习中
+    assertTrue(!getLabel(4).includes('学习中'));
+    assertTrue(getLabel(5).includes('学习中'));
+    // Boundary: 19 → 学习中, 20 → 已学习
+    assertTrue(!getLabel(19).includes('已学习'));
+    assertTrue(getLabel(20).includes('已学习'));
+  });
+});
+
+// ============================================================
+// v8.0: Explore State RL Phase
+// ============================================================
+
+describe('Explore 模式 RL 阶段标记', function () {
+  function getRLPhase(totalSamples) {
+    return totalSamples < 10 ? '冷启动' : totalSamples < 50 ? '学习中' : '已收敛';
+  }
+
+  it('0样本 → 冷启动', function () { assertEqual(getRLPhase(0), '冷启动'); });
+  it('9样本 → 冷启动', function () { assertEqual(getRLPhase(9), '冷启动'); });
+  it('10样本 → 学习中', function () { assertEqual(getRLPhase(10), '学习中'); });
+  it('49样本 → 学习中', function () { assertEqual(getRLPhase(49), '学习中'); });
+  it('50样本 → 已收敛', function () { assertEqual(getRLPhase(50), '已收敛'); });
+  it('100样本 → 已收敛', function () { assertEqual(getRLPhase(100), '已收敛'); });
+});

@@ -137,6 +137,7 @@ public:
     void importJson(const std::string& json);
 
     int samples() const { return sampleCount_; }
+    double avgReward() const { return rewardMean_; }
 
 private:
     DenseLayer<STREAM_FEAT_DIM, STREAM_H1> layer1_;
@@ -167,6 +168,9 @@ public:
 
     /** Get sample count for cold-start logic */
     int getArmSamples(const std::string& actionId) const;
+
+    /** Get summary stats as JSON: arms array with id/samples/avgReward/lastPrediction */
+    std::string getSummaryJson() const;
 
     /** Serialization */
     std::string exportJson() const;

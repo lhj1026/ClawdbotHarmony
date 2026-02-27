@@ -19,6 +19,7 @@ import { LocationDiscoveryService, GeofenceSuggestion, DiscoveryStatsInfo } from
 import { FeedbackService } from './FeedbackService';
 import { LocationFusionService, LearnedSignalsSummary } from './LocationFusionService';
 import { DigitalWorldService } from './DigitalWorldService';
+import { CalendarPlugin } from './plugins/CalendarPlugin';
 import DataTray, { DataTray as SensorDataTray, TrayStatus } from './DataTray';
 import {
   EnvironmentContext,
@@ -2838,6 +2839,19 @@ export class ContextAwarenessService {
       lines.push(`📊 传感器层级: T${snapshot.sensorTier}`);
     }
 
+    // Stream RL 学习阶段
+    try {
+      let engine = ContextEngineService.getInstance();
+      let rlStatsJson = engine.getStreamRLStats();
+      let rlStats: Record<string, Object> = JSON.parse(rlStatsJson) as Record<string, Object>;
+      let totalSamples = (rlStats['totalSamples'] as number) ?? 0;
+      let totalArms = (rlStats['totalArms'] as number) ?? 0;
+      if (totalArms > 0) {
+        let rlPhase = totalSamples < 10 ? '冷启动' : totalSamples < 50 ? '学习中' : '已收敛';
+        lines.push(`🧠 RL: ${rlPhase} (${totalArms}模型, ${totalSamples}样本)`);
+      }
+    } catch { /* RL stats not available */ }
+
     return lines.join('\n');
   }
 
@@ -3605,5 +3619,10 @@ export class ContextAwarenessService {
   /** Get last collected digital plugin data (merged key-value pairs) */
   getLastDigitalData(): Record<string, string> {
     return this.lastDigitalData;
+  }
+
+  /** Get CalendarPlugin instance for action execution */
+  getCalendarPlugin(): CalendarPlugin | undefined {
+    return this.digitalWorld.getCalendarPlugin();
   }
 }

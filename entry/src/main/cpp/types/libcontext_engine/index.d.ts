@@ -97,3 +97,9 @@ export const exportStreamRL: () => string;
 
 /** Import Stream RL model state from JSON string */
 export const importStreamRL: (json: string) => void;
+
+/** Get Stream RL summary stats as JSON string */
+export const getStreamRLStats: () => string;
+
+/** Get Stream RL sample count for a specific arm */
+export const getStreamRLArmSamples: (actionId: string) => number;

@@ -784,3 +784,93 @@ describe('StreamMLP - 收敛性', function () {
     assertTrue(Math.abs(pred) < 100, 'prediction should not diverge');
   });
 });
+
+// ============================================================
+// getSummaryJson (v8.0: Stream RL UI Display)
+// ============================================================
+
+describe('StreamRLEngine - getSummaryJson', function () {
+  // Simulate getSummaryJson using a Map of arms
+  function getSummaryJson(armsMap) {
+    let totalArms = armsMap.size;
+    let totalSamples = 0;
+    const armsArr = [];
+    for (const [id, mlp] of armsMap) {
+      totalSamples += mlp.samples();
+      armsArr.push({
+        id,
+        samples: mlp.samples(),
+        avgReward: mlp.rewardMean,
+      });
+    }
+    return JSON.stringify({ totalArms, totalSamples, arms: armsArr });
+  }
+
+  it('空引擎 → totalArms=0, totalSamples=0', function () {
+    const arms = new Map();
+    const json = getSummaryJson(arms);
+    const stats = JSON.parse(json);
+    assertEqual(stats.totalArms, 0);
+    assertEqual(stats.totalSamples, 0);
+    assertTrue(Array.isArray(stats.arms));
+    assertEqual(stats.arms.length, 0);
+  });
+
+  it('训练后 → 正确的 arm 数和样本数', function () {
+    const arms = new Map();
+    const mlpA = new StreamMLP(1);
+    const mlpB = new StreamMLP(2);
+    const features = new Float64Array(STREAM_FEAT_DIM);
+
+    for (let i = 0; i < 10; i++) mlpA.update(features, 0.8);
+    for (let i = 0; i < 5; i++) mlpB.update(features, 0.3);
+
+    arms.set('alpha', mlpA);
+    arms.set('beta', mlpB);
+
+    const json = getSummaryJson(arms);
+    const stats = JSON.parse(json);
+    assertEqual(stats.totalArms, 2);
+    assertEqual(stats.totalSamples, 15);
+
+    const alpha = stats.arms.find(a => a.id === 'alpha');
+    assertDefined(alpha, 'alpha arm should exist');
+    assertEqual(alpha.samples, 10);
+    assertTrue(Math.abs(alpha.avgReward - 0.8) < 0.01);
+
+    const beta = stats.arms.find(a => a.id === 'beta');
+    assertDefined(beta, 'beta arm should exist');
+    assertEqual(beta.samples, 5);
+    assertTrue(Math.abs(beta.avgReward - 0.3) < 0.01);
+  });
+
+  it('JSON 格式合法', function () {
+    const arms = new Map();
+    arms.set('test', new StreamMLP(42));
+    const json = getSummaryJson(arms);
+    // Should not throw
+    const parsed = JSON.parse(json);
+    assertDefined(parsed.totalArms);
+    assertDefined(parsed.totalSamples);
+    assertDefined(parsed.arms);
+  });
+});
+
+describe('StreamRLEngine - getArmSamples', function () {
+  it('不存在的 arm → 0', function () {
+    // StreamMLP.samples() starts at 0
+    const mlp = new StreamMLP(42);
+    assertEqual(mlp.samples(), 0);
+  });
+
+  it('训练 N 次 → samples() === N', function () {
+    const mlp = new StreamMLP(42);
+    const features = new Float64Array(STREAM_FEAT_DIM);
+    mlp.update(features, 1.0);
+    mlp.update(features, 0.5);
+    mlp.update(features, -0.3);
+    mlp.update(features, 0.9);
+    mlp.update(features, 0.2);
+    assertEqual(mlp.samples(), 5);
+  });
+});

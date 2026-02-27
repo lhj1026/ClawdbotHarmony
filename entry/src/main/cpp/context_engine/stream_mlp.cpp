@@ -485,6 +485,30 @@ int StreamRLEngine::getArmSamples(const std::string& actionId) const {
     return (it != arms_.end()) ? it->second.samples() : 0;
 }
 
+std::string StreamRLEngine::getSummaryJson() const {
+    std::lock_guard<std::mutex> lock(mu_);
+    std::ostringstream ss;
+    int totalArms = static_cast<int>(arms_.size());
+    int totalSamples = 0;
+    for (const auto& [id, mlp] : arms_) {
+        totalSamples += mlp.samples();
+    }
+    ss << "{\"totalArms\":" << totalArms
+       << ",\"totalSamples\":" << totalSamples
+       << ",\"arms\":[";
+    bool first = true;
+    for (const auto& [id, mlp] : arms_) {
+        if (!first) ss << ",";
+        first = false;
+        ss << "{\"id\":\"" << id << "\""
+           << ",\"samples\":" << mlp.samples()
+           << ",\"avgReward\":" << mlp.avgReward()
+           << "}";
+    }
+    ss << "]}";
+    return ss.str();
+}
+
 std::string StreamRLEngine::exportJson() const {
     std::lock_guard<std::mutex> lock(mu_);
     std::ostringstream ss;

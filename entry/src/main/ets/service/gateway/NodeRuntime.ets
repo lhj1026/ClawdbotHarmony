@@ -55,6 +55,7 @@ import { Monitor } from '../ModuleMonitor';
 import { ContextAwarenessService, ContextRecommendation, LocationCandidate, ActivityCandidate } from '../context/ContextAwarenessService';
 import { ContextEngineService, ContextSnapshot, ContextRule, ContextCondition, ContextAction, MatchResult, GeofenceBinding } from '../context/ContextEngine';
 import { FeedbackService } from '../context/FeedbackService';
+import { ActionExecutor, ActionResult } from '../context/ActionExecutor';
 import { GeofenceSuggestion } from '../context/LocationDiscoveryService';
 import { Geofence, GeofenceCategory, LearnedPlaceSignals } from '../context/ContextModels';
 import { FederatedSync } from '../context/FederatedSync';
@@ -173,6 +174,8 @@ export class NodeRuntime {
   private _lastRecReason: string = '';
   private _lastRecConfidence: number = 0;
   private _contextListenersRegistered: boolean = false;
+  private _activeRecommendations: Map<string, ContextRecommendation> = new Map();
+  private _actionExecutor: ActionExecutor | undefined = undefined;
   private _identityListeners: Array<(identity: AgentIdentity | undefined) => void> = [];
 
   // App foreground/background state and chat page visibility for message notifications
@@ -422,6 +425,10 @@ export class NodeRuntime {
       this._lastRecRuleName = ruleName;
       this._lastRecReason = rec.reason;
       this._lastRecConfidence = confidence;
+
+      // Cache recommendation for action execution on accept
+      this._activeRecommendations.set(ruleId, rec);
+      setTimeout(() => { this._activeRecommendations.delete(ruleId); }, 5 * 60 * 1000);
 
       // 探索模式：显示检测到的状态 + 建议
       let stateInfo = rec.exploreStateInfo ?? '';
@@ -1103,6 +1110,12 @@ export class NodeRuntime {
           `📈 ${I18n.t('ctx.fb.weightUp').replace('{0}', delta.toString())}`;
         this.sendFeedbackResponse(acceptMsg);
         this.pushA2UIConfirmation(acceptMsg);
+
+        // Execute the recommended action
+        let cachedRec = this._activeRecommendations.get(ruleId);
+        if (cachedRec && cachedRec.action) {
+          this.executeRecommendedAction(cachedRec.action);
+        }
       } else if (feedback === 'reject') {
         // Negative: decrease priority
         let delta = -0.3;
@@ -1227,6 +1240,38 @@ export class NodeRuntime {
     } catch (err) {
       this.log.warn(TAG, `handleA2UIAction error: ${(err as Error).message}`);
     }
+  }
+
+  /** Execute the recommended action via ActionExecutor, send result to chat */
+  private executeRecommendedAction(action: UserAction): void {
+    if (!this._actionExecutor) {
+      try {
+        let cas = ContextAwarenessService.getInstance();
+        let calPlugin = cas.getCalendarPlugin();
+        if (calPlugin) {
+          this._actionExecutor = new ActionExecutor(calPlugin);
+        }
+      } catch { /* CalendarPlugin not available */ }
+    }
+    if (!this._actionExecutor) return;
+
+    this._actionExecutor.execute(action).then((result: ActionResult) => {
+      if (result.success && result.message.length > 0) {
+        let event: GatewayChatEvent = {
+          runId: `ctx-action-${Date.now()}`,
+          sessionKey: '',
+          seq: 0,
+          state: 'final',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: result.message }],
+          },
+        };
+        this.dispatchChatEvent(event);
+      }
+    }).catch((err: Error) => {
+      this.log.warn(TAG, `Action execution failed: ${err.message}`);
+    });
   }
 
   private saveNewPlace(lat: number, lng: number, wifi: string, name: string, category: string): void {
@@ -3219,7 +3264,7 @@ export class NodeRuntime {
     let safeReason = reason.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     let safeRuleId = ruleId.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     let safeRuleName = ruleName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-    
+
     // Get localized strings
     let titleText = I18n.t('context.notification.recommendation');
     let confidenceText = I18n.t('context.confidence');
@@ -3228,11 +3273,15 @@ export class NodeRuntime {
     let dismissText = I18n.t('context.feedback.dismiss');
     let detailsText = I18n.t('context.feedback.viewDetails');
 
+    // Stream RL learning label
+    let rlLabel = this.getStreamRLLabel(ruleId);
+    let rlBadge = rlLabel.length > 0 ? `  |  🧠 ${rlLabel}` : '';
+
     // Use simplified A2UI format: {"type":"form","children":[...]}
     let jsonl = `{"type":"form","id":"ctx_rec_${Date.now()}","children":[` +
       `{"type":"text","text":"💡 ${titleText}","style":{"fontSize":20,"fontWeight":"bold"}},` +
       `{"type":"text","text":"${safeReason}","style":{"fontSize":15}},` +
-      `{"type":"text","text":"📋 ${safeRuleName}  |  ${confidenceText}: ${confidence}%","style":{"fontSize":12,"color":"#888"}},` +
+      `{"type":"text","text":"📋 ${safeRuleName}  |  ${confidenceText}: ${confidence}%${rlBadge}","style":{"fontSize":12,"color":"#888"}},` +
       `{"type":"button","text":"✅ ${usefulText}","variant":"primary","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"accept"}}}},` +
       `{"type":"button","text":"❌ ${inaccurateText}","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"reject"}}}},` +
       `{"type":"button","text":"🙈 ${dismissText}","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"dismiss"}}}},` +
@@ -3257,13 +3306,17 @@ export class NodeRuntime {
     let detailsText = I18n.t('context.feedback.viewDetails');
     let confidenceText = I18n.t('context.confidence');
 
+    // Stream RL learning label
+    let rlLabel = this.getStreamRLLabel(ruleId);
+    let rlBadge = rlLabel.length > 0 ? `  |  🧠 ${rlLabel}` : '';
+
     let jsonl = `{"type":"form","id":"ctx_explore_${Date.now()}","children":[` +
       `{"type":"text","text":"🔍 探索模式 — 状态检测","style":{"fontSize":18,"fontWeight":"bold"}},` +
       `{"type":"text","text":"${safeState}","style":{"fontSize":14}},` +
       `{"type":"text","text":"─────────────────","style":{"fontSize":12,"color":"#ccc"}},` +
       `{"type":"text","text":"💡 建议","style":{"fontSize":16,"fontWeight":"bold"}},` +
       `{"type":"text","text":"${safeReason}","style":{"fontSize":15}},` +
-      `{"type":"text","text":"📋 ${safeRuleName}  |  ${confidenceText}: ${confidence}%","style":{"fontSize":12,"color":"#888"}},` +
+      `{"type":"text","text":"📋 ${safeRuleName}  |  ${confidenceText}: ${confidence}%${rlBadge}","style":{"fontSize":12,"color":"#888"}},` +
       `{"type":"button","text":"✅ ${usefulText}","variant":"primary","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"accept"}}}},` +
       `{"type":"button","text":"❌ ${inaccurateText}","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"reject"}}}},` +
       `{"type":"button","text":"🙈 ${dismissText}","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"dismiss"}}}},` +
@@ -3271,6 +3324,23 @@ export class NodeRuntime {
       `]}`;
 
     return jsonl;
+  }
+
+  /** Get RL learning label for a rule/arm: 探索中 / 学习中 / 已学习 */
+  private getStreamRLLabel(ruleId: string): string {
+    try {
+      let engine = ContextEngineService.getInstance();
+      let armSamples = engine.getStreamRLArmSamples(ruleId);
+      if (armSamples < 5) {
+        return '探索中';
+      } else if (armSamples < 20) {
+        return `学习中 (${armSamples}次)`;
+      } else {
+        return `已学习 (${armSamples}次)`;
+      }
+    } catch {
+      return '';
+    }
   }
 
   /**

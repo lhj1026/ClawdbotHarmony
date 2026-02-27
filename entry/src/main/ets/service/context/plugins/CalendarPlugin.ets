@@ -17,11 +17,18 @@ const LOOKAHEAD_MS = 2 * 60 * 60 * 1000;  // 2 hours
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // refresh cache every 5 minutes
 
 /** Cached event summary */
-interface EventInfo {
+export interface EventInfo {
   title: string;
   startTime: number;
   endTime: number;
   location: string;
+}
+
+/** A pair of conflicting events */
+export interface EventConflict {
+  event1: EventInfo;
+  event2: EventInfo;
+  overlapMinutes: number;
 }
 
 export class CalendarPlugin implements DigitalPlugin {
@@ -96,6 +103,67 @@ export class CalendarPlugin implements DigitalPlugin {
   destroy(): void {
     this.cachedEvents = [];
     this.log.info(TAG, 'Destroyed');
+  }
+
+  /** Get upcoming events within a time window. Refreshes cache if stale. */
+  async getUpcomingEvents(hoursAhead?: number): Promise<EventInfo[]> {
+    let now = Date.now();
+    if (now - this.lastRefresh > REFRESH_INTERVAL_MS && this.permissionGranted) {
+      await this.refreshEvents();
+    }
+    let windowMs = (hoursAhead ?? 8) * 60 * 60 * 1000;
+    let cutoff = now + windowMs;
+    return this.cachedEvents.filter((ev: EventInfo): boolean =>
+      ev.startTime > now && ev.startTime < cutoff
+    );
+  }
+
+  /** Detect time-overlapping event pairs */
+  findConflicts(events: EventInfo[]): EventConflict[] {
+    let conflicts: EventConflict[] = [];
+    for (let i = 0; i < events.length; i++) {
+      for (let j = i + 1; j < events.length; j++) {
+        let a = events[i];
+        let b = events[j];
+        let overlapStart = Math.max(a.startTime, b.startTime);
+        let overlapEnd = Math.min(a.endTime, b.endTime);
+        if (overlapStart < overlapEnd) {
+          conflicts.push({
+            event1: a,
+            event2: b,
+            overlapMinutes: Math.round((overlapEnd - overlapStart) / 60000)
+          });
+        }
+      }
+    }
+    return conflicts;
+  }
+
+  /** Format events as human-readable markdown for chat display */
+  formatEventsMarkdown(events: EventInfo[], conflicts?: EventConflict[]): string {
+    if (events.length === 0) {
+      return '📅 接下来没有日程安排';
+    }
+    let lines: string[] = [];
+    lines.push(`📅 **接下来有 ${events.length} 个日程**\n`);
+    for (let i = 0; i < events.length; i++) {
+      let ev = events[i];
+      let start = new Date(ev.startTime);
+      let end = new Date(ev.endTime);
+      let timeStr = `${start.getHours().toString().padStart(2, '0')}:${start.getMinutes().toString().padStart(2, '0')}` +
+        ` - ${end.getHours().toString().padStart(2, '0')}:${end.getMinutes().toString().padStart(2, '0')}`;
+      let locStr = ev.location.length > 0 ? ` 📍 ${ev.location}` : '';
+      lines.push(`${(i + 1).toString()}. **${ev.title}**`);
+      lines.push(`   🕐 ${timeStr}${locStr}`);
+    }
+    if (conflicts && conflicts.length > 0) {
+      lines.push('');
+      lines.push(`⚠️ **发现 ${conflicts.length} 个时间冲突：**`);
+      for (let c of conflicts) {
+        lines.push(`   - "${c.event1.title}" 与 "${c.event2.title}" 重叠 ${c.overlapMinutes} 分钟`);
+      }
+    }
+    return lines.join('\n');
   }
 
   private async refreshEvents(): Promise<void> {
