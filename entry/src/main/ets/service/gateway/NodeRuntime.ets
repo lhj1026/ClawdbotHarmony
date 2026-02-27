@@ -57,7 +57,7 @@ import { ContextEngineService, ContextSnapshot, ContextRule, ContextCondition, C
 import { FeedbackService } from '../context/FeedbackService';
 import { ActionExecutor, ActionResult } from '../context/ActionExecutor';
 import { GeofenceSuggestion } from '../context/LocationDiscoveryService';
-import { Geofence, GeofenceCategory, LearnedPlaceSignals } from '../context/ContextModels';
+import { Geofence, GeofenceCategory, LearnedPlaceSignals, UserAction } from '../context/ContextModels';
 import { FederatedSync } from '../context/FederatedSync';
 
 const TAG = 'NodeRuntime';
