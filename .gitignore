@@ -59,3 +59,19 @@ nul
 
 # Claude Code local settings
 /.claude/settings.local.json
+
+# IDE cache (DevEco clangd, etc.)
+.idea/.deveco/cxx/.cache/
+.idea/.deveco/*.cache.json
+.idea/modules.xml
+.vscode/
+
+# Log / debug files at repo root
+*.log
+*.txt
+!LICENSE.txt
+!README.txt
+
+# Temp build/deploy scripts
+scripts/_*.py
+scripts/msi_*.py

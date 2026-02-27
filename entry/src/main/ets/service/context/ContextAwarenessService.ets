@@ -17,6 +17,7 @@ import { BehaviorLogger } from './BehaviorLogger';
 import { ContextEngineService, ContextSnapshot, ContextRule as EngineRule, ContextCondition as EngineCondition, ContextAction as EngineAction, MatchResult, GeofenceBinding } from './ContextEngine';
 import { LocationDiscoveryService, GeofenceSuggestion, DiscoveryStatsInfo } from './LocationDiscoveryService';
 import { FeedbackService } from './FeedbackService';
+import { ConfigManager } from '../ConfigManager';
 import { LocationFusionService, LearnedSignalsSummary } from './LocationFusionService';
 import { DigitalWorldService } from './DigitalWorldService';
 import DataTray, { DataTray as SensorDataTray, TrayStatus } from './DataTray';
@@ -341,11 +342,14 @@ export class ContextAwarenessService {
     // 加载设备连接记录
     await this.loadConnectionRecords();
 
-    // 初始化训练数据同步 (服务端与 Gateway 同机，端口 18790)
-    await this.trainingSync.init(context, 'http://192.168.1.76:18790');
+    // 初始化训练数据同步 (服务端与 Gateway 同机，端口 18793)
+    let gwConfig = ConfigManager.getInstance().getConfig().gateway;
+    let trainingHost = gwConfig.host.length > 0 ? gwConfig.host : '192.168.1.67';
+    let trainingEndpoint = `http://${trainingHost}:18793`;
+    await this.trainingSync.init(context, trainingEndpoint);
 
     // 初始化联邦学习同步 (与训练同步共用端点)
-    await FederatedSync.getInstance().init(context, 'http://192.168.1.76:18790');
+    await FederatedSync.getInstance().init(context, trainingEndpoint);
 
     // 监听地理围栏事件
     this.geofenceMgr.addListener((event) => this.onGeofenceEvent(event));
