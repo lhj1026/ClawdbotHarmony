@@ -1119,6 +1119,7 @@ export class NodeRuntime {
       }
       if (feedback === 'accept') {
         // Positive: increase priority slightly
+        this.dispatchA2UI('reset', '');
         let delta = 0.2;
         this.adjustRulePriority(engine, ruleId, delta);
         fbService.onThumbsUp(ruleId);
@@ -1127,7 +1128,6 @@ export class NodeRuntime {
           `📋 ${I18n.t('ctx.fb.rule')}：${displayName}\n` +
           `📈 ${I18n.t('ctx.fb.weightUp').replace('{0}', delta.toString())}`;
         this.sendFeedbackResponse(acceptMsg);
-        this.pushA2UIConfirmation(acceptMsg);
 
         // Execute the recommended action
         let cachedRec = this._activeRecommendations.get(ruleId);
@@ -1136,6 +1136,7 @@ export class NodeRuntime {
         }
       } else if (feedback === 'reject') {
         // Negative: decrease priority
+        this.dispatchA2UI('reset', '');
         let delta = -0.3;
         fbService.onThumbsDown(ruleId);
         let displayName = ruleName.length > 0 ? ruleName : ruleId;
@@ -1224,9 +1225,9 @@ export class NodeRuntime {
         this.sendFeedbackResponse(legacyMsg);
         this.pushA2UIConfirmation(legacyMsg);
       } else if (feedback === 'state_correct') {
-        // 用户确认状态正确 → 弹出对应推荐卡片
+        // 用户确认状态正确 → 关闭状态卡片，弹出推荐卡片
+        this.dispatchA2UI('reset', '');
         this.sendFeedbackResponse('✅ 状态已确认');
-        this.pushA2UIConfirmation('✅ 状态已确认');
         if (this._pendingStateRec) {
           let pr = this._pendingStateRec;
           this._pendingStateRec = null;
@@ -1235,7 +1236,8 @@ export class NodeRuntime {
           this.dispatchA2UI('push', recJsonl);
         }
       } else if (feedback === 'state_incorrect') {
-        // 用户说状态不准 → 不弹推荐，让用户纠正场景
+        // 用户说状态不准 → 关闭状态卡片，进入场景纠正
+        this.dispatchA2UI('reset', '');
         this._pendingStateRec = null;
         this.sendFeedbackResponse('❌ 状态不准确，已记录反馈');
         if (ruleId.length > 0) {
@@ -1254,8 +1256,8 @@ export class NodeRuntime {
         }
       } else if (feedback === 'dismiss') {
         // Dismiss is a mild negative signal, don't record as thumbs_down
+        this.dispatchA2UI('reset', '');
         this.sendFeedbackResponse('🙈 ' + I18n.t('ctx.fb.dismissed'));
-        this.pushA2UIConfirmation('🙈 ' + I18n.t('ctx.fb.dismissedShort'));
       }
       // Handle new place detection events
       else if (name === 'new_place_save') {
