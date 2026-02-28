@@ -8,11 +8,11 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.58.8';
+export const APP_VERSION: string = '2.58.9';
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    version: '2.58.8',
+    version: '2.58.9',
     date: '2026-02-28',
     features: [
       '情景智能v2: 分层规则系统(Tier 0/1/2), 删除不准确的GPS围栏规则',
@@ -35,6 +35,9 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Geofence场景规则扩充: 14→22条默认规则, 覆盖在家用餐/晚间放松/会议提醒/交通枢纽/餐厅/健身房',
       '场景模板扩充: 新增7个模板(午餐/晚餐/放松/交通枢纽/餐厅/健身房/会议)',
       '规则版本升级v3: 自动加载新规则集',
+      '合并地点管理: 围栏+自动发现+信号学习统一到情景智能页面的"📍 我的地点"',
+      '消除重复: 移除规则管理页面的地点Tab, 统一入口在情景智能设置页',
+      '围栏信号摘要: 每个已确认围栏旁显示学习到的WiFi/BT信号数量',
     ],
     fixes: [
       '数据分类优化: GPS速度归环境, 心率归人, 屏幕/姿态归手机',
@@ -589,4 +592,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.58.8';
+export const LATEST_VERSION: string = '2.58.9';

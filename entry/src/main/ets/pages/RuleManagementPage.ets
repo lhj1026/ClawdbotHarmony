@@ -7,7 +7,6 @@ import { LogService } from '../common/LogService';
 import { I18n } from '../common/I18n';
 import { ContextEngineService, ContextRule, ContextCondition, ContextAction } from '../service/context/ContextEngine';
 import { ContextAwarenessService } from '../service/context/ContextAwarenessService';
-import { DiscoveredPlace, GeofenceCategory } from '../service/context/ContextModels';
 
 const TAG = 'RuleMgmt';
 
@@ -44,11 +43,7 @@ struct RuleManagementPage {
   private engine: ContextEngineService = ContextEngineService.getInstance();
 
   @State rules: ContextRule[] = [];
-  @State activeTab: number = 0;  // 0=rules list, 1=add from template, 2=advanced add, 3=discovered places
-  @State discoveredPlaces: DiscoveredPlace[] = [];
-  @State promoteName: string = '';
-  @State promoteCategory: number = 0;  // index in categoryOptions
-  @State promotingPlaceId: string = '';
+  @State activeTab: number = 0;  // 0=rules list, 1=add from template, 2=advanced add
 
   // Template mode state
   @State selectedTemplate: SceneTemplate | null = null;
@@ -73,8 +68,7 @@ struct RuleManagementPage {
   private actionTypeLabels: string[] = ['💡 建议', '🔔 通知', '⚠️ 警告'];
   private actionTypeIds: string[] = ['suggestion', 'notification', 'alert'];
 
-  private categoryLabels: string[] = ['🏠 家', '🏢 公司', '💪 健身房', '🍜 餐饮', '🛒 购物', '🚇 交通', '📍 其他'];
-  private categoryIds: GeofenceCategory[] = ['home', 'work', 'gym', 'restaurant', 'shopping', 'transit', 'custom'];
+
 
   // All available context keys organized by category
   private contextKeys: ContextKeyInfo[] = [
@@ -276,7 +270,6 @@ struct RuleManagementPage {
   aboutToAppear(): void {
     this.log.info(TAG, 'Page opened');
     this.refreshRules();
-    this.refreshPlaces();
     this.buildDynamicTemplates();
   }
 
@@ -307,38 +300,6 @@ struct RuleManagementPage {
     } catch (err) {
       this.dynamicTemplates = [];
     }
-  }
-
-  private async refreshPlaces(): Promise<void> {
-    try {
-      this.discoveredPlaces = await ContextAwarenessService.getInstance().getDiscoveredPlaces();
-    } catch (err) {
-      this.discoveredPlaces = [];
-    }
-  }
-
-  private async promotePlace(placeId: string): Promise<void> {
-    if (this.promoteName.length === 0) return;
-    let cat = this.categoryIds[this.promoteCategory];
-    let ok = await ContextAwarenessService.getInstance().promoteDiscoveredPlace(placeId, this.promoteName, cat);
-    if (ok) {
-      this.log.info(TAG, `Promoted place ${placeId} as ${this.promoteName} (${cat})`);
-    }
-    this.promotingPlaceId = '';
-    this.promoteName = '';
-    this.promoteCategory = 0;
-    await this.refreshPlaces();
-  }
-
-  private async deletePlace(placeId: string): Promise<void> {
-    await ContextAwarenessService.getInstance().removeDiscoveredPlace(placeId);
-    await this.refreshPlaces();
-  }
-
-  private formatTime(ts: number): string {
-    if (ts === 0) return '';
-    let d = new Date(ts);
-    return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
   }
 
   private refreshRules(): void {
@@ -507,7 +468,6 @@ struct RuleManagementPage {
       Row({ space: 0 }) {
         this.TabButton('📋 规则', 0)
         this.TabButton('✨ 模板', 1)
-        this.TabButton('📍 地点', 3)
         this.TabButton('⚙️ 高级', 2)
       }
       .width('100%')
@@ -519,8 +479,6 @@ struct RuleManagementPage {
         this.RulesList()
       } else if (this.activeTab === 1) {
         this.TemplateList()
-      } else if (this.activeTab === 3) {
-        this.PlacesList()
       } else {
         this.AdvancedForm()
       }
@@ -542,7 +500,6 @@ struct RuleManagementPage {
       .onClick(() => {
         this.activeTab = index;
         if (index === 0) this.refreshRules();
-        if (index === 3) this.refreshPlaces();
       })
   }
 
@@ -974,149 +931,6 @@ struct RuleManagementPage {
           .borderRadius(10)
           .margin({ top: 8 })
           .onClick(() => { this.doAddAdvanced(); })
-      }
-      .padding({ left: 16, right: 16, top: 12, bottom: 40 })
-    }
-    .layoutWeight(1)
-  }
-  // ==================== Tab 3: Discovered Places ====================
-  @Builder
-  PlacesList() {
-    Scroll() {
-      Column({ space: 10 }) {
-        Text('自动发现的地点')
-          .fontSize(14).fontColor('#666666').width('100%')
-        Text('连接 WiFi 时自动记录 GPS 坐标')
-          .fontSize(12).fontColor('#999999').width('100%').margin({ bottom: 8 })
-
-        if (this.discoveredPlaces.length === 0) {
-          Column() {
-            Text('📍')
-              .fontSize(40)
-              .margin({ bottom: 12 })
-            Text('暂无发现的地点')
-              .fontSize(15).fontColor('#999999')
-            Text('连接 WiFi 并获取 GPS 定位后会自动记录')
-              .fontSize(12).fontColor('#BBBBBB').margin({ top: 4 })
-          }
-          .width('100%')
-          .padding(40)
-          .justifyContent(FlexAlign.Center)
-          .alignItems(HorizontalAlign.Center)
-        } else {
-          ForEach(this.discoveredPlaces, (place: DiscoveredPlace) => {
-            Column({ space: 8 }) {
-              Row() {
-                Text(place.confirmAt > 0 ? '✅' :
-                  place.category === 'home' ? '🏠' : place.category === 'work' ? '🏢' :
-                  place.category === 'restaurant' ? '🍜' : place.category === 'shopping' ? '🛒' :
-                  place.category === 'transit' ? '🚇' : place.category === 'gym' ? '💪' : '📍')
-                  .fontSize(20).margin({ right: 8 })
-                Column({ space: 2 }) {
-                  Text(place.name)
-                    .fontSize(15).fontWeight(FontWeight.Medium).fontColor('#1A1A1A')
-                    .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-                  Row({ space: 4 }) {
-                    Text(`${place.latitude.toFixed(4)}, ${place.longitude.toFixed(4)}`)
-                      .fontSize(11).fontColor('#999999')
-                    if (place.category !== 'custom') {
-                      Text(place.category)
-                        .fontSize(10).fontColor(Color.White)
-                        .backgroundColor('#007AFF')
-                        .padding({ left: 5, right: 5, top: 1, bottom: 1 })
-                        .borderRadius(4)
-                    }
-                  }
-                }
-                .layoutWeight(1)
-                .alignItems(HorizontalAlign.Start)
-
-                Column({ space: 2 }) {
-                  Text(place.totalVisits.toString() + '次访问')
-                    .fontSize(12).fontColor('#007AFF')
-                  Text(this.formatTime(place.discoveredAt))
-                    .fontSize(10).fontColor('#BBBBBB')
-                }
-                .alignItems(HorizontalAlign.End)
-              }
-              .width('100%')
-
-              // WiFi SSIDs
-              if (place.learnedSignals?.wifiSSIDs && place.learnedSignals.wifiSSIDs.length > 0) {
-                Row() {
-                  Text('📶 ')
-                    .fontSize(11)
-                  Text(place.learnedSignals.wifiSSIDs!.join(', '))
-                    .fontSize(11).fontColor('#666666')
-                    .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-                    .layoutWeight(1)
-                }
-                .width('100%')
-              }
-
-              // Actions
-              if (place.confirmAt > 0) {
-                Text('已设为围栏 ✅')
-                  .fontSize(12).fontColor('#34C759')
-              } else if (this.promotingPlaceId === place.id) {
-                // Promote form
-                Column({ space: 8 }) {
-                  TextInput({ placeholder: '地点名称', text: this.promoteName })
-                    .onChange((val: string) => { this.promoteName = val; })
-                    .width('100%').height(38).fontSize(13).borderRadius(8)
-
-                  Flex({ wrap: FlexWrap.Wrap }) {
-                    ForEach(this.categoryLabels, (label: string, idx: number) => {
-                      Text(label)
-                        .fontSize(11)
-                        .fontColor(this.promoteCategory === idx ? Color.White : '#333333')
-                        .backgroundColor(this.promoteCategory === idx ? '#007AFF' : '#F0F0F0')
-                        .padding({ left: 10, right: 10, top: 4, bottom: 4 })
-                        .borderRadius(12)
-                        .margin(3)
-                        .onClick(() => { this.promoteCategory = idx; })
-                    }, (label: string) => label)
-                  }
-                  .width('100%')
-
-                  Row({ space: 8 }) {
-                    Button('取消')
-                      .fontSize(12).backgroundColor('#F0F0F0').fontColor('#666666')
-                      .layoutWeight(1).height(34).borderRadius(8)
-                      .onClick(() => { this.promotingPlaceId = ''; })
-                    Button('✅ 设为围栏')
-                      .fontSize(12).backgroundColor('#007AFF').fontColor(Color.White)
-                      .layoutWeight(1).height(34).borderRadius(8)
-                      .onClick(() => { this.promotePlace(place.id); })
-                  }
-                  .width('100%')
-                }
-                .width('100%')
-                .padding(8)
-                .backgroundColor('#F8F8FC')
-                .borderRadius(8)
-              } else {
-                Row({ space: 12 }) {
-                  Text('设为围栏')
-                    .fontSize(12).fontColor('#007AFF')
-                    .onClick(() => {
-                      this.promotingPlaceId = place.id;
-                      this.promoteName = place.name;
-                      this.promoteCategory = 0;
-                    })
-                  Text('删除')
-                    .fontSize(12).fontColor('#FF3B30')
-                    .onClick(() => { this.deletePlace(place.id); })
-                }
-                .width('100%')
-              }
-            }
-            .width('100%')
-            .padding(14)
-            .backgroundColor(Color.White)
-            .borderRadius(12)
-          }, (place: DiscoveredPlace) => place.id + '_' + place.totalVisits.toString())
-        }
       }
       .padding({ left: 16, right: 16, top: 12, bottom: 40 })
     }

@@ -8,7 +8,7 @@ import { I18n } from '../common/I18n';
 import { ContextAwarenessService } from '../service/context/ContextAwarenessService';
 import { ContextEngineService } from '../service/context/ContextEngine';
 import { FeedbackService } from '../service/context/FeedbackService';
-import { Geofence, GeofenceCategory, FeedbackStats, FeedbackRuleStat } from '../service/context/ContextModels';
+import { Geofence, GeofenceCategory, FeedbackStats, FeedbackRuleStat, DiscoveredPlace } from '../service/context/ContextModels';
 import { LocationDiscoveryService, GeofenceSuggestion } from '../service/context/LocationDiscoveryService';
 import { LearnedSignalsSummary } from '../service/context/LocationFusionService';
 import { GeoCodingService } from '../service/context/GeoCodingService';
@@ -65,6 +65,11 @@ struct ContextSettingsPage {
   @State exploreFpCount: number = 0;
   // 已学习的位置信号
   @State learnedSignals: LearnedSignalsSummary[] = [];
+  // 自动发现的地点
+  @State discoveredPlaces: DiscoveredPlace[] = [];
+  @State promotingPlaceId: string = '';
+  @State promoteName: string = '';
+  @State promoteCategory: number = 0;
   // 数据托盘 — 🧑 人（用户状态）
   @State personKeys: string[] = [];
   @State personLabels: string[] = [];
@@ -273,6 +278,50 @@ struct ContextSettingsPage {
     }
     this.refreshFeedbackStats();
     this.refreshStreamRLStats();
+    this.refreshDiscoveredPlaces();
+  }
+
+  private async refreshDiscoveredPlaces(): Promise<void> {
+    try {
+      this.discoveredPlaces = await ContextAwarenessService.getInstance().getDiscoveredPlaces();
+    } catch (err) {
+      this.discoveredPlaces = [];
+    }
+  }
+
+  private async promotePlace(placeId: string): Promise<void> {
+    if (this.promoteName.length === 0) return;
+    let catIds: GeofenceCategory[] = ['home', 'work', 'gym', 'restaurant', 'shopping', 'transit', 'custom'];
+    let cat = catIds[this.promoteCategory];
+    await ContextAwarenessService.getInstance().promoteDiscoveredPlace(placeId, this.promoteName, cat);
+    this.promotingPlaceId = '';
+    this.promoteName = '';
+    this.promoteCategory = 0;
+    this.refresh();
+  }
+
+  private async deleteDiscoveredPlace(placeId: string): Promise<void> {
+    await ContextAwarenessService.getInstance().removeDiscoveredPlace(placeId);
+    await this.refreshDiscoveredPlaces();
+  }
+
+  private getSignalSummaryForGeofence(gfId: string): string {
+    for (let i = 0; i < this.learnedSignals.length; i++) {
+      let sig = this.learnedSignals[i];
+      if (sig.geofenceId === gfId) {
+        let parts: string[] = [];
+        if (sig.wifiSsids.length > 0) parts.push('📶' + sig.wifiSsids.length.toString());
+        if (sig.btDevices.length > 0) parts.push('🔵' + sig.btDevices.length.toString());
+        return parts.join(' ');
+      }
+    }
+    return '';
+  }
+
+  private formatPlaceTime(ts: number): string {
+    if (ts === 0) return '';
+    let d = new Date(ts);
+    return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
   }
 
   private refreshFeedbackStats(): void {
@@ -622,128 +671,147 @@ struct ContextSettingsPage {
             .backgroundColor(Color.White)
             .borderRadius(12)
 
-            // ===== 地理围栏 =====
+            // ===== 📍 我的地点（统一入口：围栏 + 自动发现 + 学习信号）=====
             Column() {
               Row() {
-                Text(I18n.t('ctx.geofence.title') + ' (' + this.geofenceNames.length.toString() + ')')
+                Text('📍 我的地点')
                   .fontSize(16)
                   .fontWeight(FontWeight.Bold)
                   .fontColor('#1A1A1A')
                   .layoutWeight(1)
-                Text(I18n.t('ctx.geofence.add'))
+                Text('+ 手动添加')
                   .fontSize(14)
                   .fontColor('#007AFF')
                   .onClick(() => { this.showAddDialog = true; })
               }
               .width('100%')
-              .margin({ bottom: 12 })
+              .margin({ bottom: 4 })
+              Text('WiFi + GPS 自动发现 · 学习位置信号 · 管理围栏')
+                .fontSize(11).fontColor('#999999').width('100%').margin({ bottom: 12 })
 
-              if (this.geofenceNames.length === 0) {
-                Text(I18n.t('ctx.geofence.empty'))
-                  .fontSize(14)
-                  .fontColor('#999999')
-                  .width('100%')
-                  .textAlign(TextAlign.Center)
-                  .padding(20)
-              } else {
+              // -- 已确认围栏 --
+              if (this.geofenceNames.length > 0) {
+                Text('已确认围栏 (' + this.geofenceNames.length.toString() + ')')
+                  .fontSize(13).fontWeight(FontWeight.Medium).fontColor('#333333').width('100%').margin({ bottom: 6 })
                 ForEach(this.geofenceIds, (gfId: string, index: number) => {
-                  Column() {
-                    Row() {
-                      Column({ space: 2 }) {
-                        Text(this.geofenceNames[index])
-                          .fontSize(14)
-                          .fontColor('#1A1A1A')
+                  Row() {
+                    Column({ space: 2 }) {
+                      Text(this.geofenceNames[index])
+                        .fontSize(14).fontColor('#1A1A1A')
+                      Row({ space: 4 }) {
                         Text(this.geofenceDetails[index])
-                          .fontSize(11)
-                          .fontColor('#999999')
+                          .fontSize(11).fontColor('#999999')
+                        // 显示学习到的信号摘要
+                        if (this.getSignalSummaryForGeofence(gfId).length > 0) {
+                          Text(this.getSignalSummaryForGeofence(gfId))
+                            .fontSize(10).fontColor('#007AFF')
+                        }
                       }
-                      .layoutWeight(1)
-                      .alignItems(HorizontalAlign.Start)
-
-                      Text(I18n.t('ctx.geofence.delete'))
-                        .fontSize(13)
-                        .fontColor('#FF3B30')
-                        .padding(4)
-                        .onClick(() => { this.deleteGeofence(gfId); })
                     }
-                    .width('100%')
-                    .padding({ top: 8, bottom: 8 })
-                    Divider().color('#F0F0F0')
+                    .layoutWeight(1)
+                    .alignItems(HorizontalAlign.Start)
+                    Text('删除')
+                      .fontSize(12).fontColor('#FF3B30').padding(4)
+                      .onClick(() => { this.deleteGeofence(gfId); })
                   }
+                  .width('100%').padding({ top: 6, bottom: 6 })
+                  Divider().color('#F0F0F0')
                 }, (gfId: string) => gfId)
               }
-            }
-            .width('100%')
-            .padding(16)
-            .backgroundColor(Color.White)
-            .borderRadius(12)
 
-            // ===== 已学习的位置信号 =====
-            Column() {
-              Row() {
-                Text(I18n.t('ctx.signal.title'))
-                  .fontSize(16)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor('#1A1A1A')
-                  .layoutWeight(1)
-                Text(I18n.t('ctx.signal.clearAll'))
-                  .fontSize(13)
-                  .fontColor('#FF3B30')
-                  .onClick(() => { this.clearAllSignals(); })
-              }
-              .width('100%')
-              .margin({ bottom: 8 })
-
-              Text(I18n.t('ctx.signal.desc'))
-                .fontSize(12)
-                .fontColor('#999999')
-                .width('100%')
-                .margin({ bottom: 8 })
-
-              if (this.learnedSignals.length === 0) {
-                Text(I18n.t('ctx.signal.empty'))
-                  .fontSize(13)
-                  .fontColor('#999999')
-                  .width('100%')
-                  .textAlign(TextAlign.Center)
-                  .padding(16)
-              } else {
-                ForEach(this.learnedSignals, (sig: LearnedSignalsSummary) => {
-                  Column() {
+              // -- 自动发现的地点 --
+              if (this.discoveredPlaces.length > 0) {
+                Text('自动发现 (' + this.discoveredPlaces.length.toString() + ')')
+                  .fontSize(13).fontWeight(FontWeight.Medium).fontColor('#333333').width('100%').margin({ top: 12, bottom: 6 })
+                ForEach(this.discoveredPlaces, (place: DiscoveredPlace) => {
+                  Column({ space: 6 }) {
                     Row() {
+                      Text(this.getCatIcon(place.category))
+                        .fontSize(18).margin({ right: 6 })
                       Column({ space: 2 }) {
-                        Text(sig.geofenceName)
-                          .fontSize(14)
-                          .fontWeight(FontWeight.Medium)
-                          .fontColor('#1A1A1A')
-                        if (sig.wifiSsids.length > 0) {
-                          Text('WiFi: ' + sig.wifiSsids.join(', '))
-                            .fontSize(12)
-                            .fontColor('#007AFF')
+                        Text(place.name)
+                          .fontSize(14).fontWeight(FontWeight.Medium).fontColor('#1A1A1A')
+                          .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                        Row({ space: 4 }) {
+                          Text(place.latitude.toFixed(4) + ', ' + place.longitude.toFixed(4))
+                            .fontSize(10).fontColor('#999999')
+                          if (place.learnedSignals?.wifiSSIDs && place.learnedSignals.wifiSSIDs.length > 0) {
+                            Text('📶' + place.learnedSignals.wifiSSIDs!.join(','))
+                              .fontSize(10).fontColor('#007AFF')
+                              .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+                              .constraintSize({ maxWidth: 120 })
+                          }
                         }
-                        if (sig.btDevices.length > 0) {
-                          Text('BT: ' + sig.btDevices.join(', '))
-                            .fontSize(12)
-                            .fontColor('#5856D6')
-                        }
-                        Text(I18n.t('ctx.signal.observations').replace('{0}', sig.totalObservations.toString()))
-                          .fontSize(11)
-                          .fontColor('#999999')
                       }
                       .layoutWeight(1)
                       .alignItems(HorizontalAlign.Start)
-
-                      Text(I18n.t('ctx.signal.clear'))
-                        .fontSize(13)
-                        .fontColor('#FF3B30')
-                        .padding(4)
-                        .onClick(() => { this.clearSignalsForGeofence(sig.geofenceId); })
+                      Text(place.totalVisits.toString() + '次')
+                        .fontSize(11).fontColor('#007AFF')
                     }
                     .width('100%')
-                    .padding({ top: 8, bottom: 8 })
+
+                    if (place.confirmAt > 0) {
+                      Text('✅ 已设为围栏')
+                        .fontSize(11).fontColor('#34C759')
+                    } else if (this.promotingPlaceId === place.id) {
+                      // 设为围栏表单
+                      Column({ space: 6 }) {
+                        TextInput({ placeholder: '地点名称', text: this.promoteName })
+                          .onChange((val: string) => { this.promoteName = val; })
+                          .width('100%').height(34).fontSize(12).borderRadius(6)
+                        Flex({ wrap: FlexWrap.Wrap }) {
+                          ForEach(['🏠 家', '🏢 公司', '💪 健身房', '🍜 餐饮', '🛒 购物', '🚇 交通', '📍 其他'], (label: string, idx: number) => {
+                            Text(label)
+                              .fontSize(10)
+                              .fontColor(this.promoteCategory === idx ? Color.White : '#333333')
+                              .backgroundColor(this.promoteCategory === idx ? '#007AFF' : '#F0F0F0')
+                              .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+                              .borderRadius(10).margin(2)
+                              .onClick(() => { this.promoteCategory = idx; })
+                          }, (label: string) => label)
+                        }
+                        .width('100%')
+                        Row({ space: 6 }) {
+                          Button('取消').fontSize(11).backgroundColor('#F0F0F0').fontColor('#666666')
+                            .layoutWeight(1).height(30).borderRadius(6)
+                            .onClick(() => { this.promotingPlaceId = ''; })
+                          Button('✅ 设为围栏').fontSize(11).backgroundColor('#007AFF').fontColor(Color.White)
+                            .layoutWeight(1).height(30).borderRadius(6)
+                            .onClick(() => { this.promotePlace(place.id); })
+                        }
+                        .width('100%')
+                      }
+                      .padding(6).backgroundColor('#F8F8FC').borderRadius(6)
+                    } else {
+                      Row({ space: 10 }) {
+                        Text('设为围栏')
+                          .fontSize(11).fontColor('#007AFF')
+                          .onClick(() => {
+                            this.promotingPlaceId = place.id;
+                            this.promoteName = place.name;
+                            this.promoteCategory = place.category === 'home' ? 0 : place.category === 'work' ? 1 :
+                              place.category === 'gym' ? 2 : place.category === 'restaurant' ? 3 :
+                              place.category === 'shopping' ? 4 : place.category === 'transit' ? 5 : 6;
+                          })
+                        Text('删除')
+                          .fontSize(11).fontColor('#FF3B30')
+                          .onClick(() => { this.deleteDiscoveredPlace(place.id); })
+                      }
+                    }
                     Divider().color('#F0F0F0')
                   }
-                }, (sig: LearnedSignalsSummary) => sig.geofenceId)
+                  .width('100%').padding({ top: 4, bottom: 4 })
+                }, (place: DiscoveredPlace) => place.id + '_' + place.totalVisits.toString())
+              }
+
+              // 空状态
+              if (this.geofenceNames.length === 0 && this.discoveredPlaces.length === 0) {
+                Column() {
+                  Text('📍').fontSize(32).margin({ bottom: 8 })
+                  Text('暂无地点数据').fontSize(13).fontColor('#999999')
+                  Text('连接 WiFi + 获取 GPS 定位后会自动发现地点').fontSize(11).fontColor('#BBBBBB').margin({ top: 2 })
+                }
+                .width('100%').padding(24).justifyContent(FlexAlign.Center).alignItems(HorizontalAlign.Center)
               }
             }
             .width('100%')
