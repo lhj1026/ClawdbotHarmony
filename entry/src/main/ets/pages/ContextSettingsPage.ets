@@ -85,18 +85,21 @@ struct ContextSettingsPage {
   @State digiIndicators: string[] = [];
   @State digiQualities: string[] = [];
 
-  // Key → category mapping
-  // 🧑 人: 运动、健康、睡眠、行为习惯
+  // Key → category mapping (for non-digital source data)
+  // 🧑 人: 运动、健康、睡眠 (from stepCounter, wearable)
   private static PERSON_KEYS: string[] = [
     'motionState', 'isSleeping', 'activityDuration', 'step_count_today',
-    'heart_rate_status', 'wearing_state'
+    'heart_rate', 'heart_rate_status', 'heart_rate_age_sec', 'wearing_state'
   ];
-  // 📱 手机: 电量、充电、网络、传感器能力
+  // 📱 手机: 电量、充电、网络、屏幕、姿态 (from system, screen, posture)
   private static PHONE_KEYS: string[] = [
-    'batteryLevel', 'isCharging', 'networkType', 'sensorTier'
+    'batteryLevel', 'isCharging', 'networkType', 'sensorTier',
+    'screen_on', 'screen_locked', 'user_active',
+    'phone_posture', 'ambient_brightness', 'proximity'
   ];
-  // 🌍 环境: 时间、位置(WiFi/GPS/围栏)、蓝牙设备、速度
-  // Everything else → environment (includes time, wifi, geofence, GPS, BT, etc.)
+  // 🌍 环境: 时间、WiFi、GPS、蓝牙、围栏、环境音 (from system, wifi, bluetooth, gps, audio)
+  // Everything else with non-digital source → environment
+  // 💻 数字世界: source='digital' 的数据 (calendar, appUsage, foregroundApp, notification, media)
   private trayTimer: number = -1;
   // 当前状态概览
   @State statusTime: string = '';

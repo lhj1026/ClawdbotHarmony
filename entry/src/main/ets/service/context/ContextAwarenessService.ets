@@ -1435,10 +1435,14 @@ export class ContextAwarenessService {
       'screen_on', 'screen_locked', 'user_active',                   // 内部状态
       'init_error', 'data_source', 'device_name', 'device_connected' // 元数据噪声
     ];
-    let digitalPluginNames: string[] = ['calendar', 'appUsage', 'foregroundApp', 'notification'];
+    // 💻 数字世界: 软件层/应用数据
+    let digitalPluginNames: string[] = ['calendar', 'appUsage', 'foregroundApp', 'notification', 'media'];
+    // 🧑 人: wearable, stepCounter → person
+    // 📱 手机: screen, posture → phone
+    // 🌍 环境: bluetooth, wifi, ambientSound → environment
     let physicalSourceMap: Record<string, string> = {
       'bluetooth': 'bluetooth', 'wearable': 'wearable', 'ambientSound': 'audio',
-      'media': 'media', 'posture': 'posture', 'screen': 'screen', 'stepCounter': 'pedometer',
+      'posture': 'phone', 'screen': 'phone', 'stepCounter': 'pedometer',
       'wifi': 'wifi'
     };
     let pluginStatuses = this.digitalWorld.getPluginStatus();
