@@ -3831,12 +3831,27 @@ export class NodeRuntime {
           return;
         }
 
-        // Filter: only show messages from harmony-originated runs
-        // Skip messages from other channels (webchat, telegram, feishu, etc.)
+        // Filter: only show harmony-originated runs in chat UI
+        // For other channels (whatsapp, cron, etc.), show as notification on final message
         let isHarmonyRun = runId.length > 0 && this._harmonyRunIds.has(runId);
         let isHarmonySession = sessionKey.indexOf('harmony') >= 0;
         if (!isHarmonyRun && !isHarmonySession) {
-          this.log.debug(TAG, `Skipping non-harmony agent event: runId=${runId} sessionKey=${sessionKey}`);
+          // Non-harmony session: show notification for final messages with content
+          if (chatState === 'final' && fullText.length > 0) {
+            let notifyTitle = 'Linda';
+            if (sessionKey.indexOf('whatsapp') >= 0) {
+              notifyTitle = 'Linda (WhatsApp)';
+            } else if (sessionKey.indexOf('cron') >= 0 || sessionKey.indexOf('isolated') >= 0) {
+              notifyTitle = 'Linda (定时任务)';
+            } else if (sessionKey.indexOf('discord') >= 0) {
+              notifyTitle = 'Linda (Discord)';
+            }
+            let notifyText = fullText.length > 200 ? fullText.substring(0, 200) + '...' : fullText;
+            this.log.info(TAG, `Non-harmony final message → notification: session=${sessionKey} textLen=${fullText.length}`);
+            NotificationHelper.getInstance().send(notifyTitle, notifyText).catch(() => {});
+          } else {
+            this.log.debug(TAG, `Skipping non-harmony agent event: runId=${runId} sessionKey=${sessionKey} state=${chatState}`);
+          }
           return;
         }
 
