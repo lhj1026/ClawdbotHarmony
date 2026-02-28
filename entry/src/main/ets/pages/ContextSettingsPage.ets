@@ -63,6 +63,11 @@ struct ContextSettingsPage {
   // 积极探索模式
   @State exploreMode: boolean = false;
   @State exploreFpCount: number = 0;
+  // 数据托盘折叠状态
+  @State trayPersonExpanded: boolean = true;
+  @State trayPhoneExpanded: boolean = false;
+  @State trayEnvExpanded: boolean = false;
+  @State trayDigiExpanded: boolean = false;
   // 已学习的位置信号
   @State learnedSignals: LearnedSignalsSummary[] = [];
   // 自动发现的地点
@@ -544,13 +549,16 @@ struct ContextSettingsPage {
                   .padding(16)
               } else {
                 // ── 🧑 人（用户状态） ──
-                Text('🧑 人（用户状态）' + (this.personKeys.length > 0 ? '(' + this.personKeys.length.toString() + ')' : ''))
-                  .fontSize(13)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor('#6A1B9A')
-                  .width('100%')
-                  .margin({ bottom: 4, top: 4 })
+                Row() {
+                  Text('🧑 人（用户状态）' + '(' + this.personKeys.length.toString() + ')')
+                    .fontSize(13).fontWeight(FontWeight.Bold).fontColor('#6A1B9A').layoutWeight(1)
+                  Text(this.trayPersonExpanded ? '▼' : '▶')
+                    .fontSize(12).fontColor('#999999')
+                }
+                .width('100%').margin({ bottom: 4, top: 4 })
+                .onClick(() => { this.trayPersonExpanded = !this.trayPersonExpanded; })
 
+                if (this.trayPersonExpanded) {
                   Row() {
                     Text(I18n.t('ctx.tray.colName')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(90)
                     Text(I18n.t('ctx.tray.colValue')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).layoutWeight(1)
@@ -575,15 +583,19 @@ struct ContextSettingsPage {
                         .fontSize(12).width(18)
                     }.width('100%').padding({ top: 2, bottom: 2 })
                   }, (key: string, idx: number) => 'per_' + key + '_' + idx.toString())
+                }
 
                 // ── 📱 手机（设备状态） ──
-                Text('📱 手机（设备状态）' + (this.phoneKeys.length > 0 ? '(' + this.phoneKeys.length.toString() + ')' : ''))
-                  .fontSize(13)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor('#1565C0')
-                  .width('100%')
-                  .margin({ bottom: 4, top: 12 })
+                Row() {
+                  Text('📱 手机（设备状态）' + '(' + this.phoneKeys.length.toString() + ')')
+                    .fontSize(13).fontWeight(FontWeight.Bold).fontColor('#1565C0').layoutWeight(1)
+                  Text(this.trayPhoneExpanded ? '▼' : '▶')
+                    .fontSize(12).fontColor('#999999')
+                }
+                .width('100%').margin({ bottom: 4, top: 12 })
+                .onClick(() => { this.trayPhoneExpanded = !this.trayPhoneExpanded; })
 
+                if (this.trayPhoneExpanded) {
                   Row() {
                     Text(I18n.t('ctx.tray.colName')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(90)
                     Text(I18n.t('ctx.tray.colValue')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).layoutWeight(1)
@@ -608,15 +620,19 @@ struct ContextSettingsPage {
                         .fontSize(12).width(18)
                     }.width('100%').padding({ top: 2, bottom: 2 })
                   }, (key: string, idx: number) => 'pho_' + key + '_' + idx.toString())
+                }
 
                 // ── 🌍 环境（场景位置） ──
-                Text('🌍 环境（场景位置）' + (this.envKeys.length > 0 ? '(' + this.envKeys.length.toString() + ')' : ''))
-                  .fontSize(13)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor('#2E7D32')
-                  .width('100%')
-                  .margin({ bottom: 4, top: 12 })
+                Row() {
+                  Text('🌍 环境（场景位置）' + '(' + this.envKeys.length.toString() + ')')
+                    .fontSize(13).fontWeight(FontWeight.Bold).fontColor('#2E7D32').layoutWeight(1)
+                  Text(this.trayEnvExpanded ? '▼' : '▶')
+                    .fontSize(12).fontColor('#999999')
+                }
+                .width('100%').margin({ bottom: 4, top: 12 })
+                .onClick(() => { this.trayEnvExpanded = !this.trayEnvExpanded; })
 
+                if (this.trayEnvExpanded) {
                   Row() {
                     Text(I18n.t('ctx.tray.colName')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(90)
                     Text(I18n.t('ctx.tray.colValue')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).layoutWeight(1)
@@ -641,15 +657,19 @@ struct ContextSettingsPage {
                         .fontSize(12).width(18)
                     }.width('100%').padding({ top: 2, bottom: 2 })
                   }, (key: string, idx: number) => 'env_' + key + '_' + idx.toString())
+                }
 
                 // ── 💻 数字世界（应用/信息） ──
-                Text('💻 数字世界（应用/信息）' + (this.digiKeys.length > 0 ? '(' + this.digiKeys.length.toString() + ')' : ''))
-                  .fontSize(13)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor('#E65100')
-                  .width('100%')
-                  .margin({ bottom: 4, top: 12 })
+                Row() {
+                  Text('💻 数字世界（应用/信息）' + '(' + this.digiKeys.length.toString() + ')')
+                    .fontSize(13).fontWeight(FontWeight.Bold).fontColor('#E65100').layoutWeight(1)
+                  Text(this.trayDigiExpanded ? '▼' : '▶')
+                    .fontSize(12).fontColor('#999999')
+                }
+                .width('100%').margin({ bottom: 4, top: 12 })
+                .onClick(() => { this.trayDigiExpanded = !this.trayDigiExpanded; })
 
+                if (this.trayDigiExpanded) {
                   Row() {
                     Text(I18n.t('ctx.tray.colName')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(90)
                     Text(I18n.t('ctx.tray.colValue')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).layoutWeight(1)
@@ -674,6 +694,7 @@ struct ContextSettingsPage {
                         .fontSize(12).width(18)
                     }.width('100%').padding({ top: 2, bottom: 2 })
                   }, (key: string, idx: number) => 'dig_' + key + '_' + idx.toString())
+                }
               }
             }
             .width('100%')

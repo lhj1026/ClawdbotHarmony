@@ -8,11 +8,11 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.58.11';
+export const APP_VERSION: string = '2.58.12';
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    version: '2.58.11',
+    version: '2.58.12',
     date: '2026-02-28',
     features: [
       '情景智能v2: 分层规则系统(Tier 0/1/2), 删除不准确的GPS围栏规则',
@@ -42,6 +42,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       '修复: 跳过热点/公共WiFi的地点发现(iPhone热点、CMCC等)',
       '修复: DataTray中文翻译补全(活动时长/睡眠中/传感器层级/屏幕状态/蓝牙分类等6个key)',
       '修复: scanWifi检测到WiFi变化时触发onWifiConnected/onWifiDisconnected (之前是死代码)',
+      '数据托盘可折叠: 4个分类(人/手机/环境/数字)点击标题即可展开收起, 默认只展开"人"',
     ],
     fixes: [
       '数据分类优化: GPS速度归环境, 心率归人, 屏幕/姿态归手机',
@@ -596,4 +597,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.58.11';
+export const LATEST_VERSION: string = '2.58.12';
