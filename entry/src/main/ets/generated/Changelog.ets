@@ -12,6 +12,23 @@ export const APP_VERSION: string = '2.58.0';
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '2.58.0',
+    date: '2026-02-28',
+    features: [
+      '情景智能v2: 分层规则系统(Tier 0/1/2), 删除不准确的GPS围栏规则',
+      'Tier 0零配置规则: 时间+电量+充电状态, 100%准确',
+      'Tier 1 WiFi感知规则: 基于WiFi SSID判断位置(到家/到公司/离家/下班)',
+      'Tier 2传感器规则: 车载蓝牙+计步+久坐检测',
+      '规则版本迁移机制: 升级时自动重载默认规则',
+      '规则管理页面重写: 场景模板+高级模式, 8个预置场景一键添加',
+      '15个context key带emoji标签和预设值, 3种动作类型(建议/通知/警告)',
+      '数据托盘UI分类: 按人/手机/环境三类展示, 颜色编码',
+    ],
+    fixes: [
+
+    ],
+  },
+  {
     version: '2.56.0',
     date: '2026-02-27',
     features: [
@@ -558,4 +575,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.56.0';
+export const LATEST_VERSION: string = '2.58.0';
