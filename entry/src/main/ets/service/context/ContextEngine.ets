@@ -79,6 +79,8 @@ function nativeSetLimits(json: string): void {
 export interface ContextRule {
   id: string;
   name: string;
+  tier?: number;      // 0=zero-config, 1=WiFi-aware, 2=BT+step+screen
+  category?: string;  // person, phone, environment
   conditions: ContextCondition[];
   excludeConditions?: ContextCondition[][];  // Array of condition groups; if ANY group fully matches, rule is excluded
   action: ContextAction;
@@ -181,32 +183,24 @@ export class ContextEngineService {
       this.appContext = context as common.UIAbilityContext;
       this.prefsStore = await preferences.getPreferences(context, 'context_engine');
 
+      // Rules version: bump this when default_rules.json changes significantly
+      const RULES_VERSION = 2; // v2: tiered rules (Tier 0/1/2), removed GPS geofence
+      let storedVersion: number = Number(await this.prefsStore.get('rules_version', 0));
+
       // Load all rules from unified storage
       let allRulesJson: string = String(await this.prefsStore.get('all_rules', ''));
 
-      if (allRulesJson.length === 0 || allRulesJson === '[]') {
-        // First run or migration: load from default_rules.json rawfile
-        log.info(TAG, 'No persisted rules found, loading from default_rules.json');
+      if (allRulesJson.length === 0 || allRulesJson === '[]' || storedVersion < RULES_VERSION) {
+        if (storedVersion < RULES_VERSION && storedVersion > 0) {
+          log.info(TAG, `Rules version upgrade: v${storedVersion} → v${RULES_VERSION}, reloading defaults`);
+        } else {
+          log.info(TAG, 'No persisted rules found, loading from default_rules.json');
+        }
         allRulesJson = await this.loadDefaultRulesFromFile();
 
-        // Also migrate any legacy user rules
-        let legacyUserJson: string = String(await this.prefsStore.get('user_rules', '[]'));
-        try {
-          let legacyUsers: ContextRule[] = JSON.parse(legacyUserJson) as ContextRule[];
-          if (legacyUsers.length > 0) {
-            let allRules: ContextRule[] = JSON.parse(allRulesJson) as ContextRule[];
-            for (let i = 0; i < legacyUsers.length; i++) {
-              allRules.push(legacyUsers[i]);
-            }
-            allRulesJson = JSON.stringify(allRules);
-            log.info(TAG, `Migrated ${legacyUsers.length} legacy user rules`);
-          }
-        } catch (e) {
-          log.warn(TAG, `Legacy user_rules migration failed: ${(e as Error).message}`);
-        }
-
-        // Persist the initial ruleset
+        // Persist the new ruleset and version
         await this.prefsStore.put('all_rules', allRulesJson);
+        await this.prefsStore.put('rules_version', RULES_VERSION);
         await this.prefsStore.flush();
       }
 
