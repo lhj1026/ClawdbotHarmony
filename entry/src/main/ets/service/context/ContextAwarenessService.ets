@@ -1029,6 +1029,10 @@ export class ContextAwarenessService {
     try {
       wifiManager.getLinkedInfo().then((info) => {
         let ssid = info.ssid ?? '';
+        // 去引号（部分系统返回 "SSID" 带引号）
+        if (ssid.startsWith('"') && ssid.endsWith('"')) {
+          ssid = ssid.substring(1, ssid.length - 1);
+        }
         this.tray.put('wifiSsid', ssid, 0.9, 'wifi');
         
         if (ssid !== this.lastWifiSsid) {
@@ -1142,12 +1146,21 @@ export class ContextAwarenessService {
     try {
       let info = await wifiManager.getLinkedInfo();
       let ssid = info.ssid ?? '';
+      if (ssid.startsWith('"') && ssid.endsWith('"')) {
+        ssid = ssid.substring(1, ssid.length - 1);
+      }
       this.tray.put('wifiSsid', ssid, 0.9, 'wifi');
       if (ssid !== this.lastWifiSsid) {
-        this.log.info(TAG, `WiFi: ${this.lastWifiSsid} -> ${ssid}`);
+        let oldSsid = this.lastWifiSsid;
+        this.log.info(TAG, `WiFi(async): ${oldSsid} -> ${ssid}`);
+        this.lastWifiSsid = ssid;
         this.engine.pushEvent('wifi_change');
+        if (ssid.length > 0 && oldSsid !== ssid) {
+          this.onWifiConnected();
+        } else if (ssid.length === 0 && oldSsid.length > 0) {
+          this.onWifiDisconnected();
+        }
       }
-      this.lastWifiSsid = ssid;
     } catch {
       // ignore
     }
