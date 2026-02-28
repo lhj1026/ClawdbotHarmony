@@ -191,10 +191,43 @@ struct RuleManagementPage {
     },
   ];
 
+  // Dynamic templates from user's geofences
+  @State dynamicTemplates: SceneTemplate[] = [];
+
   aboutToAppear(): void {
     this.log.info(TAG, 'Page opened');
     this.refreshRules();
     this.refreshPlaces();
+    this.buildDynamicTemplates();
+  }
+
+  private buildDynamicTemplates(): void {
+    try {
+      let geofences = ContextAwarenessService.getInstance().getAllGeofences();
+      let dynTpls: SceneTemplate[] = [];
+      for (let i = 0; i < geofences.length; i++) {
+        let gf = geofences[i];
+        let catIcon = gf.category === 'home' ? '🏠' : gf.category === 'work' ? '🏢' :
+          gf.category === 'gym' ? '💪' : gf.category === 'restaurant' ? '🍜' :
+          gf.category === 'shopping' ? '🛒' : gf.category === 'transit' ? '🚇' : '📍';
+        dynTpls.push({
+          id: 'tpl_gf_' + gf.id,
+          icon: catIcon,
+          name: '到达' + gf.name,
+          description: '连上' + gf.name + '的WiFi时触发',
+          category: 'environment',
+          tier: 1,
+          conditions: [
+            { key: 'wifiGeofence', op: 'eq', value: gf.category }
+          ],
+          defaultAction: { id: '', type: 'suggestion', payload: '到' + gf.name + '了！' + catIcon },
+          defaultCooldownMs: 28800000
+        });
+      }
+      this.dynamicTemplates = dynTpls;
+    } catch (err) {
+      this.dynamicTemplates = [];
+    }
   }
 
   private async refreshPlaces(): Promise<void> {
@@ -554,6 +587,17 @@ struct RuleManagementPage {
           ForEach(this.templates.filter((t: SceneTemplate) => t.category === 'environment'), (tpl: SceneTemplate) => {
             this.TemplateCard(tpl)
           }, (tpl: SceneTemplate) => tpl.id)
+
+          // Dynamic templates from geofences
+          if (this.dynamicTemplates.length > 0) {
+            Text('📍 我的地点')
+              .fontSize(14).fontWeight(FontWeight.Bold).fontColor('#1A1A1A').padding({ top: 12, bottom: 4 }).width('100%')
+            Text('基于已设置的围栏自动生成')
+              .fontSize(11).fontColor('#999999').width('100%').margin({ bottom: 4 })
+            ForEach(this.dynamicTemplates, (tpl: SceneTemplate) => {
+              this.TemplateCard(tpl)
+            }, (tpl: SceneTemplate) => tpl.id)
+          }
         }
         .padding({ left: 16, right: 16, top: 8, bottom: 40 })
       }
@@ -884,20 +928,32 @@ struct RuleManagementPage {
           ForEach(this.discoveredPlaces, (place: DiscoveredPlace) => {
             Column({ space: 8 }) {
               Row() {
-                Text(place.confirmAt > 0 ? '✅' : '📍')
+                Text(place.confirmAt > 0 ? '✅' :
+                  place.category === 'home' ? '🏠' : place.category === 'work' ? '🏢' :
+                  place.category === 'restaurant' ? '🍜' : place.category === 'shopping' ? '🛒' :
+                  place.category === 'transit' ? '🚇' : place.category === 'gym' ? '💪' : '📍')
                   .fontSize(20).margin({ right: 8 })
                 Column({ space: 2 }) {
                   Text(place.name)
                     .fontSize(15).fontWeight(FontWeight.Medium).fontColor('#1A1A1A')
                     .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-                  Text(`${place.latitude.toFixed(4)}, ${place.longitude.toFixed(4)}`)
-                    .fontSize(11).fontColor('#999999')
+                  Row({ space: 4 }) {
+                    Text(`${place.latitude.toFixed(4)}, ${place.longitude.toFixed(4)}`)
+                      .fontSize(11).fontColor('#999999')
+                    if (place.category !== 'custom') {
+                      Text(place.category)
+                        .fontSize(10).fontColor(Color.White)
+                        .backgroundColor('#007AFF')
+                        .padding({ left: 5, right: 5, top: 1, bottom: 1 })
+                        .borderRadius(4)
+                    }
+                  }
                 }
                 .layoutWeight(1)
                 .alignItems(HorizontalAlign.Start)
 
                 Column({ space: 2 }) {
-                  Text(place.totalVisits.toString() + '次')
+                  Text(place.totalVisits.toString() + '次访问')
                     .fontSize(12).fontColor('#007AFF')
                   Text(this.formatTime(place.discoveredAt))
                     .fontSize(10).fontColor('#BBBBBB')

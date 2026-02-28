@@ -8,11 +8,11 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.58.6';
+export const APP_VERSION: string = '2.58.7';
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    version: '2.58.6',
+    version: '2.58.7',
     date: '2026-02-28',
     features: [
       '情景智能v2: 分层规则系统(Tier 0/1/2), 删除不准确的GPS围栏规则',
@@ -28,6 +28,10 @@ export const CHANGELOG: ChangelogEntry[] = [
       '自动地点发现: WiFi连接时自动记录GPS坐标+SSID, 重复访问自动合并',
       '历史地点Tab: 查看自动发现的地点, 支持设为围栏(选名称+分类)或删除',
       '地点提升为围栏: 自动继承学习的WiFi信号, 启用WiFi位置识别规则',
+      'Geocoding智能命名: WiFi连接时自动逆地理编码推断地点名称和分类(机场→transit, 餐厅→restaurant等)',
+      '围栏动态模板: 已设置的围栏自动出现在场景模板的"📍 我的地点"分组',
+      '地点卡片优化: 显示分类图标/标签, 访问次数统计',
+      'OSM类型映射: airport/station→transit, cafe/restaurant→restaurant, mall→shopping等',
     ],
     fixes: [
       '数据分类优化: GPS速度归环境, 心率归人, 屏幕/姿态归手机',
@@ -582,4 +586,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.58.6';
+export const LATEST_VERSION: string = '2.58.7';

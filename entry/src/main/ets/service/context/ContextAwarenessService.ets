@@ -3177,14 +3177,42 @@ export class ContextAwarenessService {
         existing.longitude = (existing.longitude * (existing.totalVisits - 1) + lng) / existing.totalVisits;
         this.log.info(TAG, `Updated discovered place: ${existing.name}, visits=${existing.totalVisits}, wifi=${ssid}`);
       } else {
-        // 创建新地点
+        // 新地点：用 geocoding + WiFi SSID 联合推断名称和分类
+        let placeName = ssid;
+        let placeCategory: GeofenceCategory = 'custom';
+        try {
+          let geo = await GeoCodingService.getInstance().reverseGeocode(lat, lng);
+          if (geo.success) {
+            // 优先用 POI 名称（如"星巴克"、"YVR Airport"），否则用路名+区域
+            if (geo.name && geo.name.length > 0) {
+              placeName = geo.name;
+            } else if (geo.address) {
+              let parts: string[] = [];
+              if (geo.address.road) parts.push(geo.address.road);
+              if (geo.address.suburb) parts.push(geo.address.suburb);
+              placeName = parts.length > 0 ? parts.join(', ') : ssid;
+            }
+            // 用 OSM type 推断分类
+            if (geo.type && geo.type.length > 0) {
+              let mappedCat = this.mapOsmTypeToCategory(geo.type);
+              if (mappedCat.length > 0) {
+                placeCategory = mappedCat as GeofenceCategory;
+              }
+            }
+            this.log.info(TAG, `Geocoded: "${placeName}" (${geo.type ?? 'unknown'}) → ${placeCategory}`);
+          }
+        } catch (geoErr) {
+          this.log.debug(TAG, `Geocoding failed, using WiFi name: ${(geoErr as Error).message}`);
+        }
+
         let newPlace: DiscoveredPlace = {
           id: 'dp_' + now.toString(),
-          name: ssid,  // 默认用 WiFi 名称
+          name: placeName,
           latitude: lat,
           longitude: lng,
           radiusMeters: 150,
-          category: 'custom',
+          category: placeCategory,
+          metadata: ssid !== placeName ? { 'wifiSsid': ssid } : undefined,
           learnedSignals: {
             wifiSSIDs: [ssid],
             bluetoothDevices: [],
@@ -3201,13 +3229,32 @@ export class ContextAwarenessService {
           totalStayMs: 0
         };
         places.push(newPlace);
-        this.log.info(TAG, `Discovered new place: ${ssid} at ${lat.toFixed(4)},${lng.toFixed(4)}`);
+        this.log.info(TAG, `Discovered new place: "${placeName}" (wifi=${ssid}) at ${lat.toFixed(4)},${lng.toFixed(4)}, category=${placeCategory}`);
       }
 
       await this.saveDiscoveredPlaces(places);
     } catch (err) {
       this.log.warn(TAG, `recordDiscoveredWifiPlace error: ${(err as Error).message}`);
     }
+  }
+
+  /** OSM type → GeofenceCategory */
+  private mapOsmTypeToCategory(osmType: string): string {
+    let map: Record<string, string> = {
+      'cafe': 'restaurant', 'restaurant': 'restaurant', 'fast_food': 'restaurant',
+      'pub': 'restaurant', 'bar': 'restaurant', 'food_court': 'restaurant',
+      'supermarket': 'shopping', 'convenience': 'shopping', 'mall': 'shopping',
+      'department_store': 'shopping', 'clothes': 'shopping',
+      'fuel': 'transit', 'parking': 'transit', 'bus_station': 'transit',
+      'train_station': 'transit', 'subway_station': 'transit', 'airport': 'transit',
+      'aerodrome': 'transit', 'station': 'transit', 'halt': 'transit',
+      'office': 'work', 'bank': 'work', 'company': 'work',
+      'gym': 'gym', 'fitness_centre': 'gym', 'sports_centre': 'gym',
+      'residential': 'home', 'apartments': 'home', 'house': 'home',
+      'hospital': 'custom', 'school': 'custom', 'university': 'custom',
+      'library': 'custom', 'park': 'custom', 'cinema': 'custom',
+    };
+    return map[osmType] ?? '';
   }
 
   /** 获取所有已发现的地点 */
