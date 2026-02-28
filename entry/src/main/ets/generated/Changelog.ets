@@ -8,11 +8,11 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.58.4';
+export const APP_VERSION: string = '2.58.5';
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    version: '2.58.4',
+    version: '2.58.5',
     date: '2026-02-28',
     features: [
       '情景智能v2: 分层规则系统(Tier 0/1/2), 删除不准确的GPS围栏规则',
@@ -29,6 +29,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     fixes: [
       '数据分类优化: GPS速度归环境, 心率归人, 屏幕/姿态归手机',
       'media插件从物理世界移到数字世界',
+      '场景模板已添加的规则显示"✅ 已添加"并禁止重复添加',
     ],
   },
   {
@@ -578,4 +579,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.58.4';
+export const LATEST_VERSION: string = '2.58.5';

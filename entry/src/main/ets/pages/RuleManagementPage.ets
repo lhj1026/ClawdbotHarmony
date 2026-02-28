@@ -228,6 +228,13 @@ struct RuleManagementPage {
   }
 
   // ===== Template mode =====
+  private isTemplateAdded(tpl: SceneTemplate): boolean {
+    for (let i = 0; i < this.rules.length; i++) {
+      if (this.rules[i].name === tpl.name) return true;
+    }
+    return false;
+  }
+
   private selectTemplate(tpl: SceneTemplate): void {
     this.selectedTemplate = tpl;
     this.templatePayload = tpl.defaultAction.payload;
@@ -258,8 +265,8 @@ struct RuleManagementPage {
     }
     this.selectedTemplate = null;
     this.templatePayload = '';
-    this.activeTab = 0;
     this.refreshRules();
+    // Stay on template tab so user sees "✅ 已添加"
   }
 
   // ===== Advanced mode =====
@@ -534,15 +541,25 @@ struct RuleManagementPage {
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
 
-      Text('添加 →')
-        .fontSize(13)
-        .fontColor('#007AFF')
+      if (this.isTemplateAdded(tpl)) {
+        Text('✅ 已添加')
+          .fontSize(13)
+          .fontColor('#34C759')
+      } else {
+        Text('添加 →')
+          .fontSize(13)
+          .fontColor('#007AFF')
+      }
     }
     .width('100%')
     .padding(14)
     .backgroundColor(Color.White)
     .borderRadius(12)
-    .onClick(() => { this.selectTemplate(tpl); })
+    .onClick(() => {
+      if (!this.isTemplateAdded(tpl)) {
+        this.selectTemplate(tpl);
+      }
+    })
   }
 
   private getKeyLabel(key: string): string {
