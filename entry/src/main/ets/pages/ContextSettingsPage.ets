@@ -56,20 +56,37 @@ struct ContextSettingsPage {
   @State exploreFpCount: number = 0;
   // 已学习的位置信号
   @State learnedSignals: LearnedSignalsSummary[] = [];
-  // 数据托盘 — 物理世界
-  @State physKeys: string[] = [];
-  @State physLabels: string[] = [];
-  @State physValues: string[] = [];
-  @State physAges: string[] = [];
-  @State physIndicators: string[] = [];
-  @State physQualities: string[] = [];
-  // 数据托盘 — 数字世界
-  @State digiKeys: string[] = [];
-  @State digiLabels: string[] = [];
-  @State digiValues: string[] = [];
-  @State digiAges: string[] = [];
-  @State digiIndicators: string[] = [];
-  @State digiQualities: string[] = [];
+  // 数据托盘 — 🧑 人（用户状态）
+  @State personKeys: string[] = [];
+  @State personLabels: string[] = [];
+  @State personValues: string[] = [];
+  @State personAges: string[] = [];
+  @State personIndicators: string[] = [];
+  @State personQualities: string[] = [];
+  // 数据托盘 — 📱 手机（设备状态）
+  @State phoneKeys: string[] = [];
+  @State phoneLabels: string[] = [];
+  @State phoneValues: string[] = [];
+  @State phoneAges: string[] = [];
+  @State phoneIndicators: string[] = [];
+  @State phoneQualities: string[] = [];
+  // 数据托盘 — 🌍 环境（场景位置）
+  @State envKeys: string[] = [];
+  @State envLabels: string[] = [];
+  @State envValues: string[] = [];
+  @State envAges: string[] = [];
+  @State envIndicators: string[] = [];
+  @State envQualities: string[] = [];
+
+  // Key → category mapping
+  private static PERSON_KEYS: string[] = [
+    'motionState', 'isSleeping', 'activityDuration', 'step_count_today',
+    'bt_in_vehicle', 'btFingerprint', 'gpsSpeed'
+  ];
+  private static PHONE_KEYS: string[] = [
+    'batteryLevel', 'isCharging', 'networkType', 'sensorTier'
+  ];
+  // Everything else (time, wifi, geofence, etc.) → environment
   private trayTimer: number = -1;
   // 当前状态概览
   @State statusTime: string = '';
@@ -387,7 +404,7 @@ struct ContextSettingsPage {
             // ===== 数据托盘 =====
             Column() {
               Row() {
-                Text('\u{1F4E1} ' + I18n.t('ctx.tray.title') + ' (' + (this.physKeys.length + this.digiKeys.length).toString() + ')')
+                Text('\u{1F4E1} ' + I18n.t('ctx.tray.title') + ' (' + (this.personKeys.length + this.phoneKeys.length + this.envKeys.length).toString() + ')')
                   .fontSize(16)
                   .fontWeight(FontWeight.Bold)
                   .fontColor('#1A1A1A')
@@ -406,7 +423,7 @@ struct ContextSettingsPage {
                 .width('100%')
                 .margin({ bottom: 8 })
 
-              if (this.physKeys.length === 0 && this.digiKeys.length === 0) {
+              if (this.personKeys.length === 0 && this.phoneKeys.length === 0 && this.envKeys.length === 0) {
                 Text(I18n.t('ctx.tray.empty'))
                   .fontSize(13)
                   .fontColor('#999999')
@@ -414,76 +431,109 @@ struct ContextSettingsPage {
                   .textAlign(TextAlign.Center)
                   .padding(16)
               } else {
-                // ── 物理世界 ──
-                Text('\u{1F30D} ' + I18n.t('ctx.tray.physical') + ' (' + this.physKeys.length.toString() + ')')
-                  .fontSize(13)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor('#2E7D32')
-                  .width('100%')
-                  .margin({ bottom: 4, top: 4 })
+                // ── 🧑 人（用户状态） ──
+                if (this.personKeys.length > 0) {
+                  Text('🧑 人（用户状态）(' + this.personKeys.length.toString() + ')')
+                    .fontSize(13)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor('#6A1B9A')
+                    .width('100%')
+                    .margin({ bottom: 4, top: 4 })
 
-                Row() {
-                  Text(I18n.t('ctx.tray.colName')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(90)
-                  Text(I18n.t('ctx.tray.colValue')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).layoutWeight(1)
-                  Text(I18n.t('ctx.tray.colAge')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(40)
-                  Text(I18n.t('ctx.tray.colQuality')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(32)
-                  Text('').width(18)
-                }.width('100%').padding({ bottom: 2 })
-
-                ForEach(this.physKeys, (key: string, idx: number) => {
                   Row() {
-                    Text(idx < this.physLabels.length ? this.physLabels[idx] : key)
-                      .fontSize(12).fontColor('#1A1A1A').width(90).maxLines(1)
-                      .textOverflow({ overflow: TextOverflow.Ellipsis })
-                    Text(idx < this.physValues.length ? this.physValues[idx] : '')
-                      .fontSize(12).fontColor('#666666').layoutWeight(1).maxLines(1)
-                      .textOverflow({ overflow: TextOverflow.Ellipsis })
-                    Text(idx < this.physAges.length ? this.physAges[idx] : '')
-                      .fontSize(11).fontColor('#999999').width(40)
-                    Text(idx < this.physQualities.length ? this.physQualities[idx] : '')
-                      .fontSize(11).fontColor('#999999').width(32)
-                    Text(idx < this.physIndicators.length ? this.physIndicators[idx] : '')
-                      .fontSize(12).width(18)
-                  }.width('100%').padding({ top: 2, bottom: 2 })
-                }, (key: string, idx: number) => 'p_' + key + '_' + idx.toString())
-
-                // ── 数字世界 ──
-                Text('\u{1F4F1} ' + I18n.t('ctx.tray.digital') + ' (' + this.digiKeys.length.toString() + ')')
-                  .fontSize(13)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor('#1565C0')
-                  .width('100%')
-                  .margin({ bottom: 4, top: 12 })
-
-                if (this.digiKeys.length === 0) {
-                  Text(I18n.t('ctx.tray.noPlugin'))
-                    .fontSize(12).fontColor('#999999').width('100%')
-                    .textAlign(TextAlign.Center).padding(8)
-                } else {
-                  Row() {
-                    Text('名称').fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(90)
-                    Text('数值').fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).layoutWeight(1)
-                    Text('龄').fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(40)
-                    Text('质').fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(32)
+                    Text(I18n.t('ctx.tray.colName')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(90)
+                    Text(I18n.t('ctx.tray.colValue')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).layoutWeight(1)
+                    Text(I18n.t('ctx.tray.colAge')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(40)
+                    Text(I18n.t('ctx.tray.colQuality')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(32)
                     Text('').width(18)
                   }.width('100%').padding({ bottom: 2 })
 
-                  ForEach(this.digiKeys, (key: string, idx: number) => {
+                  ForEach(this.personKeys, (key: string, idx: number) => {
                     Row() {
-                      Text(idx < this.digiLabels.length ? this.digiLabels[idx] : key)
+                      Text(idx < this.personLabels.length ? this.personLabels[idx] : key)
                         .fontSize(12).fontColor('#1A1A1A').width(90).maxLines(1)
                         .textOverflow({ overflow: TextOverflow.Ellipsis })
-                      Text(idx < this.digiValues.length ? this.digiValues[idx] : '')
+                      Text(idx < this.personValues.length ? this.personValues[idx] : '')
                         .fontSize(12).fontColor('#666666').layoutWeight(1).maxLines(1)
                         .textOverflow({ overflow: TextOverflow.Ellipsis })
-                      Text(idx < this.digiAges.length ? this.digiAges[idx] : '')
+                      Text(idx < this.personAges.length ? this.personAges[idx] : '')
                         .fontSize(11).fontColor('#999999').width(40)
-                      Text(idx < this.digiQualities.length ? this.digiQualities[idx] : '')
+                      Text(idx < this.personQualities.length ? this.personQualities[idx] : '')
                         .fontSize(11).fontColor('#999999').width(32)
-                      Text(idx < this.digiIndicators.length ? this.digiIndicators[idx] : '')
+                      Text(idx < this.personIndicators.length ? this.personIndicators[idx] : '')
                         .fontSize(12).width(18)
                     }.width('100%').padding({ top: 2, bottom: 2 })
-                  }, (key: string, idx: number) => 'd_' + key + '_' + idx.toString())
+                  }, (key: string, idx: number) => 'per_' + key + '_' + idx.toString())
+                }
+
+                // ── 📱 手机（设备状态） ──
+                if (this.phoneKeys.length > 0) {
+                  Text('📱 手机（设备状态）(' + this.phoneKeys.length.toString() + ')')
+                    .fontSize(13)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor('#1565C0')
+                    .width('100%')
+                    .margin({ bottom: 4, top: 12 })
+
+                  Row() {
+                    Text(I18n.t('ctx.tray.colName')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(90)
+                    Text(I18n.t('ctx.tray.colValue')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).layoutWeight(1)
+                    Text(I18n.t('ctx.tray.colAge')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(40)
+                    Text(I18n.t('ctx.tray.colQuality')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(32)
+                    Text('').width(18)
+                  }.width('100%').padding({ bottom: 2 })
+
+                  ForEach(this.phoneKeys, (key: string, idx: number) => {
+                    Row() {
+                      Text(idx < this.phoneLabels.length ? this.phoneLabels[idx] : key)
+                        .fontSize(12).fontColor('#1A1A1A').width(90).maxLines(1)
+                        .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      Text(idx < this.phoneValues.length ? this.phoneValues[idx] : '')
+                        .fontSize(12).fontColor('#666666').layoutWeight(1).maxLines(1)
+                        .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      Text(idx < this.phoneAges.length ? this.phoneAges[idx] : '')
+                        .fontSize(11).fontColor('#999999').width(40)
+                      Text(idx < this.phoneQualities.length ? this.phoneQualities[idx] : '')
+                        .fontSize(11).fontColor('#999999').width(32)
+                      Text(idx < this.phoneIndicators.length ? this.phoneIndicators[idx] : '')
+                        .fontSize(12).width(18)
+                    }.width('100%').padding({ top: 2, bottom: 2 })
+                  }, (key: string, idx: number) => 'pho_' + key + '_' + idx.toString())
+                }
+
+                // ── 🌍 环境（场景位置） ──
+                if (this.envKeys.length > 0) {
+                  Text('🌍 环境（场景位置）(' + this.envKeys.length.toString() + ')')
+                    .fontSize(13)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor('#2E7D32')
+                    .width('100%')
+                    .margin({ bottom: 4, top: 12 })
+
+                  Row() {
+                    Text(I18n.t('ctx.tray.colName')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(90)
+                    Text(I18n.t('ctx.tray.colValue')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).layoutWeight(1)
+                    Text(I18n.t('ctx.tray.colAge')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(40)
+                    Text(I18n.t('ctx.tray.colQuality')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(32)
+                    Text('').width(18)
+                  }.width('100%').padding({ bottom: 2 })
+
+                  ForEach(this.envKeys, (key: string, idx: number) => {
+                    Row() {
+                      Text(idx < this.envLabels.length ? this.envLabels[idx] : key)
+                        .fontSize(12).fontColor('#1A1A1A').width(90).maxLines(1)
+                        .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      Text(idx < this.envValues.length ? this.envValues[idx] : '')
+                        .fontSize(12).fontColor('#666666').layoutWeight(1).maxLines(1)
+                        .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      Text(idx < this.envAges.length ? this.envAges[idx] : '')
+                        .fontSize(11).fontColor('#999999').width(40)
+                      Text(idx < this.envQualities.length ? this.envQualities[idx] : '')
+                        .fontSize(11).fontColor('#999999').width(32)
+                      Text(idx < this.envIndicators.length ? this.envIndicators[idx] : '')
+                        .fontSize(12).width(18)
+                    }.width('100%').padding({ top: 2, bottom: 2 })
+                  }, (key: string, idx: number) => 'env_' + key + '_' + idx.toString())
                 }
               }
             }
@@ -1161,13 +1211,20 @@ struct ContextSettingsPage {
     return LocationDiscoveryService.getInstance();
   }
 
+  private getKeyCategory(key: string): string {
+    if (ContextSettingsPage.PERSON_KEYS.indexOf(key) >= 0) return 'person';
+    if (ContextSettingsPage.PHONE_KEYS.indexOf(key) >= 0) return 'phone';
+    return 'environment';
+  }
+
   private refreshTrayStatus(): void {
     try {
       let cas = ContextAwarenessService.getInstance();
       let statuses: TrayStatus[] = cas.getTrayStatus();
 
-      let pK: string[] = [], pL: string[] = [], pV: string[] = [], pA: string[] = [], pI: string[] = [], pQ: string[] = [];
-      let dK: string[] = [], dL: string[] = [], dV: string[] = [], dA: string[] = [], dI: string[] = [], dQ: string[] = [];
+      let perK: string[] = [], perL: string[] = [], perV: string[] = [], perA: string[] = [], perI: string[] = [], perQ: string[] = [];
+      let phoK: string[] = [], phoL: string[] = [], phoV: string[] = [], phoA: string[] = [], phoI: string[] = [], phoQ: string[] = [];
+      let envK: string[] = [], envL: string[] = [], envV: string[] = [], envA: string[] = [], envI: string[] = [], envQ: string[] = [];
 
       for (let i = 0; i < statuses.length; i++) {
         let s: TrayStatus = statuses[i];
@@ -1177,22 +1234,28 @@ struct ContextSettingsPage {
         let ind = s.fresh ? '\u{1F7E2}' : (s.effectiveQuality > 0 ? '\u{1F7E1}' : '\u{1F534}');
         let qual = (s.effectiveQuality * 100).toFixed(0) + '%';
 
-        if (s.source === 'digital') {
-          dK.push(s.key); dL.push(label); dV.push(val); dA.push(age); dI.push(ind); dQ.push(qual);
+        let cat = this.getKeyCategory(s.key);
+        if (cat === 'person') {
+          perK.push(s.key); perL.push(label); perV.push(val); perA.push(age); perI.push(ind); perQ.push(qual);
+        } else if (cat === 'phone') {
+          phoK.push(s.key); phoL.push(label); phoV.push(val); phoA.push(age); phoI.push(ind); phoQ.push(qual);
         } else {
-          pK.push(s.key); pL.push(label); pV.push(val); pA.push(age); pI.push(ind); pQ.push(qual);
+          envK.push(s.key); envL.push(label); envV.push(val); envA.push(age); envI.push(ind); envQ.push(qual);
         }
       }
-      this.physKeys = pK; this.physLabels = pL; this.physValues = pV;
-      this.physAges = pA; this.physIndicators = pI; this.physQualities = pQ;
-      this.digiKeys = dK; this.digiLabels = dL; this.digiValues = dV;
-      this.digiAges = dA; this.digiIndicators = dI; this.digiQualities = dQ;
+      this.personKeys = perK; this.personLabels = perL; this.personValues = perV;
+      this.personAges = perA; this.personIndicators = perI; this.personQualities = perQ;
+      this.phoneKeys = phoK; this.phoneLabels = phoL; this.phoneValues = phoV;
+      this.phoneAges = phoA; this.phoneIndicators = phoI; this.phoneQualities = phoQ;
+      this.envKeys = envK; this.envLabels = envL; this.envValues = envV;
+      this.envAges = envA; this.envIndicators = envI; this.envQualities = envQ;
 
       // 更新顶部状态概览
       this.updateStatusHeader(statuses);
     } catch (err) {
-      this.physKeys = [];
-      this.digiKeys = [];
+      this.personKeys = [];
+      this.phoneKeys = [];
+      this.envKeys = [];
     }
   }
 
