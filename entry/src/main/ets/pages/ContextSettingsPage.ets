@@ -79,14 +79,17 @@ struct ContextSettingsPage {
   @State envQualities: string[] = [];
 
   // Key → category mapping
+  // 🧑 人: 运动、健康、睡眠、行为习惯
   private static PERSON_KEYS: string[] = [
     'motionState', 'isSleeping', 'activityDuration', 'step_count_today',
-    'bt_in_vehicle', 'btFingerprint', 'gpsSpeed'
+    'heart_rate_status', 'wearing_state'
   ];
+  // 📱 手机: 电量、充电、网络、传感器能力
   private static PHONE_KEYS: string[] = [
     'batteryLevel', 'isCharging', 'networkType', 'sensorTier'
   ];
-  // Everything else (time, wifi, geofence, etc.) → environment
+  // 🌍 环境: 时间、位置(WiFi/GPS/围栏)、蓝牙设备、速度
+  // Everything else → environment (includes time, wifi, geofence, GPS, BT, etc.)
   private trayTimer: number = -1;
   // 当前状态概览
   @State statusTime: string = '';
