@@ -3029,45 +3029,46 @@ export struct SettingsPage {
 
   private installHap(hapPath: string): void {
     try {
-      console.info(`[SettingsPage] Attempting bm install: ${hapPath}`);
-      let result: BmExecResult = execCmd(`bm install -r -p ${hapPath}`) as BmExecResult;
-      console.info(`[SettingsPage] bm install result: exitCode=${result.exitCode} stdout=${result.stdout} stderr=${result.stderr}`);
+      console.info(`[SettingsPage] Attempting install via system installer: ${hapPath}`);
+      let ctx = getContext(this) as common.UIAbilityContext;
 
-      if (result.exitCode === 0 && result.stdout.indexOf('successfully') >= 0) {
-        AlertDialog.show({
-          title: '更新成功',
-          message: '新版本已安装，请手动重启应用。',
-          confirm: { value: '确定', action: () => {} }
+      // Try to open HAP with system package installer via Want
+      let installWant: Want = {
+        action: 'ohos.want.action.INSTALL_BUNDLE',
+        uri: `file://${hapPath}`,
+        type: 'application/hap',
+        parameters: {
+          'hapFilePaths': [hapPath],
+          'installParam': JSON.stringify({ installFlag: 0, isKeepData: true })
+        }
+      };
+
+      ctx.startAbility(installWant).then(() => {
+        console.info('[SettingsPage] System installer launched');
+      }).catch((err: Error) => {
+        console.warn(`[SettingsPage] startAbility for install failed: ${err.message}, trying implicit`);
+        // Fallback: try implicit intent to open HAP file
+        let openWant: Want = {
+          action: 'ohos.want.action.viewData',
+          uri: `file://${hapPath}`,
+          type: 'application/hap'
+        };
+        ctx.startAbility(openWant).catch((err2: Error) => {
+          console.error(`[SettingsPage] All install methods failed: ${err2.message}`);
+          AlertDialog.show({
+            title: '需要手动安装',
+            message: `自动安装暂不支持\n\nHAP已下载到:\n${hapPath}\n\n请连接电脑执行:\nhdc file recv ${hapPath} ./ClawdBot.hap\nhdc install -r ./ClawdBot.hap`,
+            confirm: { value: '确定', action: () => {} }
+          });
         });
-        return;
-      }
-
-      // bm install failed - try copying to /data/local/tmp/ first
-      let tmpPath = `/data/local/tmp/ClawdBot-${this.latestVersion}.hap`;
-      execCmd(`cp ${hapPath} ${tmpPath}`);
-      let result2: BmExecResult = execCmd(`bm install -r -p ${tmpPath}`) as BmExecResult;
-      console.info(`[SettingsPage] bm install (tmp) result: exitCode=${result2.exitCode} stdout=${result2.stdout}`);
-
-      if (result2.exitCode === 0 && result2.stdout.indexOf('successfully') >= 0) {
-        execCmd(`rm ${tmpPath}`);
-        AlertDialog.show({
-          title: '更新成功',
-          message: '新版本已安装，请手动重启应用。',
-          confirm: { value: '确定', action: () => {} }
-        });
-        return;
-      }
-
-      // Both failed - show manual instructions
-      let errMsg: string = result2.stderr.length > 0 ? result2.stderr : result.stderr;
-      AlertDialog.show({
-        title: '需要手动安装',
-        message: `自动安装失败: ${errMsg.substring(0, 100)}\n\nHAP已下载，请连接电脑执行:\nhdc shell bm install -r -p ${hapPath}`,
-        confirm: { value: '确定', action: () => {} }
       });
     } catch (e) {
       console.error(`[SettingsPage] Install error: ${(e as Error).message ?? ''}`);
-      promptAction.showToast({ message: `安装出错: ${(e as Error).message ?? ''}`, duration: 2000 });
+      AlertDialog.show({
+        title: '需要手动安装',
+        message: `HAP已下载到:\n${hapPath}\n\n请连接电脑执行:\nhdc file recv ${hapPath} ./ClawdBot.hap\nhdc install -r ./ClawdBot.hap`,
+        confirm: { value: '确定', action: () => {} }
+      });
     }
   }
 
