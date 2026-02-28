@@ -258,5 +258,133 @@
     "priority": 2.0,
     "cooldownMs": 28800000,
     "enabled": true
+  },
+  {
+    "id": "t1_home_lunch",
+    "name": "在家午餐提醒",
+    "tier": 1,
+    "category": "person",
+    "conditions": [
+      { "key": "wifiGeofence", "op": "eq", "value": "home" },
+      { "key": "hour", "op": "gte", "value": "11" },
+      { "key": "hour", "op": "lte", "value": "13" }
+    ],
+    "action": {
+      "id": "suggest_lunch",
+      "type": "suggestion",
+      "payload": "午饭时间了 🍚 今天想吃什么？来个营养均衡的搭配吧"
+    },
+    "priority": 1.5,
+    "cooldownMs": 28800000,
+    "enabled": true
+  },
+  {
+    "id": "t1_home_dinner",
+    "name": "在家晚餐提醒",
+    "tier": 1,
+    "category": "person",
+    "conditions": [
+      { "key": "wifiGeofence", "op": "eq", "value": "home" },
+      { "key": "hour", "op": "gte", "value": "17" },
+      { "key": "hour", "op": "lte", "value": "19" }
+    ],
+    "action": {
+      "id": "suggest_dinner",
+      "type": "suggestion",
+      "payload": "晚餐时间 🍽️ 简单做还是叫外卖？"
+    },
+    "priority": 1.5,
+    "cooldownMs": 28800000,
+    "enabled": true
+  },
+  {
+    "id": "t1_home_evening_relax",
+    "name": "在家晚间放松",
+    "tier": 1,
+    "category": "person",
+    "conditions": [
+      { "key": "wifiGeofence", "op": "eq", "value": "home" },
+      { "key": "hour", "op": "gte", "value": "20" },
+      { "key": "hour", "op": "lte", "value": "22" },
+      { "key": "motionState", "op": "eq", "value": "still" }
+    ],
+    "action": {
+      "id": "suggest_relax",
+      "type": "suggestion",
+      "payload": "在家放松时间 🎵 听音乐？看个片？或者看看明天的安排？"
+    },
+    "priority": 1.0,
+    "cooldownMs": 28800000,
+    "enabled": true
+  },
+  {
+    "id": "t1_work_meeting_soon",
+    "name": "会议即将开始",
+    "tier": 1,
+    "category": "environment",
+    "conditions": [
+      { "key": "wifiGeofence", "op": "eq", "value": "work" },
+      { "key": "cal_hasUpcoming", "op": "eq", "value": "true" },
+      { "key": "cal_nextMinutes", "op": "lte", "value": "15" }
+    ],
+    "action": {
+      "id": "meeting_reminder",
+      "type": "notification",
+      "payload": "📅 会议即将开始！准备好了吗？"
+    },
+    "priority": 3.0,
+    "cooldownMs": 3600000,
+    "enabled": true
+  },
+  {
+    "id": "t1_arrive_transit",
+    "name": "到达交通枢纽",
+    "tier": 1,
+    "category": "environment",
+    "conditions": [
+      { "key": "wifiGeofence", "op": "eq", "value": "transit" }
+    ],
+    "action": {
+      "id": "transit_info",
+      "type": "notification",
+      "payload": "🚇 到达交通枢纽！查看您的行程信息？"
+    },
+    "priority": 2.5,
+    "cooldownMs": 14400000,
+    "enabled": true
+  },
+  {
+    "id": "t1_arrive_restaurant",
+    "name": "到达餐厅",
+    "tier": 1,
+    "category": "environment",
+    "conditions": [
+      { "key": "wifiGeofence", "op": "eq", "value": "restaurant" }
+    ],
+    "action": {
+      "id": "restaurant_info",
+      "type": "suggestion",
+      "payload": "🍜 到餐厅了！上次你在这点了什么来着？"
+    },
+    "priority": 1.5,
+    "cooldownMs": 14400000,
+    "enabled": true
+  },
+  {
+    "id": "t1_arrive_gym",
+    "name": "到达健身房",
+    "tier": 1,
+    "category": "environment",
+    "conditions": [
+      { "key": "wifiGeofence", "op": "eq", "value": "gym" }
+    ],
+    "action": {
+      "id": "gym_start",
+      "type": "suggestion",
+      "payload": "💪 到健身房了！今天练什么？"
+    },
+    "priority": 1.5,
+    "cooldownMs": 14400000,
+    "enabled": true
   }
 ]

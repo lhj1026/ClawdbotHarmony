@@ -184,7 +184,7 @@ export class ContextEngineService {
       this.prefsStore = await preferences.getPreferences(context, 'context_engine');
 
       // Rules version: bump this when default_rules.json changes significantly
-      const RULES_VERSION = 2; // v2: tiered rules (Tier 0/1/2), removed GPS geofence
+      const RULES_VERSION = 3; // v3: geofence scene rules (home meal/relax, transit, restaurant, gym)
       let storedVersion: number = Number(await this.prefsStore.get('rules_version', 0));
 
       // Load all rules from unified storage

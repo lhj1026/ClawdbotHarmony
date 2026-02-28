@@ -189,6 +189,85 @@ struct RuleManagementPage {
       defaultAction: { id: '', type: 'suggestion', payload: '通勤中 🚗 听点新闻？' },
       defaultCooldownMs: 28800000
     },
+    {
+      id: 'tpl_home_lunch', icon: '🍚', name: '在家午餐',
+      description: '中午在家时推荐营养午餐',
+      category: 'person', tier: 1,
+      conditions: [
+        { key: 'wifiGeofence', op: 'eq', value: 'home' },
+        { key: 'hour', op: 'gte', value: '11' },
+        { key: 'hour', op: 'lte', value: '13' }
+      ],
+      defaultAction: { id: '', type: 'suggestion', payload: '午饭时间了 🍚 今天想吃什么？' },
+      defaultCooldownMs: 28800000
+    },
+    {
+      id: 'tpl_home_dinner', icon: '🍽️', name: '在家晚餐',
+      description: '傍晚在家时提醒晚餐',
+      category: 'person', tier: 1,
+      conditions: [
+        { key: 'wifiGeofence', op: 'eq', value: 'home' },
+        { key: 'hour', op: 'gte', value: '17' },
+        { key: 'hour', op: 'lte', value: '19' }
+      ],
+      defaultAction: { id: '', type: 'suggestion', payload: '晚餐时间 🍽️ 简单做还是叫外卖？' },
+      defaultCooldownMs: 28800000
+    },
+    {
+      id: 'tpl_home_relax', icon: '🎵', name: '晚间放松',
+      description: '晚上在家安静时推荐放松',
+      category: 'person', tier: 1,
+      conditions: [
+        { key: 'wifiGeofence', op: 'eq', value: 'home' },
+        { key: 'hour', op: 'gte', value: '20' },
+        { key: 'hour', op: 'lte', value: '22' },
+        { key: 'motionState', op: 'eq', value: 'still' }
+      ],
+      defaultAction: { id: '', type: 'suggestion', payload: '放松时间 🎵 听音乐？看个片？' },
+      defaultCooldownMs: 28800000
+    },
+    {
+      id: 'tpl_transit_arrive', icon: '🚇', name: '到达交通枢纽',
+      description: '到机场/高铁站时查看行程',
+      category: 'environment', tier: 1,
+      conditions: [
+        { key: 'wifiGeofence', op: 'eq', value: 'transit' }
+      ],
+      defaultAction: { id: '', type: 'notification', payload: '🚇 到达交通枢纽！查看行程信息？' },
+      defaultCooldownMs: 14400000
+    },
+    {
+      id: 'tpl_restaurant_arrive', icon: '🍜', name: '到达餐厅',
+      description: '到餐厅时的提醒',
+      category: 'environment', tier: 1,
+      conditions: [
+        { key: 'wifiGeofence', op: 'eq', value: 'restaurant' }
+      ],
+      defaultAction: { id: '', type: 'suggestion', payload: '🍜 到餐厅了！' },
+      defaultCooldownMs: 14400000
+    },
+    {
+      id: 'tpl_gym_arrive', icon: '💪', name: '到达健身房',
+      description: '到健身房开始训练',
+      category: 'environment', tier: 1,
+      conditions: [
+        { key: 'wifiGeofence', op: 'eq', value: 'gym' }
+      ],
+      defaultAction: { id: '', type: 'suggestion', payload: '💪 到健身房了！今天练什么？' },
+      defaultCooldownMs: 14400000
+    },
+    {
+      id: 'tpl_work_meeting', icon: '📅', name: '会议即将开始',
+      description: '在公司且有会议快开始',
+      category: 'environment', tier: 1,
+      conditions: [
+        { key: 'wifiGeofence', op: 'eq', value: 'work' },
+        { key: 'cal_hasUpcoming', op: 'eq', value: 'true' },
+        { key: 'cal_nextMinutes', op: 'lte', value: '15' }
+      ],
+      defaultAction: { id: '', type: 'notification', payload: '📅 会议即将开始！准备好了吗？' },
+      defaultCooldownMs: 3600000
+    },
   ];
 
   // Dynamic templates from user's geofences
