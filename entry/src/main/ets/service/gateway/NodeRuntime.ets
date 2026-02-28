@@ -60,9 +60,10 @@ import { GeofenceSuggestion } from '../context/LocationDiscoveryService';
 import { Geofence, GeofenceCategory, LearnedPlaceSignals, UserAction } from '../context/ContextModels';
 import { FederatedSync } from '../context/FederatedSync';
 import { PushCapability } from './PushCapability';
+import { TravelInfoService, FlightInfo, TrainInfo } from '../context/TravelInfoService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.58.17';
+const APP_VERSION = '2.59.0';
 
 interface PendingStateRec {
   ruleId: string;
@@ -1098,9 +1099,10 @@ export class NodeRuntime {
       // WebView sends {"action":{"name":"...","context":{...}}} — unwrap
       let action = (parsed['action'] ?? parsed) as Record<string, Object>;
       let name = action['name'] as string;
-      if (name !== 'context_feedback' && name !== 'view_snapshot' && 
+      if (name !== 'context_feedback' && name !== 'view_snapshot' &&
           name !== 'new_place_save' && name !== 'new_place_rename' && name !== 'new_place_ignore' && name !== 'new_place_edit' && name !== 'new_place_update' &&
-          name !== 'place_confirm') return;
+          name !== 'place_confirm' &&
+          name !== 'travel_confirm' && name !== 'travel_dismiss') return;
 
       let ctx = action['context'] as Record<string, string>;
       if (!ctx) return;
@@ -1356,6 +1358,32 @@ export class NodeRuntime {
             this.log.warn(TAG, `Place confirm error: ${err.message}`);
           });
         }
+      } else if (name === 'travel_confirm') {
+        // User confirmed they want to see travel info card
+        let travelType = ctx['type'] ?? 'flight';
+        let travelSvc = TravelInfoService.getInstance();
+        if (travelType === 'flight') {
+          travelSvc.getTodayFlights().then((flights: FlightInfo[]) => {
+            if (flights.length > 0) {
+              let card = this.buildBoardingPassA2UI(flights[0]);
+              this.dispatchA2UI('push', card);
+            }
+          }).catch((err: Error) => {
+            this.log.warn(TAG, `travel_confirm flight error: ${err.message}`);
+          });
+        } else if (travelType === 'train') {
+          travelSvc.getTodayTrains().then((trains: TrainInfo[]) => {
+            if (trains.length > 0) {
+              let card = this.buildTrainTicketA2UI(trains[0]);
+              this.dispatchA2UI('push', card);
+            }
+          }).catch((err: Error) => {
+            this.log.warn(TAG, `travel_confirm train error: ${err.message}`);
+          });
+        }
+      } else if (name === 'travel_dismiss') {
+        // User dismissed the travel state card — no further action needed
+        this.log.info(TAG, `Travel card dismissed: type=${ctx['type'] ?? ''} id=${ctx['id'] ?? ''}`);
       }
     } catch (err) {
       this.log.warn(TAG, `handleA2UIAction error: ${(err as Error).message}`);
@@ -3560,6 +3588,22 @@ export class NodeRuntime {
   }
 
   /**
+   * Build boarding pass A2UI card for a flight.
+   * Delegates to TravelInfoService for consistent formatting.
+   */
+  private buildBoardingPassA2UI(flight: FlightInfo): string {
+    return TravelInfoService.getInstance().buildBoardingPassA2UI(flight);
+  }
+
+  /**
+   * Build train ticket A2UI card for a train.
+   * Delegates to TravelInfoService for consistent formatting.
+   */
+  private buildTrainTicketA2UI(train: TrainInfo): string {
+    return TravelInfoService.getInstance().buildTrainTicketA2UI(train);
+  }
+
+  /**
    * Build A2UI JSONL for a context recommendation card using simplified format.
    * Shows: rule name, recommendation, confidence, and feedback buttons.
    */
@@ -3706,12 +3750,38 @@ export class NodeRuntime {
       lines.push(`🏃 ${motionMap[motion] ?? motion}`);
     }
 
-    // 位置
-    let geofence = d['geofence'] ?? '';
+    // 位置 (从 tray 获取围栏信息)
+    let tray = cas.getDataTray();
+    let geofenceSlot = tray ? tray.get('geofence') : undefined;
+    let geofence = geofenceSlot?.value ?? d['geofence'] ?? '';
     if (geofence.length > 0) {
-      lines.push(`📍 ${geofence}`);
+      // 尝试获取围栏名称
+      let gfName = geofence;
+      try {
+        let allGf = cas.getAllGeofences();
+        for (let i = 0; i < allGf.length; i++) {
+          if (allGf[i].id === geofence) {
+            gfName = `${allGf[i].name} (${allGf[i].category})`;
+            break;
+          }
+        }
+      } catch { /* use raw id */ }
+      lines.push(`📍 围栏: ${gfName}`);
+    }
+    let wifiGeofenceSlot = tray ? tray.get('wifiGeofence') : undefined;
+    let wifiGeofence = wifiGeofenceSlot?.value ?? '';
+    if (wifiGeofence.length > 0) {
+      let catLabels: Record<string, string> = {
+        'home': '🏠 家', 'work': '🏢 公司', 'restaurant': '🍽️ 餐饮',
+        'shopping': '🛒 购物', 'gym': '💪 健身', 'transit': '🚉 交通'
+      };
+      lines.push(`📡 WiFi围栏: ${catLabels[wifiGeofence] ?? wifiGeofence}`);
     }
     let wifiSsid = d['wifi_ssid'] ?? d['ssid'] ?? '';
+    if (wifiSsid.length === 0) {
+      let wifiSlot = tray ? tray.get('wifiSsid') : undefined;
+      wifiSsid = wifiSlot?.value ?? '';
+    }
     if (wifiSsid.length > 0) {
       lines.push(`📶 WiFi: ${wifiSsid}`);
     }

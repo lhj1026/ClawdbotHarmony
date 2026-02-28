@@ -804,6 +804,41 @@ function buildZh(): Map<string, string> {
   m.set('rule.name.rule_vehicle_bt_detected', '车载蓝牙驾驶模式');
   m.set('rule.name.rule_exercise_heart_rate', '运动心率追踪');
 
+  // Travel info card (boarding pass / train ticket)
+  m.set('travel.boarding.title', '登机牌');
+  m.set('travel.train.title', '火车票');
+  m.set('travel.terminal', '航站楼');
+  m.set('travel.gate', '登机口');
+  m.set('travel.seat', '座位');
+  m.set('travel.coach', '车厢');
+  m.set('travel.checkGate', '检票口');
+  m.set('travel.dismiss', '知道了');
+  m.set('travel.departed', '已出发');
+  m.set('travel.countdown.min', '{0} 分钟后出发');
+  m.set('travel.countdown.hour', '{0} 小时后出发');
+  m.set('travel.countdown.hourMin', '{0} 小时 {1} 分钟后出发');
+  m.set('travel.flight.status.scheduled', '准时');
+  m.set('travel.flight.status.boarding', '登机中');
+  m.set('travel.flight.status.departed', '已起飞');
+  m.set('travel.flight.status.arrived', '已到达');
+  m.set('travel.flight.status.delayed', '延误');
+  m.set('travel.flight.status.cancelled', '取消');
+  m.set('travel.train.status.scheduled', '准时');
+  m.set('travel.train.status.boarding', '检票中');
+  m.set('travel.train.status.departed', '已出发');
+  m.set('travel.train.status.arrived', '已到达');
+  m.set('travel.train.status.delayed', '延误');
+  m.set('travel.train.type.G', '(高铁)');
+  m.set('travel.train.type.C', '(城际)');
+  m.set('travel.train.type.D', '(动车)');
+  m.set('travel.train.type.Z', '(直达)');
+  m.set('travel.train.type.T', '(特快)');
+  m.set('travel.train.type.S', '(市域)');
+  m.set('travel.train.type.P', '(普快)');
+  m.set('travel.train.type.K', '(快速)');
+  m.set('travel.train.type.L', '(临时)');
+  m.set('travel.train.type.Y', '(旅游)');
+
   return m;
 }
 
@@ -1602,6 +1637,41 @@ function buildEn(): Map<string, string> {
 
   m.set('rule.name.rule_vehicle_bt_detected', 'Vehicle BT Driving Mode');
   m.set('rule.name.rule_exercise_heart_rate', 'Exercise Heart Rate Tracking');
+
+  // Travel info card (boarding pass / train ticket)
+  m.set('travel.boarding.title', 'Boarding Pass');
+  m.set('travel.train.title', 'Train Ticket');
+  m.set('travel.terminal', 'Terminal');
+  m.set('travel.gate', 'Gate');
+  m.set('travel.seat', 'Seat');
+  m.set('travel.coach', 'Coach');
+  m.set('travel.checkGate', 'Check Gate');
+  m.set('travel.dismiss', 'Got it');
+  m.set('travel.departed', 'Departed');
+  m.set('travel.countdown.min', 'Departs in {0} min');
+  m.set('travel.countdown.hour', 'Departs in {0}h');
+  m.set('travel.countdown.hourMin', 'Departs in {0}h {1}m');
+  m.set('travel.flight.status.scheduled', 'On Time');
+  m.set('travel.flight.status.boarding', 'Boarding');
+  m.set('travel.flight.status.departed', 'Departed');
+  m.set('travel.flight.status.arrived', 'Arrived');
+  m.set('travel.flight.status.delayed', 'Delayed');
+  m.set('travel.flight.status.cancelled', 'Cancelled');
+  m.set('travel.train.status.scheduled', 'On Time');
+  m.set('travel.train.status.boarding', 'Boarding');
+  m.set('travel.train.status.departed', 'Departed');
+  m.set('travel.train.status.arrived', 'Arrived');
+  m.set('travel.train.status.delayed', 'Delayed');
+  m.set('travel.train.type.G', '(High-Speed)');
+  m.set('travel.train.type.C', '(Intercity)');
+  m.set('travel.train.type.D', '(EMU)');
+  m.set('travel.train.type.Z', '(Direct)');
+  m.set('travel.train.type.T', '(Express)');
+  m.set('travel.train.type.S', '(City Rail)');
+  m.set('travel.train.type.P', '(Semi-Fast)');
+  m.set('travel.train.type.K', '(Fast)');
+  m.set('travel.train.type.L', '(Temporary)');
+  m.set('travel.train.type.Y', '(Tourist)');
 
   return m;
 }

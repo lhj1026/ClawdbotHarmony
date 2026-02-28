@@ -45,6 +45,7 @@ import { LLMFallbackService } from './LLMFallbackService';
 import { TrainingDataSync } from './TrainingDataSync';
 import { FederatedSync } from './FederatedSync';
 import { GeoCodingService } from './GeoCodingService';
+import { TravelInfoService } from './TravelInfoService';
 
 const TAG = 'ContextService';
 
@@ -260,6 +261,8 @@ export class ContextAwarenessService {
   private tray: SensorDataTray = DataTray;
   // 训练数据同步
   private trainingSync: TrainingDataSync = TrainingDataSync.getInstance();
+  // 旅行信息服务 (航班/火车票)
+  private travelInfoSvc: TravelInfoService = TravelInfoService.getInstance();
 
   // ==================== 分层传感器 (Sensor Tier System) ====================
   private currentTier: SensorTier = 1;
@@ -349,6 +352,11 @@ export class ContextAwarenessService {
 
     // 初始化联邦学习同步 (与训练同步共用端点)
     await FederatedSync.getInstance().init(context, 'http://192.168.1.76:18790');
+
+    // 初始化旅行信息服务 (航班/火车票日历解析)
+    this.travelInfoSvc.init(context).catch((err: Error) => {
+      this.log.warn(TAG, `TravelInfoService init failed: ${err.message}`);
+    });
 
     // 监听地理围栏事件
     this.geofenceMgr.addListener((event) => this.onGeofenceEvent(event));
@@ -502,6 +510,11 @@ export class ContextAwarenessService {
             this.engine.pushEvent('wifi_arrive_' + gf.category);
             matched = true;
 
+            // 交通场景: 检查旅行信息并显示登机牌/火车票
+            if (gf.category === 'transit') {
+              this.triggerTravelInfoCards(gf.name);
+            }
+
             // 立即触发评估
             this.refreshTray().then(() => {
               let snapshot = this.augmentSnapshot(this.tray.getSnapshot());
@@ -530,6 +543,83 @@ export class ContextAwarenessService {
     }
   }
   
+  /**
+   * 触发交通场景旅行信息卡片: 检查今天的航班/火车，显示状态确认卡片
+   */
+  private triggerTravelInfoCards(placeName: string): void {
+    this.travelInfoSvc.getTodayFlights().then((flights) => {
+      this.travelInfoSvc.getTodayTrains().then((trains) => {
+        let hasFlights = flights.length > 0;
+        let hasTrains = trains.length > 0;
+
+        if (!hasFlights && !hasTrains) {
+          this.log.info(TAG, `Transit geofence "${placeName}": no travel info found in next 24h`);
+          return;
+        }
+
+        this.log.info(TAG, `Transit geofence "${placeName}": ${flights.length} flights, ${trains.length} trains`);
+        let ts = Date.now().toString();
+
+        // Show flight state card
+        if (hasFlights) {
+          let f = flights[0];
+          let dTime = new Date(f.departureTime);
+          let hh = dTime.getHours().toString().padStart(2, '0');
+          let mm = dTime.getMinutes().toString().padStart(2, '0');
+          let safeFlight = f.flightNumber.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          let safeDep = f.departure.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          let safeArr = f.arrival.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          let safePlace = placeName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+
+          let summary = safeFlight;
+          if (safeDep.length > 0 && safeArr.length > 0) {
+            summary = `${safeFlight} ${safeDep}→${safeArr}`;
+          }
+
+          let card = `{"type":"form","id":"transit_flight_state_${ts}","children":[` +
+            `{"type":"text","text":"✈️ 检测到你在 ${safePlace}","style":{"fontSize":18,"fontWeight":"bold"}},` +
+            `{"type":"text","text":"发现今日航班: ${summary} ${hh}:${mm} 出发","style":{"fontSize":15}},` +
+            `{"type":"button","text":"📋 查看登机牌","variant":"primary","action":{"event":{"name":"travel_confirm","context":{"type":"flight"}}}},` +
+            `{"type":"button","text":"🙈 不用了","variant":"borderless","action":{"event":{"name":"travel_dismiss","context":{"type":"flight","id":"${safeFlight}"}}}}` +
+            `]}`;
+          this.dispatchA2UI('push', card);
+        }
+
+        // Show train state card (delayed 1.5s to avoid simultaneous cards)
+        if (hasTrains) {
+          let tr = trains[0];
+          let dTime = new Date(tr.departureTime);
+          let hh = dTime.getHours().toString().padStart(2, '0');
+          let mm = dTime.getMinutes().toString().padStart(2, '0');
+          let safeTrain = tr.trainNumber.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          let safeDep = tr.departure.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          let safeArr = tr.arrival.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          let safePlace = placeName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+
+          let summary = safeTrain;
+          if (safeDep.length > 0 && safeArr.length > 0) {
+            summary = `${safeTrain} ${safeDep}→${safeArr}`;
+          }
+
+          let tsDelay = (Date.now() + 1500).toString();
+          let card = `{"type":"form","id":"transit_train_state_${tsDelay}","children":[` +
+            `{"type":"text","text":"🚄 检测到你在 ${safePlace}","style":{"fontSize":18,"fontWeight":"bold"}},` +
+            `{"type":"text","text":"发现今日车次: ${summary} ${hh}:${mm} 出发","style":{"fontSize":15}},` +
+            `{"type":"button","text":"🎫 查看车票","variant":"primary","action":{"event":{"name":"travel_confirm","context":{"type":"train"}}}},` +
+            `{"type":"button","text":"🙈 不用了","variant":"borderless","action":{"event":{"name":"travel_dismiss","context":{"type":"train","id":"${safeTrain}"}}}}` +
+            `]}`;
+          setTimeout(() => {
+            this.dispatchA2UI('push', card);
+          }, 1500);
+        }
+      }).catch((err: Error) => {
+        this.log.warn(TAG, `triggerTravelInfoCards trains error: ${err.message}`);
+      });
+    }).catch((err: Error) => {
+      this.log.warn(TAG, `triggerTravelInfoCards flights error: ${err.message}`);
+    });
+  }
+
   /**
    * 增强 snapshot：补充 WiFi 围栏丢失标记（基于 wifiLostTimestamps 的 TTL）
    */
@@ -1728,93 +1818,10 @@ export class ContextAwarenessService {
       return;
     }
 
-    // C++ engine returned no matches — try LLM fallback
-    this.log.info(TAG, `[Explore-DBG] entering LLM fallback path (exploreTriggered=${exploreTriggered}, engineMatches=${results.length})`);
-    // 传递 BT 设备信息给 LLM prompt
-    let btSlotForLlm = this.tray.get('bt_device_names');
-    this.llmFallback.btDeviceNames = (btSlotForLlm && btSlotForLlm.value) ? btSlotForLlm.value : '';
-    let llmResult = await this.llmFallback.analyzeContext(snapshot);
-    this.log.info(TAG, `[Explore-DBG] LLM result: ${llmResult ? `title="${llmResult.title}", priority=${llmResult.priority}` : 'null (NO_ACTION or error)'}`);
-    if (!llmResult) return;
-
-    let llmCooldown = this.isOnCooldown('llm_fallback');
-    this.log.info(TAG, `[Explore-DBG] llm_fallback cooldown=${llmCooldown}`);
-    if (llmCooldown) return;
-
-    // Don't repeat same LLM recommendation if user didn't give feedback on the last one
-    let llmPayload = `${llmResult.title}: ${llmResult.content}`;
-    if (this.lastLlmPayload.length > 0 && this.lastLlmPayload === llmPayload && !this.lastLlmFeedbackReceived) {
-      // Same recommendation, no feedback yet — just update timestamp, don't show again
-      this.log.info(TAG, `Skipping repeat LLM recommendation: "${llmResult.title}"`);
-      this.setOnCooldown('llm_fallback');
-      return;
-    }
-
-    let now = new Date();
-    let dateStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
-    let llmRuleId = `user_llm_${dateStr}`;
-    this.lastLlmPayload = llmPayload;
-    this.lastLlmRuleId = llmRuleId;
-    this.lastLlmFeedbackReceived = false;
-
-    let rec: ContextRecommendation = {
-      rule: {
-        id: llmRuleId,
-        trigger: {} as RuleTrigger,
-        action: { type: 'show_info', target: 'llm_suggestion' } as UserAction,
-        confidence: llmResult.priority === 'high' ? 0.9 : llmResult.priority === 'medium' ? 0.7 : 0.5,
-        triggerCount: 0,
-        acceptCount: 0,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        enabled: true
-      },
-      action: { type: 'show_info', target: 'llm_suggestion' } as UserAction,
-      reason: llmPayload
-    };
-    // 探索模式：附带当前状态摘要
-    if (exploreTriggered) {
-      rec.exploreStateInfo = this.buildExploreStateInfo(snapshot);
-    }
-
-    this.notifyRecommendation(rec);
-    this.setOnCooldown('llm_fallback');
-
-    // === Store LLM result as PENDING rule (only promoted on positive feedback) ===
-    try {
-      let conditions: EngineCondition[] = this.snapshotToConditions(snapshot);
-      let cooldownMs = llmResult.priority === 'high' ? 3600000 : llmResult.priority === 'medium' ? 14400000 : 28800000;
-
-      let newRule: EngineRule = {
-        id: llmRuleId,
-        name: llmResult.title,
-        conditions: conditions,
-        action: { id: `llm_action_${dateStr}`, type: 'suggestion', payload: llmPayload } as EngineAction,
-        priority: llmResult.priority === 'high' ? 2.0 : llmResult.priority === 'medium' ? 1.5 : 1.0,
-        cooldownMs: cooldownMs,
-        enabled: true,
-      };
-
-      let engine = ContextEngineService.getInstance();
-      engine.addPendingRule(newRule);
-      this.log.info(TAG, `LLM rule stored as pending: id=${llmRuleId}, name=${llmResult.title}`);
-    } catch (err) {
-      this.log.warn(TAG, `Failed to store pending LLM rule: ${(err as Error).message}`);
-    }
-
-    // Log to BehaviorLogger with source='llm'
-    let ctx = this.currentContext ?? await this.getCurrentContext();
-    let llmAction: UserAction = { type: 'show_info', target: 'llm_suggestion', params: { 'source': 'llm', 'title': llmResult.title } };
-    await this.behaviorLog.logBehavior(ctx, llmAction);
-    this.log.info(TAG, `LLM fallback delivered (pending): ${llmResult.title}`);
+    // C++ engine returned no matches — LLM fallback disabled
+    this.log.info(TAG, `No engine matches, LLM fallback disabled. exploreTriggered=${exploreTriggered}`);
   }
 
-  /**
-   * 检测新地点：GPS/WiFi 稳定 5 分钟且不在任何已知围栏内
-   *
-   * 漂移容忍策略：WiFi 不变时放宽到 300m（室内 GPS 漂移大），
-   * WiFi 变化了才严格按 100m 判断是否真正移动了。
-   */
   private async checkForNewPlace(lat: number, lng: number, wifiSsid: string): Promise<void> {
     // 检查是否在任何已知围栏内
     let allGeofences = this.geofenceMgr.getAllGeofences();
@@ -1838,17 +1845,14 @@ export class ContextAwarenessService {
     // 检查位置是否稳定
     if (this.newPlaceDetectionStart > 0) {
       let drift = this.haversineDistance(lat, lng, this.newPlaceLastLat, this.newPlaceLastLng);
-      // WiFi 不变时容忍更大漂移（室内 GPS 漂移常 >100m）
       let sameWifi = wifiSsid.length > 0 && wifiSsid === this.newPlaceWifiSsid;
       let maxDrift = sameWifi ? 300 : ContextAwarenessService.NEW_PLACE_MAX_DRIFT_M;
       if (drift > maxDrift) {
         this.log.info(TAG, `New place reset: drifted ${Math.round(drift)}m > ${maxDrift}m (sameWifi=${sameWifi})`);
         this.newPlaceDetectionStart = 0;
-        // Don't return — fall through to start new detection at current position
       }
     }
 
-    // 开始新检测或继续现有检测
     if (this.newPlaceDetectionStart === 0) {
       this.newPlaceDetectionStart = now;
       this.newPlaceLastLat = lat;
@@ -1858,21 +1862,16 @@ export class ContextAwarenessService {
       return;
     }
 
-    // 检查是否稳定足够时间
     let stableMs = now - this.newPlaceDetectionStart;
     if (stableMs < ContextAwarenessService.NEW_PLACE_STABLE_MS) {
       this.log.info(TAG, `New place stable for ${Math.round(stableMs / 1000)}s/${ContextAwarenessService.NEW_PLACE_STABLE_MS / 1000}s wifi=${wifiSsid} tier=T${this.currentTier}`);
       return;
     }
 
-    // 稳定 5 分钟，检测到新地点！
     this.log.info(TAG, `New place detected! (${lat.toFixed(4)}, ${lng.toFixed(4)}) WiFi=${wifiSsid}`);
-    this.newPlaceDetectionStart = 0;  // 重置防止重复
+    this.newPlaceDetectionStart = 0;
 
-    // 尝试逆地理编码获取地点名
     let placeName = await this.reverseGeocode(lat, lng);
-
-    // 显示 A2UI 卡片让用户确认
     this.showNewPlaceCard(lat, lng, wifiSsid, placeName);
   }
 
@@ -3913,6 +3912,10 @@ export class ContextAwarenessService {
   /** Access digital world service for plugin status/control */
   getDigitalWorldService(): DigitalWorldService {
     return this.digitalWorld;
+  }
+
+  getDataTray(): SensorDataTray {
+    return this.tray;
   }
 
   /** Get last collected digital plugin data (merged key-value pairs) */
