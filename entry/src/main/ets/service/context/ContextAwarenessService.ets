@@ -1032,10 +1032,20 @@ export class ContextAwarenessService {
         this.tray.put('wifiSsid', ssid, 0.9, 'wifi');
         
         if (ssid !== this.lastWifiSsid) {
-          this.log.info(TAG, `WiFi: ${this.lastWifiSsid} -> ${ssid}`);
+          let oldSsid = this.lastWifiSsid;
+          this.log.info(TAG, `WiFi: ${oldSsid} -> ${ssid}`);
+          this.lastWifiSsid = ssid;
           this.engine.pushEvent('wifi_change');
+
+          // 触发连接/断开回调
+          if (ssid.length > 0 && oldSsid !== ssid) {
+            this.onWifiConnected();
+          } else if (ssid.length === 0 && oldSsid.length > 0) {
+            this.onWifiDisconnected();
+          }
+        } else {
+          this.lastWifiSsid = ssid;
         }
-        this.lastWifiSsid = ssid;
       }).catch(() => {});
     } catch {
       // ignore

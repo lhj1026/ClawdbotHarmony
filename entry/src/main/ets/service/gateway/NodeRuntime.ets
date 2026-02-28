@@ -62,7 +62,7 @@ import { FederatedSync } from '../context/FederatedSync';
 import { PushCapability } from './PushCapability';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.58.10';
+const APP_VERSION = '2.58.11';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
