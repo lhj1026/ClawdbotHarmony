@@ -458,15 +458,12 @@ export class NodeRuntime {
       }
 
       if (stateInfo.length > 0) {
-        // 源头去重：如果状态文本相同且 60 秒内，只更新缓存的推荐不重复弹卡
-        let now = Date.now();
-        if (stateInfo === this._lastStateCardText && now - this._lastStateCardTime < 60000) {
-          this.log.info(TAG, `[A2UI] Dedup: same state card within 60s, updating pending rec only`);
+        // 去重：如果已有未确认的状态卡片，不弹新的，只更新缓存的推荐
+        if (this._pendingStateRec !== null) {
+          this.log.info(TAG, `[A2UI] Dedup: pending state card exists, updating rec only (${ruleId})`);
           this._pendingStateRec = { ruleId, ruleName, reason: rec.reason, confidence };
           return;
         }
-        this._lastStateCardText = stateInfo;
-        this._lastStateCardTime = now;
 
         // 缓存推荐，等用户确认状态正确后再显示
         this._pendingStateRec = { ruleId, ruleName, reason: rec.reason, confidence };
@@ -3779,57 +3776,53 @@ export class NodeRuntime {
     let wifiGeofenceCat = (wifiGfSlot && wifiGfSlot.value) ? wifiGfSlot.value : '';
 
     // 查找匹配围栏的名称
-    if (wifiGeofenceCat.length > 0 || wifiSsid.length > 0) {
-      let gfName = '';
-      let gfCat = wifiGeofenceCat;
-      try {
-        let allGf = cas.getAllGeofences();
-        for (let i = 0; i < allGf.length; i++) {
-          let gf = allGf[i];
-          // 通过 WiFi SSID 匹配
-          if (wifiSsid.length > 0 && gf.learnedSignals?.wifiSSIDs) {
-            for (let j = 0; j < gf.learnedSignals.wifiSSIDs.length; j++) {
-              if (gf.learnedSignals.wifiSSIDs[j] === wifiSsid) {
-                gfName = gf.name;
-                gfCat = gf.category ?? gfCat;
-                break;
-              }
-            }
-            if (gfName.length > 0) break;
-          }
+    let catLabels: Record<string, string> = {
+      'home': '🏠', 'work': '🏢', 'restaurant': '🍽️',
+      'shopping': '🛒', 'gym': '💪', 'transit': '🚉', 'hotel': '🏨'
+    };
+    let gfName = '';
+    let gfCat = wifiGeofenceCat;
+
+    // 从 tray 获取 geofence ID
+    let gfSlot = tray.get('geofence');
+    let geofenceId = (gfSlot && gfSlot.value) ? gfSlot.value : '';
+
+    try {
+      let allGf = cas.getAllGeofences();
+      for (let i = 0; i < allGf.length; i++) {
+        let gf = allGf[i];
+        // 方法1: 通过 geofence ID 匹配
+        if (geofenceId.length > 0 && gf.id === geofenceId) {
+          gfName = gf.name;
+          gfCat = gf.category ?? gfCat;
+          break;
         }
-      } catch { /* ignore */ }
-
-      let catLabels: Record<string, string> = {
-        'home': '🏠', 'work': '🏢', 'restaurant': '🍽️',
-        'shopping': '🛒', 'gym': '💪', 'transit': '🚉', 'hotel': '🏨'
-      };
-      let emoji = catLabels[gfCat] ?? '📍';
-      if (gfName.length > 0) {
-        lines.push(`${emoji} ${gfName}`);
-      } else if (gfCat.length > 0) {
-        lines.push(`${emoji} ${gfCat}`);
-      }
-      locationShown = true;
-    }
-
-    // GPS 围栏 (如果 WiFi 没匹配到)
-    if (!locationShown) {
-      let gfSlot = tray.get('geofence');
-      let geofenceId = (gfSlot && gfSlot.value) ? gfSlot.value : '';
-      if (geofenceId.length > 0) {
-        let gfName = geofenceId;
-        try {
-          let allGf = cas.getAllGeofences();
-          for (let i = 0; i < allGf.length; i++) {
-            if (allGf[i].id === geofenceId) {
-              gfName = `${allGf[i].name} (${allGf[i].category})`;
+        // 方法2: 通过 WiFi SSID 匹配
+        if (wifiSsid.length > 0 && gf.learnedSignals?.wifiSSIDs) {
+          for (let j = 0; j < gf.learnedSignals.wifiSSIDs.length; j++) {
+            if (gf.learnedSignals.wifiSSIDs[j] === wifiSsid) {
+              gfName = gf.name;
+              gfCat = gf.category ?? gfCat;
               break;
             }
           }
-        } catch { /* use raw id */ }
-        lines.push(`📍 ${gfName}`);
+          if (gfName.length > 0) break;
+        }
       }
+    } catch { /* ignore */ }
+
+    if (gfName.length > 0) {
+      let emoji = catLabels[gfCat] ?? '📍';
+      lines.push(`${emoji} ${gfName}`);
+      locationShown = true;
+    } else if (gfCat.length > 0) {
+      let emoji = catLabels[gfCat] ?? '📍';
+      lines.push(`${emoji} ${gfCat}`);
+      locationShown = true;
+    } else if (geofenceId.length > 0) {
+      // 有 ID 但没名称 — 不显示原始 ID
+      lines.push(`📍 未知地点`);
+      locationShown = true;
     }
 
     if (wifiSsid.length > 0) {
