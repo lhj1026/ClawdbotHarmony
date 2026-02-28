@@ -15,6 +15,15 @@ import { GeoCodingService } from '../service/context/GeoCodingService';
 import { GeofenceSuggestionCard } from '../components/GeofenceSuggestionCard';
 import { TrayStatus } from '../service/context/DataTray';
 
+interface CategoryData {
+  keys: string[];
+  labels: string[];
+  values: string[];
+  ages: string[];
+  indicators: string[];
+  qualities: string[];
+}
+
 @Entry
 @Component
 struct ContextSettingsPage {
@@ -483,10 +492,6 @@ struct ContextSettingsPage {
                   .width('100%')
                   .margin({ bottom: 4, top: 4 })
 
-                if (this.personKeys.length === 0) {
-                  Text('⏳ 等待传感器数据...')
-                    .fontSize(12).fontColor('#BBBBBB').width('100%').padding({ left: 4, bottom: 4 })
-                } else {
                   Row() {
                     Text(I18n.t('ctx.tray.colName')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(90)
                     Text(I18n.t('ctx.tray.colValue')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).layoutWeight(1)
@@ -511,7 +516,6 @@ struct ContextSettingsPage {
                         .fontSize(12).width(18)
                     }.width('100%').padding({ top: 2, bottom: 2 })
                   }, (key: string, idx: number) => 'per_' + key + '_' + idx.toString())
-                }
 
                 // ── 📱 手机（设备状态） ──
                 Text('📱 手机（设备状态）' + (this.phoneKeys.length > 0 ? '(' + this.phoneKeys.length.toString() + ')' : ''))
@@ -521,10 +525,6 @@ struct ContextSettingsPage {
                   .width('100%')
                   .margin({ bottom: 4, top: 12 })
 
-                if (this.phoneKeys.length === 0) {
-                  Text('⏳ 等待设备数据...')
-                    .fontSize(12).fontColor('#BBBBBB').width('100%').padding({ left: 4, bottom: 4 })
-                } else {
                   Row() {
                     Text(I18n.t('ctx.tray.colName')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(90)
                     Text(I18n.t('ctx.tray.colValue')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).layoutWeight(1)
@@ -549,7 +549,6 @@ struct ContextSettingsPage {
                         .fontSize(12).width(18)
                     }.width('100%').padding({ top: 2, bottom: 2 })
                   }, (key: string, idx: number) => 'pho_' + key + '_' + idx.toString())
-                }
 
                 // ── 🌍 环境（场景位置） ──
                 Text('🌍 环境（场景位置）' + (this.envKeys.length > 0 ? '(' + this.envKeys.length.toString() + ')' : ''))
@@ -559,10 +558,6 @@ struct ContextSettingsPage {
                   .width('100%')
                   .margin({ bottom: 4, top: 12 })
 
-                if (this.envKeys.length === 0) {
-                  Text('⏳ 等待环境数据...')
-                    .fontSize(12).fontColor('#BBBBBB').width('100%').padding({ left: 4, bottom: 4 })
-                } else {
                   Row() {
                     Text(I18n.t('ctx.tray.colName')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(90)
                     Text(I18n.t('ctx.tray.colValue')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).layoutWeight(1)
@@ -587,7 +582,6 @@ struct ContextSettingsPage {
                         .fontSize(12).width(18)
                     }.width('100%').padding({ top: 2, bottom: 2 })
                   }, (key: string, idx: number) => 'env_' + key + '_' + idx.toString())
-                }
 
                 // ── 💻 数字世界（应用/信息） ──
                 Text('💻 数字世界（应用/信息）' + (this.digiKeys.length > 0 ? '(' + this.digiKeys.length.toString() + ')' : ''))
@@ -597,10 +591,6 @@ struct ContextSettingsPage {
                   .width('100%')
                   .margin({ bottom: 4, top: 12 })
 
-                if (this.digiKeys.length === 0) {
-                  Text('⏳ 等待应用数据...')
-                    .fontSize(12).fontColor('#BBBBBB').width('100%').padding({ left: 4, bottom: 4 })
-                } else {
                   Row() {
                     Text(I18n.t('ctx.tray.colName')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(90)
                     Text(I18n.t('ctx.tray.colValue')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).layoutWeight(1)
@@ -625,7 +615,6 @@ struct ContextSettingsPage {
                         .fontSize(12).width(18)
                     }.width('100%').padding({ top: 2, bottom: 2 })
                   }, (key: string, idx: number) => 'dig_' + key + '_' + idx.toString())
-                }
               }
             }
             .width('100%')
@@ -1368,20 +1357,59 @@ struct ContextSettingsPage {
           }
         }
       }
-      // Sort within each category so related keys are grouped together
-      this.sortByKeyOrder(perK, perL, perV, perA, perI, perQ, ContextSettingsPage.PERSON_ORDER);
-      this.sortByKeyOrder(phoK, phoL, phoV, phoA, phoI, phoQ, ContextSettingsPage.PHONE_ORDER);
-      this.sortByKeyOrder(envK, envL, envV, envA, envI, envQ, ContextSettingsPage.ENV_ORDER);
-      this.sortByKeyOrder(digK, digL, digV, digA, digI, digQ, ContextSettingsPage.DIGI_ORDER);
+      // Build complete lists: all predefined keys + any extra keys from actual data
+      // Keys without data show "..." as placeholder
+      let statusMap: Map<string, number> = new Map();
+      for (let i = 0; i < statuses.length; i++) {
+        statusMap.set(statuses[i].key, i);
+      }
 
-      this.personKeys = perK; this.personLabels = perL; this.personValues = perV;
-      this.personAges = perA; this.personIndicators = perI; this.personQualities = perQ;
-      this.phoneKeys = phoK; this.phoneLabels = phoL; this.phoneValues = phoV;
-      this.phoneAges = phoA; this.phoneIndicators = phoI; this.phoneQualities = phoQ;
-      this.envKeys = envK; this.envLabels = envL; this.envValues = envV;
-      this.envAges = envA; this.envIndicators = envI; this.envQualities = envQ;
-      this.digiKeys = digK; this.digiLabels = digL; this.digiValues = digV;
-      this.digiAges = digA; this.digiIndicators = digI; this.digiQualities = digQ;
+      let fillCategory = (order: string[], actualKeys: string[], actualLabels: string[],
+        actualValues: string[], actualAges: string[], actualIndicators: string[], actualQualities: string[],
+        isDigital: boolean): CategoryData => {
+        let rK: string[] = [], rL: string[] = [], rV: string[] = [], rA: string[] = [], rI: string[] = [], rQ: string[] = [];
+        let usedKeys: Set<string> = new Set();
+
+        // First: all predefined keys in order
+        for (let i = 0; i < order.length; i++) {
+          let key = order[i];
+          usedKeys.add(key);
+          let label = this.getKeyLabel(key);
+          let aIdx = actualKeys.indexOf(key);
+          if (aIdx >= 0) {
+            rK.push(key); rL.push(label);
+            rV.push(actualValues[aIdx]); rA.push(actualAges[aIdx]);
+            rI.push(actualIndicators[aIdx]); rQ.push(actualQualities[aIdx]);
+          } else {
+            rK.push(key); rL.push(label);
+            rV.push('...'); rA.push(''); rI.push('⏳'); rQ.push('');
+          }
+        }
+        // Then: any extra keys not in predefined order
+        for (let i = 0; i < actualKeys.length; i++) {
+          if (!usedKeys.has(actualKeys[i])) {
+            rK.push(actualKeys[i]); rL.push(actualLabels[i]);
+            rV.push(actualValues[i]); rA.push(actualAges[i]);
+            rI.push(actualIndicators[i]); rQ.push(actualQualities[i]);
+          }
+        }
+        let result: CategoryData = { keys: rK, labels: rL, values: rV, ages: rA, indicators: rI, qualities: rQ };
+        return result;
+      };
+
+      let per = fillCategory(ContextSettingsPage.PERSON_ORDER, perK, perL, perV, perA, perI, perQ, false);
+      let pho = fillCategory(ContextSettingsPage.PHONE_ORDER, phoK, phoL, phoV, phoA, phoI, phoQ, false);
+      let env = fillCategory(ContextSettingsPage.ENV_ORDER, envK, envL, envV, envA, envI, envQ, false);
+      let dig = fillCategory(ContextSettingsPage.DIGI_ORDER, digK, digL, digV, digA, digI, digQ, true);
+
+      this.personKeys = per.keys; this.personLabels = per.labels; this.personValues = per.values;
+      this.personAges = per.ages; this.personIndicators = per.indicators; this.personQualities = per.qualities;
+      this.phoneKeys = pho.keys; this.phoneLabels = pho.labels; this.phoneValues = pho.values;
+      this.phoneAges = pho.ages; this.phoneIndicators = pho.indicators; this.phoneQualities = pho.qualities;
+      this.envKeys = env.keys; this.envLabels = env.labels; this.envValues = env.values;
+      this.envAges = env.ages; this.envIndicators = env.indicators; this.envQualities = env.qualities;
+      this.digiKeys = dig.keys; this.digiLabels = dig.labels; this.digiValues = dig.values;
+      this.digiAges = dig.ages; this.digiIndicators = dig.indicators; this.digiQualities = dig.qualities;
 
       // 更新顶部状态概览
       this.updateStatusHeader(statuses);
