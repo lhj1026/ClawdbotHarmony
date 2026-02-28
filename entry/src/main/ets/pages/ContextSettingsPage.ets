@@ -174,6 +174,11 @@ struct ContextSettingsPage {
         'app_isForeground': 'App Foreground', 'app_sessionMinutes': 'Session(min)', 'app_sessionsToday': 'Sessions Today',
         'app_canReadOthers': 'Can Read Apps', 'foreground_app': 'Foreground App', 'app_category': 'App Category', 'app_usage_min': 'App Usage(min)',
         'notif_enabled': 'Notif Enabled', 'notif_selfCount': 'Self Notifs', 'notif_canReadOthers': 'Can Read Notifs', 'notif_lastSentMinutes': 'Last Notif(min)',
+        'activityDuration': 'Activity Duration(s)', 'isSleeping': 'Sleeping', 'sensorTier': 'Sensor Tier',
+        'screen_on': 'Screen On', 'screen_locked': 'Screen Locked', 'user_active': 'User Active',
+        'wifiGeofence': 'WiFi Geofence', 'btFingerprint': 'BT Fingerprint',
+        'bt_in_vehicle': 'In Vehicle(BT)', 'bt_fixed_devices': 'BT Fixed Devices',
+        'bt_portable_devices': 'BT Portable', 'bt_vehicle_devices': 'BT Vehicle',
       };
       return en[key] ?? key;
     }
@@ -196,6 +201,11 @@ struct ContextSettingsPage {
       'app_isForeground': '应用在前台', 'app_sessionMinutes': '本次使用(分钟)', 'app_sessionsToday': '今日使用次数',
       'app_canReadOthers': '可读取其他应用', 'foreground_app': '前台应用', 'app_category': '应用类别', 'app_usage_min': '应用使用(分钟)',
       'notif_enabled': '通知已开启', 'notif_selfCount': '本应用通知数', 'notif_canReadOthers': '可读取其他通知', 'notif_lastSentMinutes': '上次通知(分钟)',
+      'activityDuration': '活动时长(秒)', 'isSleeping': '睡眠中', 'sensorTier': '传感器层级',
+      'screen_on': '屏幕亮', 'screen_locked': '已锁屏', 'user_active': '用户活跃',
+      'wifiGeofence': 'WiFi围栏', 'btFingerprint': '蓝牙指纹',
+      'bt_in_vehicle': '车载蓝牙', 'bt_fixed_devices': '固定蓝牙设备',
+      'bt_portable_devices': '便携蓝牙', 'bt_vehicle_devices': '车载蓝牙设备',
     };
     return zh[key] ?? key;
   }

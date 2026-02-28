@@ -3134,14 +3134,22 @@ export class ContextAwarenessService {
   /** WiFi 连接时记录位置：SSID + GPS 坐标 → discovered_places */
   private async recordDiscoveredWifiPlace(ssid: string): Promise<void> {
     if (!ssid || ssid.length === 0) return;
-    // 需要有 GPS 坐标
-    if (!this.lastLocation || this.lastLocation.latitude === 0) return;
-    // GPS 精度太差不记录
-    if (this.lastLocation.accuracy > 100) return;
 
-    let lat = this.lastLocation.latitude;
-    let lng = this.lastLocation.longitude;
+    // WiFi 分类检查：跳过热点和公共 WiFi
+    let wifiType = this.classifyWifi(ssid);
+    if (wifiType !== 'fixed') {
+      this.log.debug(TAG, `Skip non-fixed WiFi for place discovery: ${ssid} (${wifiType})`);
+      return;
+    }
+
     let now = Date.now();
+    let hasGps = this.lastLocation && this.lastLocation.latitude !== 0;
+    let gpsAccurate = hasGps && this.lastLocation!.accuracy <= 200;  // 放宽到200m（室内场景）
+    let lat = hasGps ? this.lastLocation!.latitude : 0;
+    let lng = hasGps ? this.lastLocation!.longitude : 0;
+    let discoverySource: 'gps_wifi' | 'wifi_only' = gpsAccurate ? 'gps_wifi' : 'wifi_only';
+
+    this.log.info(TAG, `recordDiscoveredWifiPlace: ssid=${ssid}, hasGps=${hasGps}, accuracy=${hasGps ? this.lastLocation!.accuracy.toFixed(0) : 'N/A'}, source=${discoverySource}`);
 
     try {
       let places = await this.getDiscoveredPlaces();
@@ -3155,11 +3163,13 @@ export class ContextAwarenessService {
           existing = p;
           break;
         }
-        // 附近 200m 且无 WiFi（GPS-only 的地点）
-        let dist = this.haversineDistance(lat, lng, p.latitude, p.longitude);
-        if (dist < 200 && (!p.learnedSignals?.wifiSSIDs || p.learnedSignals.wifiSSIDs.length === 0)) {
-          existing = p;
-          break;
+        // 附近 200m（需要双方都有GPS）
+        if (gpsAccurate && p.latitude !== 0) {
+          let dist = this.haversineDistance(lat, lng, p.latitude, p.longitude);
+          if (dist < 200 && (!p.learnedSignals?.wifiSSIDs || p.learnedSignals.wifiSSIDs.length === 0)) {
+            existing = p;
+            break;
+          }
         }
       }
 
@@ -3172,15 +3182,24 @@ export class ContextAwarenessService {
         if (!existing.learnedSignals.wifiSSIDs!.includes(ssid)) {
           existing.learnedSignals.wifiSSIDs!.push(ssid);
         }
-        // 更新 GPS（取平均）
-        existing.latitude = (existing.latitude * (existing.totalVisits - 1) + lat) / existing.totalVisits;
-        existing.longitude = (existing.longitude * (existing.totalVisits - 1) + lng) / existing.totalVisits;
+        // 更新 GPS（只在有精确GPS时）
+        if (gpsAccurate && lat !== 0) {
+          if (existing.latitude === 0) {
+            existing.latitude = lat;
+            existing.longitude = lng;
+            existing.discoverySource = 'gps_wifi';
+          } else {
+            existing.latitude = (existing.latitude * (existing.totalVisits - 1) + lat) / existing.totalVisits;
+            existing.longitude = (existing.longitude * (existing.totalVisits - 1) + lng) / existing.totalVisits;
+          }
+        }
         this.log.info(TAG, `Updated discovered place: ${existing.name}, visits=${existing.totalVisits}, wifi=${ssid}`);
       } else {
         // 新地点：用 geocoding + WiFi SSID 联合推断名称和分类
         let placeName = ssid;
         let placeCategory: GeofenceCategory = 'custom';
-        try {
+        // 只在有GPS时尝试geocoding
+        if (gpsAccurate && lat !== 0) try {
           let geo = await GeoCodingService.getInstance().reverseGeocode(lat, lng);
           if (geo.success) {
             // 优先用 POI 名称（如"星巴克"、"YVR Airport"），否则用路名+区域
@@ -3221,7 +3240,7 @@ export class ContextAwarenessService {
             lastSeen: now,
             visitCount: 1
           },
-          discoverySource: 'gps_wifi',
+          discoverySource: discoverySource,
           discoveredAt: now,
           confirmAt: 0,
           visits: [],
