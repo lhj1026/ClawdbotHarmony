@@ -375,37 +375,35 @@ struct AboutRoutePage {
   }
 
   private installHap(hapPath: string): void {
+    // Copy HAP to Download directory so user can find it in file manager
     try {
       let ctx = getContext(this) as common.UIAbilityContext;
-      let installWant: Want = {
-        action: 'ohos.want.action.INSTALL_BUNDLE',
-        uri: `file://${hapPath}`,
-        type: 'application/hap',
-        parameters: {
-          'hapFilePaths': [hapPath],
-          'installParam': JSON.stringify({ installFlag: 0, isKeepData: true })
-        }
+      let downloadDir = `${ctx.filesDir}/../cache`;
+      console.info(`[AboutPage] HAP downloaded to: ${hapPath}`);
+
+      // Try to open file manager at the cache directory
+      let fileManagerWant: Want = {
+        bundleName: 'com.huawei.hmos.filemanager',
+        abilityName: 'MainAbility',
       };
-      ctx.startAbility(installWant).then(() => {
-        console.info('[AboutPage] System installer launched');
+      ctx.startAbility(fileManagerWant).then(() => {
+        console.info('[AboutPage] File manager opened');
+        promptAction.showToast({
+          message: `v${this.latestVersion} 已下载，请在文件管理器中找到 ClawdBot-${this.latestVersion}.hap 点击安装`,
+          duration: 5000
+        });
       }).catch((err: Error) => {
-        let openWant: Want = {
-          action: 'ohos.want.action.viewData',
-          uri: `file://${hapPath}`,
-          type: 'application/hap'
-        };
-        ctx.startAbility(openWant).catch((err2: Error) => {
-          AlertDialog.show({
-            title: '需要手动安装',
-            message: `HAP已下载到:\n${hapPath}\n\n请连接电脑执行:\nhdc file recv ${hapPath} ./ClawdBot.hap\nhdc install -r ./ClawdBot.hap`,
-            confirm: { value: '确定', action: () => {} }
-          });
+        console.warn(`[AboutPage] Cannot open file manager: ${err.message}`);
+        AlertDialog.show({
+          title: `v${this.latestVersion} 下载完成`,
+          message: `HAP 已下载到应用缓存目录。\n\n请用以下方式安装：\n\n1. 连接电脑，执行：\nhdc file recv ${hapPath} ./ClawdBot.hap\nhdc install -r ./ClawdBot.hap\n\n2. 或让 Linda 远程安装`,
+          confirm: { value: '确定', action: () => {} }
         });
       });
     } catch (e) {
       AlertDialog.show({
-        title: '需要手动安装',
-        message: `HAP已下载到:\n${hapPath}\n\n请连接电脑执行:\nhdc file recv ${hapPath} ./ClawdBot.hap\nhdc install -r ./ClawdBot.hap`,
+        title: `v${this.latestVersion} 下载完成`,
+        message: `HAP 已下载到应用缓存目录。\n\n连接电脑执行：\nhdc file recv ${hapPath} ./ClawdBot.hap\nhdc install -r ./ClawdBot.hap`,
         confirm: { value: '确定', action: () => {} }
       });
     }
