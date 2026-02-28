@@ -62,7 +62,7 @@ import { FederatedSync } from '../context/FederatedSync';
 import { PushCapability } from './PushCapability';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.58.15';
+const APP_VERSION = '2.58.16';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -1089,7 +1089,8 @@ export class NodeRuntime {
       let action = (parsed['action'] ?? parsed) as Record<string, Object>;
       let name = action['name'] as string;
       if (name !== 'context_feedback' && name !== 'view_snapshot' && 
-          name !== 'new_place_save' && name !== 'new_place_rename' && name !== 'new_place_ignore') return;
+          name !== 'new_place_save' && name !== 'new_place_rename' && name !== 'new_place_ignore' &&
+          name !== 'place_confirm') return;
 
       let ctx = action['context'] as Record<string, string>;
       if (!ctx) return;
@@ -1243,6 +1244,45 @@ export class NodeRuntime {
         this.saveNewPlace(lat, lng, '', '新地点', 'other');
       } else if (name === 'new_place_ignore') {
         this.sendFeedbackResponse('👌 ' + I18n.t('ctx.fb.ignoredPlace'));
+      } else if (name === 'place_confirm') {
+        let placeId = ctx['placeId'] ?? '';
+        if (placeId === 'skip') {
+          this.log.info(TAG, 'Place confirm skipped');
+        } else {
+          // 获取用户选择的名称和分类
+          let chosenName = (ctx['choice_place_name'] ?? '') as string;
+          let chosenCat = (ctx['choice_place_cat'] ?? '') as string;
+          // 去 emoji 前缀
+          let catMap: Record<string, string> = {
+            '🏠 家': 'home', '🏢 公司': 'work', '💪 健身房': 'gym',
+            '🍜 餐饮': 'restaurant', '🛒 购物': 'shopping', '🚇 交通': 'transit',
+            '🏨 酒店': 'custom', '📍 其他': 'custom'
+          };
+          let category = catMap[chosenCat] ?? 'custom';
+          let finalName = chosenName === '自定义...' ? placeId : chosenName;
+          // 去 emoji
+          finalName = finalName.replace(/^[^\u4e00-\u9fa5a-zA-Z0-9]*/, '').trim();
+          if (finalName.length === 0) finalName = 'WiFi地点';
+
+          this.log.info(TAG, `Place confirmed: id=${placeId}, name=${finalName}, cat=${category}`);
+
+          // 更新已发现地点的名称和分类
+          let cas = ContextAwarenessService.getInstance();
+          cas.getDiscoveredPlaces().then(async (places) => {
+            for (let i = 0; i < places.length; i++) {
+              if (places[i].id === placeId) {
+                places[i].name = finalName;
+                places[i].category = category as GeofenceCategory;
+                break;
+              }
+            }
+            // 直接保存（用 promoteDiscoveredPlace 或手动保存）
+            await cas.promoteDiscoveredPlace(placeId, finalName, category as GeofenceCategory);
+            this.sendFeedbackResponse('📍 已设为围栏: ' + finalName + ' (' + chosenCat + ')');
+          }).catch((err: Error) => {
+            this.log.warn(TAG, `Place confirm error: ${err.message}`);
+          });
+        }
       }
     } catch (err) {
       this.log.warn(TAG, `handleA2UIAction error: ${(err as Error).message}`);

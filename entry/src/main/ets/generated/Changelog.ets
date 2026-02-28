@@ -8,11 +8,11 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.58.15';
+export const APP_VERSION: string = '2.58.16';
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    version: '2.58.15',
+    version: '2.58.16',
     date: '2026-02-28',
     features: [
       '情景智能v2: 分层规则系统(Tier 0/1/2), 删除不准确的GPS围栏规则',
@@ -47,6 +47,8 @@ export const CHANGELOG: ChangelogEntry[] = [
       'WiFi诊断A2UI: 连接WiFi时弹出诊断卡片(SSID/GPS/来源), 方便排查地点发现问题',
       'A2UI确认分离: 场景确认(位置+活动)和推荐反馈(👍/👎)分成两个独立卡片',
       '移除WiFi诊断A2UI卡片(保留日志), 减少弹窗干扰',
+      '新地点发现A2UI: 连接新WiFi时弹出命名卡片, 可选择地点名称(geocoding推荐/WiFi名/自定义)和分类(家/公司/健身房/餐饮/购物/交通/酒店/其他)',
+      '一键确认: 选择后直接设为围栏, 启用WiFi位置识别',
     ],
     fixes: [
       '数据分类优化: GPS速度归环境, 心率归人, 屏幕/姿态归手机',
@@ -601,4 +603,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.58.15';
+export const LATEST_VERSION: string = '2.58.16';

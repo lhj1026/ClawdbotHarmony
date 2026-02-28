@@ -3276,6 +3276,25 @@ export class ContextAwarenessService {
         };
         places.push(newPlace);
         this.log.info(TAG, `Discovered new place: "${placeName}" (wifi=${ssid}) at ${lat.toFixed(4)},${lng.toFixed(4)}, category=${placeCategory}`);
+
+        // A2UI: 让用户确认/命名新发现的地点
+        let safeName = placeName.replace(/"/g, "'");
+        let safeSsid = ssid.replace(/"/g, "'");
+        let placeId = newPlace.id;
+        let catOptions = JSON.stringify(['🏠 家', '🏢 公司', '💪 健身房', '🍜 餐饮', '🛒 购物', '🚇 交通', '🏨 酒店', '📍 其他']);
+        let nameOptions = JSON.stringify([safeName, safeSsid, '自定义...']);
+        let a2uiJsonl = '{"type":"form","id":"place_name_' + placeId + '","children":[' +
+          '{"type":"text","text":"📍 发现新地点","style":{"fontSize":16,"fontWeight":"bold"}},' +
+          '{"type":"text","text":"WiFi: ' + safeSsid + '","style":{"fontSize":12,"color":"#666"}},' +
+          (gpsAccurate ? '{"type":"text","text":"📌 ' + lat.toFixed(4) + ', ' + lng.toFixed(4) + '","style":{"fontSize":11,"color":"#999"}},' : '') +
+          '{"type":"text","text":"这是什么地方？","style":{"fontSize":14}},' +
+          '{"type":"choice","id":"place_name","options":' + nameOptions + '},' +
+          '{"type":"text","text":"分类","style":{"fontSize":14}},' +
+          '{"type":"choice","id":"place_cat","options":' + catOptions + '},' +
+          '{"type":"button","text":"✅ 确认","variant":"primary","action":{"event":{"name":"place_confirm","context":{"placeId":"' + placeId + '"}}}},' +
+          '{"type":"button","text":"跳过","variant":"borderless","action":{"event":{"name":"place_confirm","context":{"placeId":"skip"}}}}' +
+          ']}'
+        this.dispatchA2UI('push', a2uiJsonl);
       }
 
       await this.saveDiscoveredPlaces(places);
