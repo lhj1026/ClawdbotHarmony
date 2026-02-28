@@ -8,11 +8,11 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.58.0';
+export const APP_VERSION: string = '2.58.1';
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    version: '2.58.0',
+    version: '2.58.1',
     date: '2026-02-28',
     features: [
       '情景智能v2: 分层规则系统(Tier 0/1/2), 删除不准确的GPS围栏规则',
@@ -20,12 +20,13 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Tier 1 WiFi感知规则: 基于WiFi SSID判断位置(到家/到公司/离家/下班)',
       'Tier 2传感器规则: 车载蓝牙+计步+久坐检测',
       '规则版本迁移机制: 升级时自动重载默认规则',
-      '规则管理页面重写: 场景模板+高级模式, 8个预置场景一键添加',
-      '15个context key带emoji标签和预设值, 3种动作类型(建议/通知/警告)',
-      '数据托盘UI分类: 按人/手机/环境三类展示, 颜色编码',
+      '规则管理页面重写: 场景模板(8个预置场景)+高级模式, 一键添加规则',
+      '数据托盘四分类: 🧑人/📱手机/🌍环境/💻数字世界',
+      '数字世界独立分类: 日历、应用使用、前台应用、通知、媒体播放',
     ],
     fixes: [
-
+      '数据分类优化: GPS速度归环境, 心率归人, 屏幕/姿态归手机',
+      'media插件从物理世界移到数字世界',
     ],
   },
   {
@@ -575,4 +576,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.58.0';
+export const LATEST_VERSION: string = '2.58.1';
