@@ -42,7 +42,7 @@ import { webview } from '@kit.ArkWeb';
 import { componentSnapshot, router, window } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
 import { ConfigManager } from '../ConfigManager';
-import { http } from '@kit.NetworkKit';
+import { http, connection } from '@kit.NetworkKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { LogService } from '../../common/LogService';
 import { Constants } from '../../common/Constants';
@@ -61,7 +61,7 @@ import { Geofence, GeofenceCategory, LearnedPlaceSignals, UserAction } from '../
 import { FederatedSync } from '../context/FederatedSync';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.54.0';
+const APP_VERSION = '2.56.1';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -141,6 +141,11 @@ export class NodeRuntime {
   private _context: common.UIAbilityContext | undefined = undefined;
   private _connectToken: string | undefined = undefined;
   private _connectPassword: string | undefined = undefined;
+
+  // Network change monitoring
+  private _netConnection: connection.NetConnection | undefined = undefined;
+  private _netReconnectTimer: number = -1;
+  private static readonly NET_RECONNECT_DEBOUNCE_MS: number = 2000;
 
   // Notification-to-chat listeners
   private _notifListeners: Array<(info: NotificationInfo) => void> = [];
@@ -2334,6 +2339,9 @@ export class NodeRuntime {
       this.log.info(TAG, 'Connecting node session...');
       this.nodeSession.connect(context, endpoint, token, password);
     }
+
+    // Start network change listener so reconnect fires immediately on WiFi/4G/VPN switch
+    this.setupNetworkMonitor();
   }
 
   /** Connect only operator session */
@@ -2367,6 +2375,8 @@ export class NodeRuntime {
     }
     if (disconnectOperatorSession && disconnectNodeSession) {
       this._endpoint = undefined;
+      // Tear down network monitor only on full disconnect
+      this.teardownNetworkMonitor();
     }
     this.updateStatus();
   }
@@ -2380,6 +2390,104 @@ export class NodeRuntime {
   disconnectNode(): void {
     this.disconnect(false, true);
   }
+
+  // ── Network change monitoring ────────────────────────────────────────────
+
+  /** Register a NetConnection listener that triggers forceReconnect() on both
+   *  sessions whenever the active network changes (WiFi↔Cellular↔VPN).
+   *  Call once at the start of connect(); safe to call repeatedly (no-op if
+   *  already registered). */
+  private setupNetworkMonitor(): void {
+    if (this._netConnection) {
+      return; // already registered
+    }
+    try {
+      this._netConnection = connection.createNetConnection();
+
+      this._netConnection.on('netAvailable', (netHandle: connection.NetHandle) => {
+        this.log.info(TAG, `[NetMonitor] netAvailable netId=${netHandle.netId} — scheduling reconnect`);
+        this.scheduleNetReconnect();
+      });
+
+      this._netConnection.on('netLost', (netHandle: connection.NetHandle) => {
+        this.log.info(TAG, `[NetMonitor] netLost netId=${netHandle.netId}`);
+        // Existing session error/close callbacks will handle reconnect backoff.
+        // Cancel any pending net-triggered reconnect so we don't reconnect into dead air.
+        if (this._netReconnectTimer >= 0) {
+          clearTimeout(this._netReconnectTimer);
+          this._netReconnectTimer = -1;
+        }
+      });
+
+      this._netConnection.on('netCapabilitiesChange', (info: connection.NetCapabilityInfo) => {
+        let typeName = this.bearerTypesToString(info.netCap.bearerTypes ?? []);
+        this.log.info(TAG, `[NetMonitor] netCapabilitiesChange netId=${info.netHandle.netId} bearers=[${typeName}]`);
+      });
+
+      this._netConnection.register((err) => {
+        if (err) {
+          this.log.error(TAG, `[NetMonitor] register failed: code=${err.code} msg=${err.message}`);
+        } else {
+          this.log.info(TAG, '[NetMonitor] registered');
+        }
+      });
+    } catch (e) {
+      this.log.error(TAG, `[NetMonitor] setup error: ${e}`);
+    }
+  }
+
+  /** Unregister the NetConnection listener. */
+  private teardownNetworkMonitor(): void {
+    if (this._netReconnectTimer >= 0) {
+      clearTimeout(this._netReconnectTimer);
+      this._netReconnectTimer = -1;
+    }
+    if (!this._netConnection) {
+      return;
+    }
+    try {
+      this._netConnection.unregister((err) => {
+        if (err) {
+          this.log.error(TAG, `[NetMonitor] unregister failed: code=${err.code} msg=${err.message}`);
+        } else {
+          this.log.info(TAG, '[NetMonitor] unregistered');
+        }
+      });
+    } catch (e) {
+      this.log.error(TAG, `[NetMonitor] teardown error: ${e}`);
+    }
+    this._netConnection = undefined;
+  }
+
+  /** Debounced reconnect: waits NET_RECONNECT_DEBOUNCE_MS after the last
+   *  netAvailable event before calling forceReconnect() on both sessions. */
+  private scheduleNetReconnect(): void {
+    if (this._netReconnectTimer >= 0) {
+      clearTimeout(this._netReconnectTimer);
+    }
+    this._netReconnectTimer = setTimeout(() => {
+      this._netReconnectTimer = -1;
+      this.log.info(TAG, '[NetMonitor] debounce elapsed — calling forceReconnect on sessions');
+      if (this.operatorSession) {
+        this.operatorSession.forceReconnect();
+      }
+      if (this.nodeSession) {
+        this.nodeSession.forceReconnect();
+      }
+    }, NodeRuntime.NET_RECONNECT_DEBOUNCE_MS);
+  }
+
+  private bearerTypesToString(bearerTypes: number[]): string {
+    return bearerTypes.map((t: number) => {
+      if (t === connection.NetBearType.BEARER_WIFI) return 'WiFi';
+      if (t === connection.NetBearType.BEARER_CELLULAR) return 'Cellular';
+      if (t === connection.NetBearType.BEARER_VPN) return 'VPN';
+      if (t === connection.NetBearType.BEARER_ETHERNET) return 'Ethernet';
+      return `Unknown(${t})`;
+    }).join(',') || 'none';
+  }
+
+  // ── End network change monitoring ────────────────────────────────────────
 
   private _pairingApproved: boolean = false;
   private _pairingNotified: boolean = false;

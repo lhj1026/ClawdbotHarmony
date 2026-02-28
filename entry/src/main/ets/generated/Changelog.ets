@@ -8,9 +8,27 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.55.0';
+export const APP_VERSION: string = '2.56.1';
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '2.56.0',
+    date: '2026-02-27',
+    features: [
+      '推荐动作执行系统: 用户接受推荐后自动执行动作(日历查询/打开应用/切换模式),结果显示在聊天窗口',
+      'CalendarPlugin扩展: getUpcomingEvents(), findConflicts(), formatEventsMarkdown() — 支持时间冲突检测和Markdown格式化',
+      'ActionExecutor路由器: 按action.type分发到对应系统能力(show_info/open_app/set_mode/show_notification)',
+      '活跃推荐缓存: NodeRuntime缓存推荐卡片5分钟,接受时执行关联动作',
+      'Stream RL UI标签: 推荐卡片显示学习状态(探索中/学习中/已学习)',
+      'ContextSettingsPage RL面板: 活跃模型数、训练样本数、Top-5 arm列表',
+      'NAPI新增: getStreamRLStats()返回摘要JSON, getStreamRLArmSamples()返回arm样本数',
+      'C++ getSummaryJson(): StreamRLEngine输出arms/totalArms/totalSamples统计',
+      '探索模式RL标记: buildExploreStateInfo()附加RL阶段(冷启动/学习中/已收敛)',
+    ],
+    fixes: [
+
+    ],
+  },
   {
     version: '2.55.0',
     date: '2026-02-27',
@@ -540,4 +558,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.55.0';
+export const LATEST_VERSION: string = '2.56.0';
