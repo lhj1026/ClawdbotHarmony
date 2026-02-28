@@ -1,15 +1,38 @@
 /**
- * RuleManagementPage — 规则管理页面
- * 功能：查看/开关/删除规则，添加自定义规则
+ * RuleManagementPage — 规则管理页面 v2
+ * 场景模板 + 高级模式，让添加规则真正能用
  */
 import { router } from '@kit.ArkUI';
 import { LogService } from '../common/LogService';
 import { I18n } from '../common/I18n';
 import { ContextEngineService, ContextRule, ContextCondition, ContextAction } from '../service/context/ContextEngine';
 
+const TAG = 'RuleMgmt';
+
+/** Scene template for quick rule creation */
+interface SceneTemplate {
+  id: string;
+  icon: string;
+  name: string;
+  description: string;
+  category: string;  // person, phone, environment
+  tier: number;
+  conditions: ContextCondition[];
+  defaultAction: ContextAction;
+  defaultCooldownMs: number;
+}
+
 interface CooldownOption {
   label: string;
   value: number;
+}
+
+/** Available context keys with friendly labels and value hints */
+interface ContextKeyInfo {
+  key: string;
+  label: string;
+  hint: string;        // value hint for user
+  presets?: string[];   // preset values to pick from
 }
 
 @Entry
@@ -19,38 +42,148 @@ struct RuleManagementPage {
   private engine: ContextEngineService = ContextEngineService.getInstance();
 
   @State rules: ContextRule[] = [];
-  @State showAddDialog: boolean = false;
+  @State activeTab: number = 0;  // 0=rules list, 1=add from template, 2=advanced add
 
-  // Add form state
+  // Template mode state
+  @State selectedTemplate: SceneTemplate | null = null;
+  @State templatePayload: string = '';
+
+  // Advanced mode state
   @State newName: string = '';
-  @State conditionKeys: string[] = [];
-  @State conditionOps: string[] = [];
-  @State conditionValues: string[] = [];
-  @State actionType: number = 0;  // 0=suggestion, 1=notification
+  @State conditionRows: ConditionRow[] = [];
+  @State actionType: number = 0;
   @State actionPayload: string = '';
-  @State selectedCooldown: number = 3;  // index in cooldownOptions
+  @State selectedCooldown: number = 3;
 
-  private contextKeyIds: string[] = ['timeOfDay', 'hour', 'dayOfWeek', 'isWeekend', 'motionState', 'batteryLevel', 'isCharging', 'networkType', 'geofence'];
-  @State contextKeyLabels: string[] = [];
-  private opIds: string[] = ['eq', 'neq', 'gt', 'lt', 'gte', 'lte', 'in'];
-  @State opLabels: string[] = [];
-  @State actionTypes: string[] = [];
-  @State cooldownOptions: CooldownOption[] = [];
+  private cooldownOptions: CooldownOption[] = [
+    { label: '10分钟', value: 600000 },
+    { label: '30分钟', value: 1800000 },
+    { label: '1小时', value: 3600000 },
+    { label: '4小时', value: 14400000 },
+    { label: '8小时', value: 28800000 },
+    { label: '24小时', value: 86400000 },
+  ];
+
+  private actionTypeLabels: string[] = ['💡 建议', '🔔 通知', '⚠️ 警告'];
+  private actionTypeIds: string[] = ['suggestion', 'notification', 'alert'];
+
+  // All available context keys organized by category
+  private contextKeys: ContextKeyInfo[] = [
+    // Environment - Time
+    { key: 'timeOfDay', label: '⏰ 时段', hint: 'dawn/morning/afternoon/evening/night', presets: ['dawn', 'morning', 'afternoon', 'evening', 'night'] },
+    { key: 'hour', label: '🕐 小时', hint: '0-23' },
+    { key: 'dayOfWeek', label: '📅 星期', hint: '1-7 (1=周一)' },
+    { key: 'isWeekend', label: '🗓️ 是否周末', hint: 'true/false', presets: ['true', 'false'] },
+    // Phone
+    { key: 'batteryLevel', label: '🔋 电量', hint: '0-100' },
+    { key: 'isCharging', label: '🔌 充电中', hint: 'true/false', presets: ['true', 'false'] },
+    { key: 'networkType', label: '📶 网络类型', hint: 'wifi/cellular/none', presets: ['wifi', 'cellular', 'none'] },
+    // Location (WiFi-based)
+    { key: 'wifiSsid', label: '📡 WiFi名称', hint: 'WiFi SSID' },
+    { key: 'wifiGeofence', label: '📍 WiFi位置', hint: 'home/work/gym/...', presets: ['home', 'work', 'gym'] },
+    { key: 'wifiLostCategory', label: '📍 WiFi离开', hint: 'home/work (WiFi断开时)', presets: ['home', 'work'] },
+    // Person
+    { key: 'bt_in_vehicle', label: '🚗 车载蓝牙', hint: 'true/false', presets: ['true', 'false'] },
+    { key: 'step_count_today', label: '🚶 今日步数', hint: '步数 (数字)' },
+    { key: 'activityDuration', label: '⏱️ 活动时长', hint: '秒数 (2400=40分钟)' },
+    { key: 'isSleeping', label: '😴 睡眠中', hint: 'true/false', presets: ['true', 'false'] },
+    { key: 'motionState', label: '🏃 运动状态', hint: 'stationary/walking/driving', presets: ['stationary', 'walking', 'driving'] },
+  ];
+
+  // Scene templates
+  private templates: SceneTemplate[] = [
+    {
+      id: 'tpl_arrive_home', icon: '🏠', name: '到家提醒',
+      description: '连上家里WiFi时提醒',
+      category: 'environment', tier: 1,
+      conditions: [
+        { key: 'wifiGeofence', op: 'eq', value: 'home' },
+        { key: 'timeOfDay', op: 'in', value: 'afternoon,evening,night' }
+      ],
+      defaultAction: { id: '', type: 'suggestion', payload: '到家了 🏠 放松一下吧' },
+      defaultCooldownMs: 28800000
+    },
+    {
+      id: 'tpl_arrive_work', icon: '💼', name: '到公司提醒',
+      description: '连上公司WiFi时提醒',
+      category: 'environment', tier: 1,
+      conditions: [
+        { key: 'wifiGeofence', op: 'eq', value: 'work' },
+        { key: 'isWeekend', op: 'eq', value: 'false' }
+      ],
+      defaultAction: { id: '', type: 'suggestion', payload: '到公司了 💼 查看今天待办？' },
+      defaultCooldownMs: 28800000
+    },
+    {
+      id: 'tpl_leave_home', icon: '🚶', name: '出门提醒',
+      description: '早上WiFi断开时提醒',
+      category: 'environment', tier: 1,
+      conditions: [
+        { key: 'wifiLostCategory', op: 'eq', value: 'home' },
+        { key: 'timeOfDay', op: 'in', value: 'dawn,morning' }
+      ],
+      defaultAction: { id: '', type: 'suggestion', payload: '出门了！看看天气和日程 ☀️' },
+      defaultCooldownMs: 28800000
+    },
+    {
+      id: 'tpl_low_battery', icon: '🔋', name: '低电量提醒',
+      description: '电量低于指定值时提醒',
+      category: 'phone', tier: 0,
+      conditions: [
+        { key: 'batteryLevel', op: 'lte', value: '20' },
+        { key: 'isCharging', op: 'eq', value: 'false' }
+      ],
+      defaultAction: { id: '', type: 'notification', payload: '电量不足，建议充电 🔋' },
+      defaultCooldownMs: 1800000
+    },
+    {
+      id: 'tpl_sedentary', icon: '🏃', name: '久坐提醒',
+      description: '长时间没走动时提醒',
+      category: 'person', tier: 2,
+      conditions: [
+        { key: 'activityDuration', op: 'gte', value: '2400' },
+        { key: 'timeOfDay', op: 'in', value: 'morning,afternoon' }
+      ],
+      defaultAction: { id: '', type: 'alert', payload: '坐了40分钟了，起来活动一下 🏃‍♂️' },
+      defaultCooldownMs: 2400000
+    },
+    {
+      id: 'tpl_driving', icon: '🚗', name: '驾驶模式',
+      description: '连接车载蓝牙时触发',
+      category: 'person', tier: 2,
+      conditions: [
+        { key: 'bt_in_vehicle', op: 'eq', value: 'true' }
+      ],
+      defaultAction: { id: '', type: 'suggestion', payload: '开车中 🚗 注意安全' },
+      defaultCooldownMs: 3600000
+    },
+    {
+      id: 'tpl_bedtime', icon: '🌙', name: '睡眠提醒',
+      description: '深夜充电时提醒休息',
+      category: 'person', tier: 0,
+      conditions: [
+        { key: 'hour', op: 'gte', value: '23' },
+        { key: 'isCharging', op: 'eq', value: 'true' }
+      ],
+      defaultAction: { id: '', type: 'suggestion', payload: '夜深了，早点休息吧 🌙' },
+      defaultCooldownMs: 28800000
+    },
+    {
+      id: 'tpl_morning_commute', icon: '🌅', name: '早晨通勤',
+      description: '工作日早上开车时',
+      category: 'environment', tier: 2,
+      conditions: [
+        { key: 'bt_in_vehicle', op: 'eq', value: 'true' },
+        { key: 'timeOfDay', op: 'eq', value: 'morning' },
+        { key: 'isWeekend', op: 'eq', value: 'false' }
+      ],
+      defaultAction: { id: '', type: 'suggestion', payload: '通勤中 🚗 听点新闻？' },
+      defaultCooldownMs: 28800000
+    },
+  ];
 
   aboutToAppear(): void {
-    this.log.info('RuleMgmt', 'Page opened');
-    // Initialize i18n labels
-    this.contextKeyLabels = this.contextKeyIds.map((id: string) => I18n.t('rules.key.' + id));
-    this.opLabels = ['=', '\u2260', '>', '<', '\u2265', '\u2264', I18n.t('rules.opContains')];
-    this.actionTypes = [I18n.t('rules.suggestion'), I18n.t('rules.notification')];
-    this.cooldownOptions = [
-      { label: I18n.t('rules.cooldown30m'), value: 1800000 },
-      { label: I18n.t('rules.cooldown1h'), value: 3600000 },
-      { label: I18n.t('rules.cooldown2h'), value: 7200000 },
-      { label: I18n.t('rules.cooldown4h'), value: 14400000 },
-      { label: I18n.t('rules.cooldown8h'), value: 28800000 },
-      { label: I18n.t('rules.cooldown24h'), value: 86400000 },
-    ];
+    this.log.info(TAG, 'Page opened');
     this.refreshRules();
   }
 
@@ -58,394 +191,613 @@ struct RuleManagementPage {
     try {
       this.rules = this.engine.getAllRulesForDisplay();
     } catch (err) {
-      this.log.error('RuleMgmt', 'refresh error: ' + (err as Error).message);
+      this.log.error(TAG, 'refresh error: ' + (err as Error).message);
       this.rules = [];
     }
   }
 
   private getConditionSummary(conditions: ContextCondition[]): string {
-    let opSymbols: Record<string, string> = {
-      'eq': '=', 'neq': '\u2260', 'gt': '>', 'lt': '<', 'gte': '\u2265', 'lte': '\u2264', 'in': '\u2208'
-    };
     let parts: string[] = [];
     for (let i = 0; i < conditions.length; i++) {
       let c = conditions[i];
-      let kl = I18n.t('rules.key.' + c.key + '.short');
-      if (kl.startsWith('rules.key.')) kl = c.key;
-      let ol = opSymbols[c.op] || c.op;
-      parts.push(kl + ol + c.value);
+      let keyInfo = this.contextKeys.find((k: ContextKeyInfo) => k.key === c.key);
+      let label = keyInfo ? keyInfo.label : c.key;
+      let opSymbol: string = c.op === 'eq' ? '=' : c.op === 'neq' ? '≠' :
+        c.op === 'gte' ? '≥' : c.op === 'lte' ? '≤' :
+        c.op === 'gt' ? '>' : c.op === 'lt' ? '<' :
+        c.op === 'in' ? '∈' : c.op;
+      parts.push(`${label}${opSymbol}${c.value}`);
     }
     return parts.join(' & ');
   }
 
-  private getRuleName(rule: ContextRule): string {
-    let key = 'rule.name.' + rule.id;
-    let localized = I18n.t(key);
-    return localized !== key ? localized : rule.name;
+  private getTierLabel(rule: ContextRule): string {
+    let tier = rule.tier ?? -1;
+    if (tier === 0) return 'T0';
+    if (tier === 1) return 'T1';
+    if (tier === 2) return 'T2';
+    return '';
   }
 
-  private async handleToggle(ruleId: string, enabled: boolean): Promise<void> {
-    let ok = await this.engine.toggleRule(ruleId, enabled);
+  private getTierColor(rule: ContextRule): string {
+    let tier = rule.tier ?? -1;
+    if (tier === 0) return '#34C759';  // green
+    if (tier === 1) return '#007AFF';  // blue
+    if (tier === 2) return '#FF9500';  // orange
+    return '#999999';
+  }
+
+  // ===== Template mode =====
+  private selectTemplate(tpl: SceneTemplate): void {
+    this.selectedTemplate = tpl;
+    this.templatePayload = tpl.defaultAction.payload;
+  }
+
+  private async saveFromTemplate(): Promise<void> {
+    if (!this.selectedTemplate || this.templatePayload.length === 0) return;
+    let tpl = this.selectedTemplate;
+    let ts = Date.now().toString();
+    let rule: ContextRule = {
+      id: 'user_' + ts,
+      name: tpl.name,
+      tier: tpl.tier,
+      category: tpl.category,
+      conditions: tpl.conditions.slice(),
+      action: {
+        id: 'user_action_' + ts,
+        type: tpl.defaultAction.type,
+        payload: this.templatePayload
+      },
+      priority: 1.5,
+      cooldownMs: tpl.defaultCooldownMs,
+      enabled: true
+    };
+    let ok = await this.engine.addRule(rule);
     if (ok) {
-      this.refreshRules();
+      this.log.info(TAG, `Added rule from template: ${tpl.name}`);
     }
+    this.selectedTemplate = null;
+    this.templatePayload = '';
+    this.activeTab = 0;
+    this.refreshRules();
   }
 
-  private async handleDelete(ruleId: string): Promise<void> {
-    let ok = await this.engine.removeRule(ruleId);
-    if (ok) {
-      this.refreshRules();
-    }
-  }
-
-  private resetForm(): void {
-    this.newName = '';
-    this.conditionKeys = [];
-    this.conditionOps = [];
-    this.conditionValues = [];
-    this.actionType = 0;
-    this.actionPayload = '';
-    this.selectedCooldown = 3;
-  }
-
+  // ===== Advanced mode =====
   private addConditionRow(): void {
-    this.conditionKeys = [...this.conditionKeys, 'timeOfDay'];
-    this.conditionOps = [...this.conditionOps, 'eq'];
-    this.conditionValues = [...this.conditionValues, ''];
+    this.conditionRows = [...this.conditionRows, { keyIndex: 0, opIndex: 0, value: '' }];
   }
 
   private removeConditionRow(idx: number): void {
-    let keys: string[] = [];
-    let ops: string[] = [];
-    let vals: string[] = [];
-    for (let i = 0; i < this.conditionKeys.length; i++) {
-      if (i !== idx) {
-        keys.push(this.conditionKeys[i]);
-        ops.push(this.conditionOps[i]);
-        vals.push(this.conditionValues[i]);
-      }
+    let rows: ConditionRow[] = [];
+    for (let i = 0; i < this.conditionRows.length; i++) {
+      if (i !== idx) rows.push(this.conditionRows[i]);
     }
-    this.conditionKeys = keys;
-    this.conditionOps = ops;
-    this.conditionValues = vals;
+    this.conditionRows = rows;
   }
 
-  private async doAddRule(): Promise<void> {
-    if (this.newName.length === 0 || this.conditionKeys.length === 0 || this.actionPayload.length === 0) {
-      return;
-    }
-
+  private async doAddAdvanced(): Promise<void> {
+    if (this.newName.length === 0 || this.conditionRows.length === 0 || this.actionPayload.length === 0) return;
     let ts = Date.now().toString();
     let conditions: ContextCondition[] = [];
-    for (let i = 0; i < this.conditionKeys.length; i++) {
-      if (i < this.conditionOps.length && i < this.conditionValues.length && this.conditionValues[i].length > 0) {
-        conditions.push({ key: this.conditionKeys[i], op: this.conditionOps[i], value: this.conditionValues[i] });
+    let opIds = ['eq', 'neq', 'gt', 'lt', 'gte', 'lte', 'in'];
+    for (let i = 0; i < this.conditionRows.length; i++) {
+      let row = this.conditionRows[i];
+      if (row.value.length > 0 && row.keyIndex < this.contextKeys.length) {
+        conditions.push({
+          key: this.contextKeys[row.keyIndex].key,
+          op: opIds[row.opIndex] || 'eq',
+          value: row.value
+        });
       }
     }
     if (conditions.length === 0) return;
-
-    let actionTypeStr = this.actionType === 0 ? 'suggestion' : 'notification';
-    let action: ContextAction = {
-      id: 'user_action_' + ts,
-      type: actionTypeStr,
-      payload: this.actionPayload
-    };
 
     let rule: ContextRule = {
       id: 'user_' + ts,
       name: this.newName,
       conditions: conditions,
-      action: action,
+      action: {
+        id: 'user_action_' + ts,
+        type: this.actionTypeIds[this.actionType] || 'suggestion',
+        payload: this.actionPayload
+      },
       priority: 1.0,
       cooldownMs: this.cooldownOptions[this.selectedCooldown].value,
       enabled: true
     };
-
     let ok = await this.engine.addRule(rule);
     if (ok) {
-      this.log.info('RuleMgmt', 'Added rule: ' + rule.name);
+      this.log.info(TAG, 'Added advanced rule: ' + rule.name);
     }
-    this.showAddDialog = false;
-    this.resetForm();
+    this.resetAdvanced();
+    this.activeTab = 0;
     this.refreshRules();
   }
 
+  private resetAdvanced(): void {
+    this.newName = '';
+    this.conditionRows = [];
+    this.actionType = 0;
+    this.actionPayload = '';
+    this.selectedCooldown = 3;
+  }
+
   build() {
-    Stack() {
-      Column() {
-        // Header
-        Row() {
-          Text('\u2190')
-            .fontSize(22)
-            .fontColor('#1A1A1A')
-            .padding(8)
-            .onClick(() => { router.back(); })
-          Text(I18n.t('rules.title'))
-            .fontSize(18)
-            .fontWeight(FontWeight.Bold)
-            .fontColor('#1A1A1A')
-            .layoutWeight(1)
-          Text(I18n.t('rules.addRule'))
-            .fontSize(14)
-            .fontColor('#007AFF')
-            .padding(8)
-            .onClick(() => {
-              this.resetForm();
-              this.addConditionRow();
-              this.showAddDialog = true;
-            })
-        }
-        .width('100%')
-        .height(48)
-        .padding({ left: 8, right: 8 })
-        .backgroundColor(Color.White)
-
-        // Rule list
-        Scroll() {
-          Column({ space: 12 }) {
-            if (this.rules.length === 0) {
-              Text(I18n.t('rules.empty'))
-                .fontSize(14)
-                .fontColor('#999999')
-                .width('100%')
-                .textAlign(TextAlign.Center)
-                .padding(40)
-            } else {
-              ForEach(this.rules, (rule: ContextRule) => {
-                Column() {
-                  Row() {
-                    Column({ space: 4 }) {
-                      Row({ space: 6 }) {
-                        Text(this.getRuleName(rule))
-                          .fontSize(15)
-                          .fontWeight(FontWeight.Medium)
-                          .fontColor('#1A1A1A')
-                          .layoutWeight(1)
-                          .maxLines(1)
-                          .textOverflow({ overflow: TextOverflow.Ellipsis })
-                        Text(this.engine.isUserRule(rule.id) ? I18n.t('rules.custom') : I18n.t('rules.builtin'))
-                          .fontSize(11)
-                          .fontColor(this.engine.isUserRule(rule.id) ? '#007AFF' : '#999999')
-                          .backgroundColor(this.engine.isUserRule(rule.id) ? '#E6F0FF' : '#F0F0F0')
-                          .padding({ left: 8, right: 8, top: 2, bottom: 2 })
-                          .borderRadius(8)
-                      }
-                      .width('100%')
-
-                      Text(this.getConditionSummary(rule.conditions))
-                        .fontSize(12)
-                        .fontColor('#666666')
-                        .maxLines(2)
-                        .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-                      Text((rule.action.type === 'notification' ? I18n.t('rules.notification') : I18n.t('rules.suggestion')) + ': ' + rule.action.payload)
-                        .fontSize(12)
-                        .fontColor('#999999')
-                        .maxLines(1)
-                        .textOverflow({ overflow: TextOverflow.Ellipsis })
-                    }
-                    .layoutWeight(1)
-                    .alignItems(HorizontalAlign.Start)
-
-                    Column({ space: 8 }) {
-                      Toggle({ type: ToggleType.Switch, isOn: rule.enabled })
-                        .selectedColor('#007AFF')
-                        .onChange((isOn: boolean) => {
-                          this.handleToggle(rule.id, isOn);
-                        })
-
-                      if (this.engine.isUserRule(rule.id)) {
-                        Text(I18n.t('rules.delete'))
-                          .fontSize(12)
-                          .fontColor('#FF3B30')
-                          .onClick(() => { this.handleDelete(rule.id); })
-                      }
-                    }
-                    .alignItems(HorizontalAlign.Center)
-                    .justifyContent(FlexAlign.Center)
-                  }
-                  .width('100%')
-                }
-                .width('100%')
-                .padding(14)
-                .backgroundColor(Color.White)
-                .borderRadius(12)
-              }, (rule: ContextRule) => rule.id)
-            }
-          }
-          .padding({ left: 16, right: 16, top: 12, bottom: 40 })
-        }
-        .layoutWeight(1)
-        .backgroundColor('#F2F2F7')
+    Column() {
+      // Header
+      Row() {
+        Text('←')
+          .fontSize(22)
+          .fontColor('#1A1A1A')
+          .padding(8)
+          .onClick(() => { router.back(); })
+        Text('规则管理')
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#1A1A1A')
+          .layoutWeight(1)
       }
       .width('100%')
-      .height('100%')
+      .height(48)
+      .padding({ left: 8, right: 8 })
+      .backgroundColor(Color.White)
 
-      // ===== Add rule dialog =====
-      if (this.showAddDialog) {
-        Column() {
-          Scroll() {
-            Column({ space: 12 }) {
-              Text(I18n.t('rules.addCustom'))
-                .fontSize(18)
-                .fontWeight(FontWeight.Bold)
-                .fontColor('#1A1A1A')
+      // Tab bar
+      Row({ space: 0 }) {
+        this.TabButton('📋 规则列表', 0)
+        this.TabButton('✨ 场景模板', 1)
+        this.TabButton('⚙️ 高级', 2)
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16 })
+      .backgroundColor(Color.White)
 
-              // Rule name
-              TextInput({ placeholder: I18n.t('rules.namePlaceholder') })
-                .onChange((val: string) => { this.newName = val; })
-                .width('100%')
-                .height(44)
-
-              // Conditions section
-              Text(I18n.t('rules.conditions'))
-                .fontSize(14)
-                .fontWeight(FontWeight.Medium)
-                .fontColor('#1A1A1A')
-                .width('100%')
-
-              ForEach(this.conditionKeys, (key: string, idx: number) => {
-                Row({ space: 6 }) {
-                  // Key selector
-                  Select(this.contextKeyLabels.map((label: string) => {
-                    let item: SelectOption = { value: label };
-                    return item;
-                  }))
-                    .selected(this.contextKeyIds.indexOf(key))
-                    .value(this.contextKeyLabels[this.contextKeyIds.indexOf(key)] || I18n.t('rules.key.timeOfDay'))
-                    .font({ size: 13 })
-                    .onSelect((index: number) => {
-                      let newKeys = this.conditionKeys.slice();
-                      newKeys[idx] = this.contextKeyIds[index];
-                      this.conditionKeys = newKeys;
-                    })
-                    .width(90)
-                    .height(36)
-
-                  // Op selector
-                  Select(this.opLabels.map((label: string) => {
-                    let item: SelectOption = { value: label };
-                    return item;
-                  }))
-                    .selected(idx < this.conditionOps.length ? this.opIds.indexOf(this.conditionOps[idx]) : 0)
-                    .value(idx < this.conditionOps.length ? (this.opLabels[this.opIds.indexOf(this.conditionOps[idx])] || '=') : '=')
-                    .font({ size: 13 })
-                    .onSelect((index: number) => {
-                      let newOps = this.conditionOps.slice();
-                      newOps[idx] = this.opIds[index];
-                      this.conditionOps = newOps;
-                    })
-                    .width(70)
-                    .height(36)
-
-                  // Value input
-                  TextInput({ placeholder: I18n.t('rules.value'), text: idx < this.conditionValues.length ? this.conditionValues[idx] : '' })
-                    .onChange((val: string) => {
-                      let newVals = this.conditionValues.slice();
-                      newVals[idx] = val;
-                      this.conditionValues = newVals;
-                    })
-                    .layoutWeight(1)
-                    .height(36)
-                    .fontSize(13)
-
-                  // Remove button
-                  Text('\u2716')
-                    .fontSize(16)
-                    .fontColor('#FF3B30')
-                    .padding(4)
-                    .onClick(() => { this.removeConditionRow(idx); })
-                }
-                .width('100%')
-              }, (key: string, idx: number) => 'cond_' + idx.toString())
-
-              Text(I18n.t('rules.addCondition'))
-                .fontSize(13)
-                .fontColor('#007AFF')
-                .onClick(() => { this.addConditionRow(); })
-
-              // Action type
-              Text(I18n.t('rules.actionType'))
-                .fontSize(14)
-                .fontWeight(FontWeight.Medium)
-                .fontColor('#1A1A1A')
-                .width('100%')
-
-              Row({ space: 8 }) {
-                ForEach(this.actionTypes, (label: string, idx: number) => {
-                  Text(label)
-                    .fontSize(13)
-                    .fontColor(this.actionType === idx ? Color.White : '#1A1A1A')
-                    .backgroundColor(this.actionType === idx ? '#007AFF' : '#F0F0F0')
-                    .padding({ left: 16, right: 16, top: 8, bottom: 8 })
-                    .borderRadius(16)
-                    .onClick(() => { this.actionType = idx; })
-                }, (label: string) => label)
-              }
-
-              // Action payload
-              TextInput({ placeholder: I18n.t('rules.payloadPlaceholder') })
-                .onChange((val: string) => { this.actionPayload = val; })
-                .width('100%')
-                .height(44)
-
-              // Cooldown
-              Text(I18n.t('rules.cooldown'))
-                .fontSize(14)
-                .fontWeight(FontWeight.Medium)
-                .fontColor('#1A1A1A')
-                .width('100%')
-
-              Flex({ wrap: FlexWrap.Wrap }) {
-                ForEach(this.cooldownOptions, (opt: CooldownOption, idx: number) => {
-                  Text(opt.label)
-                    .fontSize(12)
-                    .fontColor(this.selectedCooldown === idx ? Color.White : '#1A1A1A')
-                    .backgroundColor(this.selectedCooldown === idx ? '#007AFF' : '#F0F0F0')
-                    .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-                    .borderRadius(16)
-                    .margin(3)
-                    .onClick(() => { this.selectedCooldown = idx; })
-                }, (opt: CooldownOption, idx: number) => 'cd_' + idx.toString())
-              }
-              .width('100%')
-
-              // Buttons
-              Row({ space: 12 }) {
-                Button(I18n.t('rules.cancel'))
-                  .fontSize(14)
-                  .backgroundColor('#F0F0F0')
-                  .fontColor('#1A1A1A')
-                  .layoutWeight(1)
-                  .onClick(() => { this.showAddDialog = false; })
-                Button(I18n.t('rules.save'))
-                  .fontSize(14)
-                  .backgroundColor('#007AFF')
-                  .fontColor(Color.White)
-                  .layoutWeight(1)
-                  .onClick(() => { this.doAddRule(); })
-              }
-              .width('100%')
-              .margin({ top: 8 })
-            }
-            .width('100%')
-            .padding(20)
-          }
-          .width('85%')
-          .constraintSize({ maxHeight: '80%' })
-          .backgroundColor(Color.White)
-          .borderRadius(16)
-          .shadow({ radius: 20, color: '#40000000' })
-          .onClick(() => {})
-        }
-        .width('100%')
-        .height('100%')
-        .backgroundColor('#80000000')
-        .justifyContent(FlexAlign.Center)
-        .onClick(() => { this.showAddDialog = false; })
+      // Content
+      if (this.activeTab === 0) {
+        this.RulesList()
+      } else if (this.activeTab === 1) {
+        this.TemplateList()
+      } else {
+        this.AdvancedForm()
       }
     }
     .width('100%')
     .height('100%')
+    .backgroundColor('#F2F2F7')
   }
+
+  @Builder
+  TabButton(label: string, index: number) {
+    Text(label)
+      .fontSize(13)
+      .fontColor(this.activeTab === index ? '#007AFF' : '#666666')
+      .fontWeight(this.activeTab === index ? FontWeight.Bold : FontWeight.Normal)
+      .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+      .borderWidth({ bottom: this.activeTab === index ? 2 : 0 })
+      .borderColor('#007AFF')
+      .onClick(() => {
+        this.activeTab = index;
+        if (index === 0) this.refreshRules();
+      })
+  }
+
+  // ==================== Tab 0: Rules List ====================
+  @Builder
+  RulesList() {
+    Scroll() {
+      Column({ space: 10 }) {
+        if (this.rules.length === 0) {
+          Text('暂无规则')
+            .fontSize(14)
+            .fontColor('#999999')
+            .textAlign(TextAlign.Center)
+            .padding(40)
+            .width('100%')
+        } else {
+          ForEach(this.rules, (rule: ContextRule) => {
+            Column({ space: 6 }) {
+              Row() {
+                // Tier badge
+                if (this.getTierLabel(rule).length > 0) {
+                  Text(this.getTierLabel(rule))
+                    .fontSize(10)
+                    .fontColor(Color.White)
+                    .backgroundColor(this.getTierColor(rule))
+                    .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                    .borderRadius(6)
+                    .margin({ right: 6 })
+                }
+
+                Text(rule.name)
+                  .fontSize(15)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor('#1A1A1A')
+                  .layoutWeight(1)
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+                // Custom/Built-in badge
+                Text(this.engine.isUserRule(rule.id) ? '自定义' : '内置')
+                  .fontSize(10)
+                  .fontColor(this.engine.isUserRule(rule.id) ? '#007AFF' : '#999999')
+                  .backgroundColor(this.engine.isUserRule(rule.id) ? '#E6F0FF' : '#F0F0F0')
+                  .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                  .borderRadius(8)
+                  .margin({ right: 8 })
+
+                Toggle({ type: ToggleType.Switch, isOn: rule.enabled })
+                  .selectedColor('#007AFF')
+                  .onChange(async (isOn: boolean) => {
+                    await this.engine.toggleRule(rule.id, isOn);
+                    this.refreshRules();
+                  })
+              }
+              .width('100%')
+
+              Text(this.getConditionSummary(rule.conditions))
+                .fontSize(12)
+                .fontColor('#666666')
+                .maxLines(2)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .width('100%')
+
+              Row() {
+                Text(`${rule.action.type === 'alert' ? '⚠️' : rule.action.type === 'notification' ? '🔔' : '💡'} ${rule.action.payload}`)
+                  .fontSize(12)
+                  .fontColor('#999999')
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .layoutWeight(1)
+
+                if (this.engine.isUserRule(rule.id)) {
+                  Text('删除')
+                    .fontSize(12)
+                    .fontColor('#FF3B30')
+                    .padding({ left: 8 })
+                    .onClick(async () => {
+                      await this.engine.removeRule(rule.id);
+                      this.refreshRules();
+                    })
+                }
+              }
+              .width('100%')
+            }
+            .width('100%')
+            .padding(14)
+            .backgroundColor(Color.White)
+            .borderRadius(12)
+          }, (rule: ContextRule) => rule.id + '_' + (rule.enabled ? '1' : '0'))
+        }
+      }
+      .padding({ left: 16, right: 16, top: 12, bottom: 40 })
+    }
+    .layoutWeight(1)
+  }
+
+  // ==================== Tab 1: Scene Templates ====================
+  @Builder
+  TemplateList() {
+    if (this.selectedTemplate !== null) {
+      // Template detail / customize
+      this.TemplateDetail()
+    } else {
+      Scroll() {
+        Column({ space: 10 }) {
+          // Group by category
+          Text('🧑 人（用户状态）')
+            .fontSize(14).fontWeight(FontWeight.Bold).fontColor('#1A1A1A').padding({ top: 8, bottom: 4 }).width('100%')
+          ForEach(this.templates.filter((t: SceneTemplate) => t.category === 'person'), (tpl: SceneTemplate) => {
+            this.TemplateCard(tpl)
+          }, (tpl: SceneTemplate) => tpl.id)
+
+          Text('📱 手机（设备状态）')
+            .fontSize(14).fontWeight(FontWeight.Bold).fontColor('#1A1A1A').padding({ top: 12, bottom: 4 }).width('100%')
+          ForEach(this.templates.filter((t: SceneTemplate) => t.category === 'phone'), (tpl: SceneTemplate) => {
+            this.TemplateCard(tpl)
+          }, (tpl: SceneTemplate) => tpl.id)
+
+          Text('🌍 环境（场景位置）')
+            .fontSize(14).fontWeight(FontWeight.Bold).fontColor('#1A1A1A').padding({ top: 12, bottom: 4 }).width('100%')
+          ForEach(this.templates.filter((t: SceneTemplate) => t.category === 'environment'), (tpl: SceneTemplate) => {
+            this.TemplateCard(tpl)
+          }, (tpl: SceneTemplate) => tpl.id)
+        }
+        .padding({ left: 16, right: 16, top: 8, bottom: 40 })
+      }
+      .layoutWeight(1)
+    }
+  }
+
+  @Builder
+  TemplateCard(tpl: SceneTemplate) {
+    Row({ space: 12 }) {
+      Text(tpl.icon)
+        .fontSize(28)
+
+      Column({ space: 2 }) {
+        Row({ space: 6 }) {
+          Text(tpl.name)
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#1A1A1A')
+          Text(`T${tpl.tier}`)
+            .fontSize(10)
+            .fontColor(Color.White)
+            .backgroundColor(tpl.tier === 0 ? '#34C759' : tpl.tier === 1 ? '#007AFF' : '#FF9500')
+            .padding({ left: 5, right: 5, top: 1, bottom: 1 })
+            .borderRadius(4)
+        }
+        Text(tpl.description)
+          .fontSize(12)
+          .fontColor('#666666')
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      Text('添加 →')
+        .fontSize(13)
+        .fontColor('#007AFF')
+    }
+    .width('100%')
+    .padding(14)
+    .backgroundColor(Color.White)
+    .borderRadius(12)
+    .onClick(() => { this.selectTemplate(tpl); })
+  }
+
+  private getKeyLabel(key: string): string {
+    let info = this.contextKeys.find((k: ContextKeyInfo) => k.key === key);
+    return info ? info.label : key;
+  }
+
+  private getOpSymbol(op: string): string {
+    if (op === 'eq') return '=';
+    if (op === 'in') return '∈';
+    if (op === 'gte') return '≥';
+    if (op === 'lte') return '≤';
+    if (op === 'neq') return '≠';
+    if (op === 'gt') return '>';
+    if (op === 'lt') return '<';
+    return op;
+  }
+
+  @Builder
+  TemplateDetail() {
+    Scroll() {
+      Column({ space: 14 }) {
+        // Back
+        Row() {
+          Text('← 返回模板列表')
+            .fontSize(14)
+            .fontColor('#007AFF')
+            .onClick(() => { this.selectedTemplate = null; })
+        }
+        .width('100%')
+
+        // Template info
+        Row({ space: 12 }) {
+          Text(this.selectedTemplate!.icon).fontSize(36)
+          Column({ space: 4 }) {
+            Text(this.selectedTemplate!.name).fontSize(18).fontWeight(FontWeight.Bold).fontColor('#1A1A1A')
+            Text(this.selectedTemplate!.description).fontSize(13).fontColor('#666666')
+          }
+        }
+        .width('100%')
+
+        // Conditions (read-only display)
+        Text('触发条件')
+          .fontSize(14).fontWeight(FontWeight.Medium).fontColor('#1A1A1A').width('100%')
+
+        Column({ space: 6 }) {
+          ForEach(this.selectedTemplate!.conditions, (c: ContextCondition, idx: number) => {
+            Row({ space: 6 }) {
+              Text(this.getKeyLabel(c.key))
+                .fontSize(13).fontColor('#333333')
+              Text(this.getOpSymbol(c.op))
+                .fontSize(13).fontColor('#007AFF')
+              Text(c.value)
+                .fontSize(13).fontColor('#333333')
+                .backgroundColor('#F0F0F0')
+                .padding({ left: 8, right: 8, top: 2, bottom: 2 })
+                .borderRadius(6)
+            }
+          }, (c: ContextCondition, idx: number) => 'tc_' + idx.toString())
+        }
+        .width('100%')
+        .padding(12)
+        .backgroundColor('#F8F8FC')
+        .borderRadius(10)
+
+        // Editable payload
+        Text('提醒内容')
+          .fontSize(14).fontWeight(FontWeight.Medium).fontColor('#1A1A1A').width('100%')
+
+        TextArea({ text: this.templatePayload, placeholder: '输入提醒内容...' })
+          .onChange((val: string) => { this.templatePayload = val; })
+          .width('100%')
+          .height(80)
+          .fontSize(14)
+          .borderRadius(10)
+
+        // Save
+        Button('✅ 添加规则')
+          .width('100%')
+          .height(44)
+          .fontSize(15)
+          .backgroundColor('#007AFF')
+          .fontColor(Color.White)
+          .borderRadius(10)
+          .onClick(() => { this.saveFromTemplate(); })
+      }
+      .padding({ left: 16, right: 16, top: 12, bottom: 40 })
+    }
+    .layoutWeight(1)
+  }
+
+  // ==================== Tab 2: Advanced Form ====================
+  @Builder
+  AdvancedForm() {
+    Scroll() {
+      Column({ space: 12 }) {
+        Text('自定义规则')
+          .fontSize(16).fontWeight(FontWeight.Bold).fontColor('#1A1A1A').width('100%')
+
+        // Rule name
+        TextInput({ placeholder: '规则名称' })
+          .onChange((val: string) => { this.newName = val; })
+          .width('100%').height(44).borderRadius(10)
+
+        // Conditions
+        Text('触发条件')
+          .fontSize(14).fontWeight(FontWeight.Medium).fontColor('#1A1A1A').width('100%')
+
+        ForEach(this.conditionRows, (row: ConditionRow, idx: number) => {
+          Column({ space: 6 }) {
+            Row({ space: 6 }) {
+              // Key selector - show label with emoji
+              Select(this.contextKeys.map((k: ContextKeyInfo) => {
+                let item: SelectOption = { value: k.label };
+                return item;
+              }))
+                .selected(row.keyIndex)
+                .value(this.contextKeys[row.keyIndex]?.label || '选择...')
+                .font({ size: 12 })
+                .onSelect((index: number) => {
+                  let newRows = this.conditionRows.slice();
+                  newRows[idx] = { keyIndex: index, opIndex: row.opIndex, value: '' };
+                  this.conditionRows = newRows;
+                })
+                .layoutWeight(1)
+                .height(36)
+
+              // Op selector
+              Select([
+                { value: '=' } as SelectOption,
+                { value: '≠' } as SelectOption,
+                { value: '>' } as SelectOption,
+                { value: '<' } as SelectOption,
+                { value: '≥' } as SelectOption,
+                { value: '≤' } as SelectOption,
+                { value: '包含' } as SelectOption
+              ])
+                .selected(row.opIndex)
+                .value(['=', '≠', '>', '<', '≥', '≤', '包含'][row.opIndex])
+                .font({ size: 12 })
+                .onSelect((index: number) => {
+                  let newRows = this.conditionRows.slice();
+                  newRows[idx] = { keyIndex: row.keyIndex, opIndex: index, value: row.value };
+                  this.conditionRows = newRows;
+                })
+                .width(70)
+                .height(36)
+
+              Text('✖')
+                .fontSize(16).fontColor('#FF3B30').padding(4)
+                .onClick(() => { this.removeConditionRow(idx); })
+            }
+            .width('100%')
+
+            // Value: show presets if available, otherwise text input
+            if (this.contextKeys[row.keyIndex]?.presets && this.contextKeys[row.keyIndex].presets!.length > 0) {
+              Flex({ wrap: FlexWrap.Wrap }) {
+                ForEach(this.contextKeys[row.keyIndex].presets!, (preset: string) => {
+                  Text(preset)
+                    .fontSize(12)
+                    .fontColor(row.value === preset ? Color.White : '#333333')
+                    .backgroundColor(row.value === preset ? '#007AFF' : '#F0F0F0')
+                    .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+                    .borderRadius(12)
+                    .margin(3)
+                    .onClick(() => {
+                      let newRows = this.conditionRows.slice();
+                      newRows[idx] = { keyIndex: row.keyIndex, opIndex: row.opIndex, value: preset };
+                      this.conditionRows = newRows;
+                    })
+                }, (preset: string) => preset)
+              }
+              .width('100%')
+            }
+
+            TextInput({
+              placeholder: this.contextKeys[row.keyIndex]?.hint || '值',
+              text: row.value
+            })
+              .onChange((val: string) => {
+                let newRows = this.conditionRows.slice();
+                newRows[idx] = { keyIndex: row.keyIndex, opIndex: row.opIndex, value: val };
+                this.conditionRows = newRows;
+              })
+              .width('100%').height(36).fontSize(13).borderRadius(8)
+          }
+          .width('100%')
+          .padding(10)
+          .backgroundColor('#F8F8FC')
+          .borderRadius(10)
+        }, (row: ConditionRow, idx: number) => 'cr_' + idx.toString())
+
+        Text('+ 添加条件')
+          .fontSize(13).fontColor('#007AFF')
+          .onClick(() => { this.addConditionRow(); })
+
+        // Action type
+        Text('动作类型')
+          .fontSize(14).fontWeight(FontWeight.Medium).fontColor('#1A1A1A').width('100%')
+
+        Row({ space: 8 }) {
+          ForEach(this.actionTypeLabels, (label: string, idx: number) => {
+            Text(label)
+              .fontSize(13)
+              .fontColor(this.actionType === idx ? Color.White : '#1A1A1A')
+              .backgroundColor(this.actionType === idx ? '#007AFF' : '#F0F0F0')
+              .padding({ left: 14, right: 14, top: 8, bottom: 8 })
+              .borderRadius(16)
+              .onClick(() => { this.actionType = idx; })
+          }, (label: string) => label)
+        }
+
+        // Action payload
+        TextArea({ placeholder: '提醒内容...' })
+          .onChange((val: string) => { this.actionPayload = val; })
+          .width('100%').height(80).fontSize(14).borderRadius(10)
+
+        // Cooldown
+        Text('冷却时间')
+          .fontSize(14).fontWeight(FontWeight.Medium).fontColor('#1A1A1A').width('100%')
+
+        Flex({ wrap: FlexWrap.Wrap }) {
+          ForEach(this.cooldownOptions, (opt: CooldownOption, idx: number) => {
+            Text(opt.label)
+              .fontSize(12)
+              .fontColor(this.selectedCooldown === idx ? Color.White : '#1A1A1A')
+              .backgroundColor(this.selectedCooldown === idx ? '#007AFF' : '#F0F0F0')
+              .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+              .borderRadius(16)
+              .margin(3)
+              .onClick(() => { this.selectedCooldown = idx; })
+          }, (opt: CooldownOption, idx: number) => 'cd_' + idx.toString())
+        }
+        .width('100%')
+
+        // Save
+        Button('✅ 保存规则')
+          .width('100%')
+          .height(44)
+          .fontSize(15)
+          .backgroundColor('#007AFF')
+          .fontColor(Color.White)
+          .borderRadius(10)
+          .margin({ top: 8 })
+          .onClick(() => { this.doAddAdvanced(); })
+      }
+      .padding({ left: 16, right: 16, top: 12, bottom: 40 })
+    }
+    .layoutWeight(1)
+  }
+}
+
+/** Condition row state for advanced mode */
+interface ConditionRow {
+  keyIndex: number;
+  opIndex: number;
+  value: string;
 }
