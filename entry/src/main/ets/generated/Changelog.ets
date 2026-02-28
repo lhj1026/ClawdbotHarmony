@@ -8,11 +8,11 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.58.13';
+export const APP_VERSION: string = '2.58.14';
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    version: '2.58.13',
+    version: '2.58.14',
     date: '2026-02-28',
     features: [
       '情景智能v2: 分层规则系统(Tier 0/1/2), 删除不准确的GPS围栏规则',
@@ -44,6 +44,8 @@ export const CHANGELOG: ChangelogEntry[] = [
       '修复: scanWifi检测到WiFi变化时触发onWifiConnected/onWifiDisconnected (之前是死代码)',
       '数据托盘可折叠: 4个分类(人/手机/环境/数字)点击标题即可展开收起, 默认只展开"人"',
       '修复: scanWifi/refreshWifiAsync SSID引号问题 — 系统返回带引号的SSID导致每次都检测为变化',
+      'WiFi诊断A2UI: 连接WiFi时弹出诊断卡片(SSID/GPS/来源), 方便排查地点发现问题',
+      'A2UI确认分离: 场景确认(位置+活动)和推荐反馈(👍/👎)分成两个独立卡片',
     ],
     fixes: [
       '数据分类优化: GPS速度归环境, 心率归人, 屏幕/姿态归手机',
@@ -598,4 +600,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.58.13';
+export const LATEST_VERSION: string = '2.58.14';

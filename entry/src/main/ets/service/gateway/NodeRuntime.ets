@@ -62,7 +62,7 @@ import { FederatedSync } from '../context/FederatedSync';
 import { PushCapability } from './PushCapability';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.58.13';
+const APP_VERSION = '2.58.14';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -1521,19 +1521,32 @@ export class NodeRuntime {
       ? `{"type":"text","text":"${detectedSummary}","style":{"fontSize":14,"color":"#4CAF50"}},`
       : '';
 
-    let jsonl = `{"type":"form","id":"scene_correct_${Date.now()}","children":[` +
-      `{"type":"text","text":"你现在在哪儿，在干什么？","style":{"fontSize":16,"fontWeight":"bold"}},` +
+    // 卡片1：场景确认（位置+活动）
+    let sceneJsonl = `{"type":"form","id":"scene_correct_${Date.now()}","children":[` +
+      `{"type":"text","text":"📍 场景确认","style":{"fontSize":16,"fontWeight":"bold"}},` +
       summaryLine +
-      `{"type":"text","text":"可同时选择位置和活动","style":{"fontSize":13,"color":"#888"}},` +
+      `{"type":"text","text":"你现在在哪儿？在做什么？","style":{"fontSize":13,"color":"#888"}},` +
       `{"type":"text","text":"📍 位置","style":{"fontSize":14,"fontWeight":"bold"}},` +
       `{"type":"choice","id":"loc_picker","options":${locJson}},` +
-      `{"type":"text","text":"🎯 在做什么","style":{"fontSize":14,"fontWeight":"bold"}},` +
+      `{"type":"text","text":"🎯 活动","style":{"fontSize":14,"fontWeight":"bold"}},` +
       `{"type":"choice","id":"act_picker","options":${actJson}},` +
-      `{"type":"button","text":"✅ 确认","variant":"primary","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"scene_correct_combined"}}}},` +
-      `{"type":"button","text":"🙅 跳过","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"dismiss"}}}}` +
+      `{"type":"button","text":"✅ 确认场景","variant":"primary","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"scene_correct_combined"}}}},` +
+      `{"type":"button","text":"跳过","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"dismiss"}}}}` +
       `]}`;
+    this.dispatchA2UI('push', sceneJsonl);
 
-    this.dispatchA2UI('push', jsonl);
+    // 卡片2：推荐反馈（独立的 👍/👎）— 延迟1秒弹出避免同时出现
+    setTimeout(() => {
+      let recJsonl = `{"type":"form","id":"rec_feedback_${Date.now()}","children":[` +
+        `{"type":"text","text":"💡 推荐反馈","style":{"fontSize":16,"fontWeight":"bold"}},` +
+        `{"type":"text","text":"刚才的推荐有用吗？","style":{"fontSize":13,"color":"#888"}},` +
+        `{"type":"row","children":[` +
+          `{"type":"button","text":"👍 有用","variant":"primary","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"positive"}}}},` +
+          `{"type":"button","text":"👎 没用","variant":"secondary","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"negative"}}}},` +
+          `{"type":"button","text":"跳过","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"dismiss"}}}}` +
+        `]}]}`;
+      this.dispatchA2UI('push', recJsonl);
+    }, 1000);
   }
 
   private showSceneSnapshotCard(): void {
