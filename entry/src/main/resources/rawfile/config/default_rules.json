@@ -5,13 +5,21 @@
     "tier": 0,
     "category": "phone",
     "conditions": [
-      { "key": "batteryLevel", "op": "lte", "value": "15" },
-      { "key": "isCharging", "op": "eq", "value": "false" }
+      {
+        "key": "batteryLevel",
+        "op": "lte",
+        "value": "30"
+      },
+      {
+        "key": "isCharging",
+        "op": "eq",
+        "value": "false"
+      }
     ],
     "action": {
       "id": "warn_low_battery",
       "type": "notification",
-      "payload": "电量不足 15%，建议省电模式或尽快充电 🔋"
+      "payload": "电量不足 30%，建议省电模式或尽快充电 🔋"
     },
     "priority": 3.0,
     "cooldownMs": 1800000,
@@ -23,8 +31,16 @@
     "tier": 0,
     "category": "phone",
     "conditions": [
-      { "key": "batteryLevel", "op": "lte", "value": "5" },
-      { "key": "isCharging", "op": "eq", "value": "false" }
+      {
+        "key": "batteryLevel",
+        "op": "lte",
+        "value": "5"
+      },
+      {
+        "key": "isCharging",
+        "op": "eq",
+        "value": "false"
+      }
     ],
     "action": {
       "id": "warn_critical_battery",
@@ -41,8 +57,16 @@
     "tier": 0,
     "category": "person",
     "conditions": [
-      { "key": "hour", "op": "gte", "value": "23" },
-      { "key": "isCharging", "op": "eq", "value": "true" }
+      {
+        "key": "hour",
+        "op": "gte",
+        "value": "23"
+      },
+      {
+        "key": "isCharging",
+        "op": "eq",
+        "value": "true"
+      }
     ],
     "action": {
       "id": "suggest_sleep",
@@ -59,8 +83,16 @@
     "tier": 0,
     "category": "environment",
     "conditions": [
-      { "key": "timeOfDay", "op": "eq", "value": "morning" },
-      { "key": "isWeekend", "op": "eq", "value": "true" }
+      {
+        "key": "timeOfDay",
+        "op": "eq",
+        "value": "morning"
+      },
+      {
+        "key": "isWeekend",
+        "op": "eq",
+        "value": "true"
+      }
     ],
     "action": {
       "id": "greet_weekend",
@@ -77,9 +109,21 @@
     "tier": 0,
     "category": "environment",
     "conditions": [
-      { "key": "timeOfDay", "op": "eq", "value": "morning" },
-      { "key": "isWeekend", "op": "eq", "value": "false" },
-      { "key": "isCharging", "op": "eq", "value": "false" }
+      {
+        "key": "timeOfDay",
+        "op": "eq",
+        "value": "morning"
+      },
+      {
+        "key": "isWeekend",
+        "op": "eq",
+        "value": "false"
+      },
+      {
+        "key": "isCharging",
+        "op": "eq",
+        "value": "false"
+      }
     ],
     "action": {
       "id": "greet_workday",
@@ -96,8 +140,16 @@
     "tier": 1,
     "category": "environment",
     "conditions": [
-      { "key": "wifiGeofence", "op": "eq", "value": "home" },
-      { "key": "timeOfDay", "op": "in", "value": "afternoon,evening,night" }
+      {
+        "key": "wifiGeofence",
+        "op": "eq",
+        "value": "home"
+      },
+      {
+        "key": "timeOfDay",
+        "op": "in",
+        "value": "afternoon,evening,night"
+      }
     ],
     "action": {
       "id": "greet_home",
@@ -114,8 +166,16 @@
     "tier": 1,
     "category": "environment",
     "conditions": [
-      { "key": "wifiGeofence", "op": "eq", "value": "work" },
-      { "key": "isWeekend", "op": "eq", "value": "false" }
+      {
+        "key": "wifiGeofence",
+        "op": "eq",
+        "value": "work"
+      },
+      {
+        "key": "isWeekend",
+        "op": "eq",
+        "value": "false"
+      }
     ],
     "action": {
       "id": "greet_work",
@@ -132,8 +192,16 @@
     "tier": 1,
     "category": "environment",
     "conditions": [
-      { "key": "wifiLostCategory", "op": "eq", "value": "home" },
-      { "key": "timeOfDay", "op": "in", "value": "dawn,morning" }
+      {
+        "key": "wifiLostCategory",
+        "op": "eq",
+        "value": "home"
+      },
+      {
+        "key": "timeOfDay",
+        "op": "in",
+        "value": "dawn,morning"
+      }
     ],
     "action": {
       "id": "brief_leave_home",
@@ -150,9 +218,21 @@
     "tier": 1,
     "category": "environment",
     "conditions": [
-      { "key": "wifiLostCategory", "op": "eq", "value": "work" },
-      { "key": "timeOfDay", "op": "in", "value": "afternoon,evening,night" },
-      { "key": "isWeekend", "op": "eq", "value": "false" }
+      {
+        "key": "wifiLostCategory",
+        "op": "eq",
+        "value": "work"
+      },
+      {
+        "key": "timeOfDay",
+        "op": "in",
+        "value": "afternoon,evening,night"
+      },
+      {
+        "key": "isWeekend",
+        "op": "eq",
+        "value": "false"
+      }
     ],
     "action": {
       "id": "suggest_leave_work",
@@ -169,9 +249,21 @@
     "tier": 1,
     "category": "person",
     "conditions": [
-      { "key": "wifiGeofence", "op": "eq", "value": "home" },
-      { "key": "hour", "op": "gte", "value": "23" },
-      { "key": "isCharging", "op": "eq", "value": "true" }
+      {
+        "key": "wifiGeofence",
+        "op": "eq",
+        "value": "home"
+      },
+      {
+        "key": "hour",
+        "op": "gte",
+        "value": "23"
+      },
+      {
+        "key": "isCharging",
+        "op": "eq",
+        "value": "true"
+      }
     ],
     "action": {
       "id": "set_sleep_mode",
@@ -188,7 +280,11 @@
     "tier": 2,
     "category": "person",
     "conditions": [
-      { "key": "bt_in_vehicle", "op": "eq", "value": "true" }
+      {
+        "key": "bt_in_vehicle",
+        "op": "eq",
+        "value": "true"
+      }
     ],
     "action": {
       "id": "enter_driving_mode",
@@ -205,9 +301,21 @@
     "tier": 2,
     "category": "person",
     "conditions": [
-      { "key": "step_count_today", "op": "gte", "value": "100" },
-      { "key": "wifiSsid", "op": "eq", "value": "" },
-      { "key": "isCharging", "op": "eq", "value": "false" }
+      {
+        "key": "step_count_today",
+        "op": "gte",
+        "value": "100"
+      },
+      {
+        "key": "wifiSsid",
+        "op": "eq",
+        "value": ""
+      },
+      {
+        "key": "isCharging",
+        "op": "eq",
+        "value": "false"
+      }
     ],
     "action": {
       "id": "suggest_outdoor_walk",
@@ -224,12 +332,30 @@
     "tier": 2,
     "category": "person",
     "conditions": [
-      { "key": "activityDuration", "op": "gte", "value": "2400" },
-      { "key": "step_count_today", "op": "eq", "value": "0" },
-      { "key": "timeOfDay", "op": "in", "value": "morning,afternoon" }
+      {
+        "key": "activityDuration",
+        "op": "gte",
+        "value": "2400"
+      },
+      {
+        "key": "step_count_today",
+        "op": "eq",
+        "value": "0"
+      },
+      {
+        "key": "timeOfDay",
+        "op": "in",
+        "value": "morning,afternoon"
+      }
     ],
     "excludeConditions": [
-      [{ "key": "isSleeping", "op": "eq", "value": "true" }]
+      [
+        {
+          "key": "isSleeping",
+          "op": "eq",
+          "value": "true"
+        }
+      ]
     ],
     "action": {
       "id": "alert_sedentary",
@@ -246,9 +372,21 @@
     "tier": 2,
     "category": "environment",
     "conditions": [
-      { "key": "bt_in_vehicle", "op": "eq", "value": "true" },
-      { "key": "timeOfDay", "op": "eq", "value": "morning" },
-      { "key": "isWeekend", "op": "eq", "value": "false" }
+      {
+        "key": "bt_in_vehicle",
+        "op": "eq",
+        "value": "true"
+      },
+      {
+        "key": "timeOfDay",
+        "op": "eq",
+        "value": "morning"
+      },
+      {
+        "key": "isWeekend",
+        "op": "eq",
+        "value": "false"
+      }
     ],
     "action": {
       "id": "suggest_commute",
@@ -265,9 +403,21 @@
     "tier": 1,
     "category": "person",
     "conditions": [
-      { "key": "wifiGeofence", "op": "eq", "value": "home" },
-      { "key": "hour", "op": "gte", "value": "11" },
-      { "key": "hour", "op": "lte", "value": "13" }
+      {
+        "key": "wifiGeofence",
+        "op": "eq",
+        "value": "home"
+      },
+      {
+        "key": "hour",
+        "op": "gte",
+        "value": "11"
+      },
+      {
+        "key": "hour",
+        "op": "lte",
+        "value": "13"
+      }
     ],
     "action": {
       "id": "suggest_lunch",
@@ -284,9 +434,21 @@
     "tier": 1,
     "category": "person",
     "conditions": [
-      { "key": "wifiGeofence", "op": "eq", "value": "home" },
-      { "key": "hour", "op": "gte", "value": "17" },
-      { "key": "hour", "op": "lte", "value": "19" }
+      {
+        "key": "wifiGeofence",
+        "op": "eq",
+        "value": "home"
+      },
+      {
+        "key": "hour",
+        "op": "gte",
+        "value": "17"
+      },
+      {
+        "key": "hour",
+        "op": "lte",
+        "value": "19"
+      }
     ],
     "action": {
       "id": "suggest_dinner",
@@ -303,10 +465,26 @@
     "tier": 1,
     "category": "person",
     "conditions": [
-      { "key": "wifiGeofence", "op": "eq", "value": "home" },
-      { "key": "hour", "op": "gte", "value": "20" },
-      { "key": "hour", "op": "lte", "value": "22" },
-      { "key": "motionState", "op": "eq", "value": "still" }
+      {
+        "key": "wifiGeofence",
+        "op": "eq",
+        "value": "home"
+      },
+      {
+        "key": "hour",
+        "op": "gte",
+        "value": "20"
+      },
+      {
+        "key": "hour",
+        "op": "lte",
+        "value": "22"
+      },
+      {
+        "key": "motionState",
+        "op": "eq",
+        "value": "still"
+      }
     ],
     "action": {
       "id": "suggest_relax",
@@ -323,9 +501,21 @@
     "tier": 1,
     "category": "environment",
     "conditions": [
-      { "key": "wifiGeofence", "op": "eq", "value": "work" },
-      { "key": "cal_hasUpcoming", "op": "eq", "value": "true" },
-      { "key": "cal_nextMinutes", "op": "lte", "value": "15" }
+      {
+        "key": "wifiGeofence",
+        "op": "eq",
+        "value": "work"
+      },
+      {
+        "key": "cal_hasUpcoming",
+        "op": "eq",
+        "value": "true"
+      },
+      {
+        "key": "cal_nextMinutes",
+        "op": "lte",
+        "value": "15"
+      }
     ],
     "action": {
       "id": "meeting_reminder",
@@ -342,7 +532,11 @@
     "tier": 1,
     "category": "environment",
     "conditions": [
-      { "key": "wifiGeofence", "op": "eq", "value": "transit" }
+      {
+        "key": "wifiGeofence",
+        "op": "eq",
+        "value": "transit"
+      }
     ],
     "action": {
       "id": "transit_info",
@@ -359,7 +553,11 @@
     "tier": 1,
     "category": "environment",
     "conditions": [
-      { "key": "wifiGeofence", "op": "eq", "value": "restaurant" }
+      {
+        "key": "wifiGeofence",
+        "op": "eq",
+        "value": "restaurant"
+      }
     ],
     "action": {
       "id": "restaurant_info",
@@ -376,7 +574,11 @@
     "tier": 1,
     "category": "environment",
     "conditions": [
-      { "key": "wifiGeofence", "op": "eq", "value": "gym" }
+      {
+        "key": "wifiGeofence",
+        "op": "eq",
+        "value": "gym"
+      }
     ],
     "action": {
       "id": "gym_start",

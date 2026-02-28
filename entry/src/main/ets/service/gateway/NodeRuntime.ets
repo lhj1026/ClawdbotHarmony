@@ -62,7 +62,7 @@ import { FederatedSync } from '../context/FederatedSync';
 import { PushCapability } from './PushCapability';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.58.16';
+const APP_VERSION = '2.58.17';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -1089,7 +1089,7 @@ export class NodeRuntime {
       let action = (parsed['action'] ?? parsed) as Record<string, Object>;
       let name = action['name'] as string;
       if (name !== 'context_feedback' && name !== 'view_snapshot' && 
-          name !== 'new_place_save' && name !== 'new_place_rename' && name !== 'new_place_ignore' &&
+          name !== 'new_place_save' && name !== 'new_place_rename' && name !== 'new_place_ignore' && name !== 'new_place_edit' && name !== 'new_place_update' &&
           name !== 'place_confirm') return;
 
       let ctx = action['context'] as Record<string, string>;
@@ -1244,6 +1244,48 @@ export class NodeRuntime {
         this.saveNewPlace(lat, lng, '', '新地点', 'other');
       } else if (name === 'new_place_ignore') {
         this.sendFeedbackResponse('👌 ' + I18n.t('ctx.fb.ignoredPlace'));
+      } else if (name === 'new_place_edit') {
+        // 用户点击"修改名称/类别" — 弹出选择卡片
+        let lat = parseFloat(ctx['lat'] ?? '0');
+        let lng = parseFloat(ctx['lng'] ?? '0');
+        let wifi = ctx['wifi'] ?? '';
+        let currentName = ctx['name'] ?? '';
+        let currentCat = ctx['category'] ?? 'other';
+        this.showPlaceEditCard(lat, lng, wifi, currentName, currentCat);
+      } else if (name === 'new_place_update') {
+        // 用户选择了新的名称/类别，更新已保存的围栏
+        let lat = parseFloat(ctx['lat'] ?? '0');
+        let lng = parseFloat(ctx['lng'] ?? '0');
+        let wifi = ctx['wifi'] ?? '';
+        let newName = ctx['name'] ?? '新地点';
+        let newCat = ctx['category'] ?? 'other';
+        try {
+          let cas = ContextAwarenessService.getInstance();
+          let allGf = cas.getAllGeofences();
+          let updated = false;
+          for (let i = 0; i < allGf.length; i++) {
+            let gf = allGf[i];
+            // 匹配 WiFi 或坐标
+            if ((wifi.length > 0 && gf.learnedSignals?.wifiSSIDs?.includes(wifi)) ||
+                (Math.abs(gf.latitude - lat) < 0.001 && Math.abs(gf.longitude - lng) < 0.001)) {
+              gf.name = newName;
+              gf.category = newCat as GeofenceCategory;
+              cas.removeGeofence(gf.id);
+              gf.id = `place_${Date.now()}`;
+              cas.addGeofence(gf);
+              updated = true;
+              break;
+            }
+          }
+          if (updated) {
+            this.sendFeedbackResponse(`✅ 已更新: ${newName} (${newCat})`);
+          } else {
+            // 没找到，新建
+            this.saveNewPlace(lat, lng, wifi, newName, newCat);
+          }
+        } catch (err) {
+          this.log.error(TAG, `Failed to update place: ${(err as Error).message}`);
+        }
       } else if (name === 'place_confirm') {
         let placeId = ctx['placeId'] ?? '';
         if (placeId === 'skip') {
@@ -1319,6 +1361,47 @@ export class NodeRuntime {
     }).catch((err: Error) => {
       this.log.warn(TAG, `Action execution failed: ${err.message}`);
     });
+  }
+
+  private showPlaceEditCard(lat: number, lng: number, wifi: string, currentName: string, currentCat: string): void {
+    let escapedName = currentName.replace(/"/g, "'");
+    let escapedWifi = wifi.replace(/"/g, "'");
+    // 提供可选名称：geocoding名、WiFi名
+    let nameOptions: string[] = [];
+    if (currentName.length > 0) nameOptions.push(currentName);
+    if (wifi.length > 0 && wifi !== currentName) nameOptions.push(wifi);
+
+    let nameButtons = '';
+    for (let i = 0; i < nameOptions.length; i++) {
+      let n = nameOptions[i].replace(/"/g, "'");
+      nameButtons += `{"type":"button","text":"${n}","action":{"event":{"name":"new_place_update","context":{"lat":${lat},"lng":${lng},"wifi":"${escapedWifi}","name":"${n}","category":"${currentCat}"}}}},`;
+    }
+
+    // 分类选择按钮
+    let categories: string[][] = [
+      ['home', '🏠 家'], ['work', '🏢 公司'], ['restaurant', '🍽️ 餐饮'],
+      ['shopping', '🛒 购物'], ['gym', '💪 健身'], ['transit', '🚉 交通'],
+      ['hotel', '🏨 酒店'], ['other', '📍 其他']
+    ];
+    let catButtons = '';
+    for (let i = 0; i < categories.length; i++) {
+      let cat = categories[i][0];
+      let label = categories[i][1];
+      let variant = cat === currentCat ? '"variant":"primary",' : '';
+      catButtons += `{"type":"button","text":"${label}",${variant}"action":{"event":{"name":"new_place_update","context":{"lat":${lat},"lng":${lng},"wifi":"${escapedWifi}","name":"${escapedName}","category":"${cat}"}}}},`;
+    }
+    // Remove trailing comma
+    catButtons = catButtons.substring(0, catButtons.length - 1);
+
+    let jsonl = `{"type":"form","id":"place_edit_${Date.now()}","children":[` +
+      `{"type":"text","text":"✏️ 修改地点","style":{"fontSize":18,"fontWeight":"bold"}},` +
+      `{"type":"text","text":"选择名称:","style":{"fontSize":14,"fontWeight":"bold"}},` +
+      nameButtons +
+      `{"type":"text","text":"选择类别:","style":{"fontSize":14,"fontWeight":"bold"}},` +
+      catButtons +
+      `]}`;
+
+    this.dispatchA2UI('push', jsonl);
   }
 
   private saveNewPlace(lat: number, lng: number, wifi: string, name: string, category: string): void {
@@ -3500,20 +3583,28 @@ export class NodeRuntime {
     let rlLabel = this.getStreamRLLabel(ruleId);
     let rlBadge = rlLabel.length > 0 ? `  |  🧠 ${rlLabel}` : '';
 
-    let jsonl = `{"type":"form","id":"ctx_explore_${Date.now()}","children":[` +
+    let ts = Date.now();
+
+    // Card 1: 状态检测 (status only, with confirm button)
+    let statusCard = `{"type":"form","id":"ctx_state_${ts}","children":[` +
       `{"type":"text","text":"🔍 探索模式 — 状态检测","style":{"fontSize":18,"fontWeight":"bold"}},` +
       `{"type":"text","text":"${safeState}","style":{"fontSize":14}},` +
-      `{"type":"text","text":"─────────────────","style":{"fontSize":12,"color":"#ccc"}},` +
-      `{"type":"text","text":"💡 建议","style":{"fontSize":16,"fontWeight":"bold"}},` +
+      `{"type":"button","text":"✅ 状态正确","variant":"primary","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"state_correct"}}}},` +
+      `{"type":"button","text":"❌ 状态不准","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"state_incorrect"}}}},` +
+      `{"type":"button","text":"🔍 ${detailsText}","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"view_snapshot"}}}}` +
+      `]}`;
+
+    // Card 2: 推荐 (recommendation with feedback buttons)
+    let recCard = `{"type":"form","id":"ctx_rec_${ts}","children":[` +
+      `{"type":"text","text":"💡 建议","style":{"fontSize":18,"fontWeight":"bold"}},` +
       `{"type":"text","text":"${safeReason}","style":{"fontSize":15}},` +
       `{"type":"text","text":"📋 ${safeRuleName}  |  ${confidenceText}: ${confidence}%${rlBadge}","style":{"fontSize":12,"color":"#888"}},` +
       `{"type":"button","text":"✅ ${usefulText}","variant":"primary","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"accept"}}}},` +
       `{"type":"button","text":"❌ ${inaccurateText}","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"reject"}}}},` +
-      `{"type":"button","text":"🙈 ${dismissText}","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"dismiss"}}}},` +
-      `{"type":"button","text":"🔍 ${detailsText}","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"view_snapshot"}}}}` +
+      `{"type":"button","text":"🙈 ${dismissText}","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"dismiss"}}}}` +
       `]}`;
 
-    return jsonl;
+    return statusCard + '\n' + recCard;
   }
 
   /** Get RL learning label for a rule/arm: 探索中 / 学习中 / 已学习 */

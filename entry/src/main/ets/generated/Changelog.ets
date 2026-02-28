@@ -8,9 +8,22 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.58.16';
+export const APP_VERSION: string = '2.58.17';
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '2.58.17',
+    date: '2026-03-01',
+    features: [
+      'A2UI多卡片共存: 不同内容的卡片同时显示, 仅完全相同的内容才去重',
+      'A2UI状态与推荐分离: 探索模式的状态检测和建议推荐拆分为两个独立卡片, 分别确认',
+      '新地点自动保存: 发现新地点后自动创建围栏, 不需要每次确认. 显示轻量通知卡片, 点击可修改名称和类别',
+      '低电量提醒阈值: 15%→30%, 规则版本升级v4',
+    ],
+    fixes: [
+
+    ],
+  },
   {
     version: '2.58.16',
     date: '2026-02-28',
@@ -603,4 +616,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.58.16';
+export const LATEST_VERSION: string = '2.58.17';

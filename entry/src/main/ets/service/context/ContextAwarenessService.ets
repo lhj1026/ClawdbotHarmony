@@ -2054,24 +2054,55 @@ export class ContextAwarenessService {
     // 推断类别
     let category = this.inferCategoryFromTime();
     
-    let titleText = I18n.t('context.newPlace.title');
-    let wifiLabel = I18n.t('context.newPlace.wifi');
-    let saveAsLabel = I18n.t('context.newPlace.saveAs');
-    let renameLabel = I18n.t('context.newPlace.rename');
-    let ignoreLabel = I18n.t('context.newPlace.ignore');
+    // 自动保存地点（不需要用户确认）
+    this.autoSaveNewPlace(lat, lng, wifiSsid, placeName, category);
     
+    // 获取类别的中文显示名
+    let categoryLabels: Record<string, string> = {
+      'home': '🏠 家', 'work': '🏢 公司', 'restaurant': '🍽️ 餐饮',
+      'shopping': '🛒 购物', 'gym': '💪 健身', 'transit': '🚉 交通',
+      'hotel': '🏨 酒店', 'other': '📍 其他'
+    };
+    let categoryLabel = categoryLabels[category] ?? ('📍 ' + category);
+    
+    // 显示轻量通知卡片（点击可修改名称和类别）
     let jsonl = '{"type":"form","id":"new_place_' + Date.now() + '","children":[' +
-      '{"type":"text","text":"📍 ' + titleText + '","style":{"fontSize":18,"fontWeight":"bold"}},' +
-      '{"type":"text","text":"' + escapedName + '"},' +
-      '{"type":"text","text":"' + wifiLabel + ': ' + escapedWifi + '","style":{"fontSize":12,"color":"#666"}},' +
-      '{"type":"row","children":[' +
-        '{"type":"button","label":"✅ ' + saveAsLabel + ' ' + category + '","action":{"event":{"name":"new_place_save","context":{"lat":' + lat + ',"lng":' + lng + ',"wifi":"' + escapedWifi + '","name":"' + escapedName + '","category":"' + category + '"}}},"style":"primary"},' +
-        '{"type":"button","label":"✏️ ' + renameLabel + '","action":{"event":{"name":"new_place_rename","context":{"lat":' + lat + ',"lng":' + lng + '}}},"style":"secondary"},' +
-        '{"type":"button","label":"❌ ' + ignoreLabel + '","action":{"event":{"name":"new_place_ignore","context":{}}},"style":"secondary"}' +
-      ']}]}';
+      '{"type":"text","text":"📍 已记录新地点","style":{"fontSize":16,"fontWeight":"bold"}},' +
+      '{"type":"text","text":"' + escapedName + ' (' + categoryLabel + ')","style":{"fontSize":14}},' +
+      '{"type":"text","text":"WiFi: ' + escapedWifi + '","style":{"fontSize":12,"color":"#666"}},' +
+      '{"type":"button","text":"✏️ 修改名称/类别","variant":"borderless","action":{"event":{"name":"new_place_edit","context":{"lat":' + lat + ',"lng":' + lng + ',"wifi":"' + escapedWifi + '","name":"' + escapedName + '","category":"' + category + '"}}}}' +
+      ']}';
     
     this.dispatchA2UI('push', jsonl);
-    this.log.info(TAG, `New place card shown: ${placeName}`);
+    this.log.info(TAG, `New place auto-saved: ${placeName} (${category}), card shown for editing`);
+  }
+
+  /**
+   * 自动保存新发现的地点为围栏
+   */
+  private autoSaveNewPlace(lat: number, lng: number, wifiSsid: string, placeName: string, category: string): void {
+    try {
+      let geofence: Geofence = {
+        id: `auto_${Date.now()}`,
+        name: placeName.length > 0 ? placeName : wifiSsid,
+        latitude: lat,
+        longitude: lng,
+        radiusMeters: 200,
+        category: category as GeofenceCategory,
+        learnedSignals: {
+          wifiSSIDs: wifiSsid.length > 0 ? [wifiSsid] : [],
+          bluetoothDevices: [],
+          cellIds: [],
+          typicalTimes: [],
+          lastSeen: Date.now(),
+          visitCount: 1
+        }
+      };
+      this.geofenceMgr.addGeofence(geofence);
+      this.log.info(TAG, `Auto-saved geofence: ${geofence.name} (${category}) at (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
+    } catch (err) {
+      this.log.error(TAG, `Failed to auto-save place: ${(err as Error).message}`);
+    }
   }
 
   /**

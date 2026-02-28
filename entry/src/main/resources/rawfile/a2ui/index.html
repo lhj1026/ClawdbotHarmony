@@ -516,17 +516,30 @@ body{font-family:-apple-system,HarmonyOS Sans,sans-serif;background:#0F0F1A;colo
     }, 50);
   }
 
-  function renderSurface(surfaceId) {
-    var s = surfaces[surfaceId];
-    if (!s) return;
+  function renderAllSurfaces() {
     var root = document.getElementById('a2ui-root');
     root.innerHTML = '';
-    if (s.rootId && s.components[s.rootId]) {
-      activeSurface = surfaceId;
-      root.appendChild(renderComp(s.rootId, s, null));
+    var keys = Object.keys(surfaces);
+    for (var i = 0; i < keys.length; i++) {
+      var sid = keys[i];
+      var s = surfaces[sid];
+      if (s && s.rootId && s.components[s.rootId]) {
+        var wrapper = document.createElement('div');
+        wrapper.setAttribute('data-surface-id', sid);
+        wrapper.style.marginBottom = '12px';
+        wrapper.appendChild(renderComp(s.rootId, s, null));
+        root.appendChild(wrapper);
+      }
     }
     document.title = 'A2UI';
     reportHeight();
+  }
+
+  function renderSurface(surfaceId) {
+    var s = surfaces[surfaceId];
+    if (!s) return;
+    activeSurface = surfaceId;
+    renderAllSurfaces();
   }
 
   // ===== Convert Simplified Format =====
@@ -624,7 +637,7 @@ body{font-family:-apple-system,HarmonyOS Sans,sans-serif;background:#0F0F1A;colo
     if (msg.beginRendering || msg.createSurface) {
       var br = msg.beginRendering || msg.createSurface;
       var sid = br.surfaceId || 'default';
-      surfaces[sid] = {rootId: br.root || 'root', components: {}, styles: br.styles || {}};
+      surfaces[sid] = {rootId: br.root || 'root', components: {}, styles: br.styles || {}, _pendingDedup: true};
       if (br.sendDataModel && br.dataModel) {
         for (var k in br.dataModel) dataModel[k] = br.dataModel[k];
       }
@@ -638,6 +651,24 @@ body{font-family:-apple-system,HarmonyOS Sans,sans-serif;background:#0F0F1A;colo
       comps.forEach(function(c) {
         surfaces[sid2].components[c.id] = c;
       });
+      // Content-based dedup: if another surface has identical components, remove the duplicate
+      if (surfaces[sid2]._pendingDedup) {
+        delete surfaces[sid2]._pendingDedup;
+        var newJson = JSON.stringify(comps);
+        var existingKeys = Object.keys(surfaces);
+        for (var di = 0; di < existingKeys.length; di++) {
+          var ek = existingKeys[di];
+          if (ek === sid2) continue;
+          var es = surfaces[ek];
+          var existComps = [];
+          for (var ck in es.components) existComps.push(es.components[ck]);
+          if (JSON.stringify(existComps) === newJson) {
+            // Exact duplicate content — remove the old one, keep new
+            delete surfaces[ek];
+            break;
+          }
+        }
+      }
       renderSurface(sid2);
     }
     else if (msg.dataModelUpdate || msg.updateDataModel) {
