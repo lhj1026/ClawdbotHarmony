@@ -39,6 +39,7 @@ import {
   WifiMobility,
   DeviceMobility,
   DeviceConnectionRecord,
+  DiscoveredPlace,
 } from './ContextModels';
 import { LLMFallbackService } from './LLMFallbackService';
 import { TrainingDataSync } from './TrainingDataSync';
@@ -507,6 +508,11 @@ export class ContextAwarenessService {
             });
             return;
           }
+        }
+
+        // 自动地点发现：未匹配围栏的 WiFi，记录 GPS+SSID
+        if (!matched) {
+          this.recordDiscoveredWifiPlace(ssid);
         }
 
         // 探索模式：WiFi 变化但未匹配围栏也触发评估（让 LLM 分析新环境）
@@ -3121,6 +3127,152 @@ export class ContextAwarenessService {
   /** 清除所有已学习信号 */
   async clearAllLearnedSignals(): Promise<void> {
     await this.locationFusion.clearAllLearnedSignals();
+  }
+
+  // ==================== 自动地点发现 ====================
+
+  /** WiFi 连接时记录位置：SSID + GPS 坐标 → discovered_places */
+  private async recordDiscoveredWifiPlace(ssid: string): Promise<void> {
+    if (!ssid || ssid.length === 0) return;
+    // 需要有 GPS 坐标
+    if (!this.lastLocation || this.lastLocation.latitude === 0) return;
+    // GPS 精度太差不记录
+    if (this.lastLocation.accuracy > 100) return;
+
+    let lat = this.lastLocation.latitude;
+    let lng = this.lastLocation.longitude;
+    let now = Date.now();
+
+    try {
+      let places = await this.getDiscoveredPlaces();
+
+      // 查找是否已有相同 SSID 或附近的地点 (200m内)
+      let existing: DiscoveredPlace | null = null;
+      for (let i = 0; i < places.length; i++) {
+        let p = places[i];
+        // 同一 SSID
+        if (p.learnedSignals?.wifiSSIDs?.includes(ssid)) {
+          existing = p;
+          break;
+        }
+        // 附近 200m 且无 WiFi（GPS-only 的地点）
+        let dist = this.haversineDistance(lat, lng, p.latitude, p.longitude);
+        if (dist < 200 && (!p.learnedSignals?.wifiSSIDs || p.learnedSignals.wifiSSIDs.length === 0)) {
+          existing = p;
+          break;
+        }
+      }
+
+      if (existing) {
+        // 更新已有地点：增加访问次数，更新时间，添加 WiFi
+        existing.totalVisits++;
+        existing.learnedSignals = existing.learnedSignals ?? { wifiSSIDs: [], bluetoothDevices: [], cellIds: [], typicalTimes: [], lastSeen: 0, visitCount: 0 };
+        existing.learnedSignals.lastSeen = now;
+        existing.learnedSignals.visitCount = (existing.learnedSignals.visitCount ?? 0) + 1;
+        if (!existing.learnedSignals.wifiSSIDs!.includes(ssid)) {
+          existing.learnedSignals.wifiSSIDs!.push(ssid);
+        }
+        // 更新 GPS（取平均）
+        existing.latitude = (existing.latitude * (existing.totalVisits - 1) + lat) / existing.totalVisits;
+        existing.longitude = (existing.longitude * (existing.totalVisits - 1) + lng) / existing.totalVisits;
+        this.log.info(TAG, `Updated discovered place: ${existing.name}, visits=${existing.totalVisits}, wifi=${ssid}`);
+      } else {
+        // 创建新地点
+        let newPlace: DiscoveredPlace = {
+          id: 'dp_' + now.toString(),
+          name: ssid,  // 默认用 WiFi 名称
+          latitude: lat,
+          longitude: lng,
+          radiusMeters: 150,
+          category: 'custom',
+          learnedSignals: {
+            wifiSSIDs: [ssid],
+            bluetoothDevices: [],
+            cellIds: [],
+            typicalTimes: [],
+            lastSeen: now,
+            visitCount: 1
+          },
+          discoverySource: 'gps_wifi',
+          discoveredAt: now,
+          confirmAt: 0,
+          visits: [],
+          totalVisits: 1,
+          totalStayMs: 0
+        };
+        places.push(newPlace);
+        this.log.info(TAG, `Discovered new place: ${ssid} at ${lat.toFixed(4)},${lng.toFixed(4)}`);
+      }
+
+      await this.saveDiscoveredPlaces(places);
+    } catch (err) {
+      this.log.warn(TAG, `recordDiscoveredWifiPlace error: ${(err as Error).message}`);
+    }
+  }
+
+  /** 获取所有已发现的地点 */
+  async getDiscoveredPlaces(): Promise<DiscoveredPlace[]> {
+    try {
+      if (!this.context) return [];
+      let prefs = await preferences.getPreferences(this.context, 'context_awareness');
+      let json = await prefs.get('discovered_places', '[]') as string;
+      return JSON.parse(json) as DiscoveredPlace[];
+    } catch (err) {
+      this.log.warn(TAG, `getDiscoveredPlaces parse error: ${(err as Error).message}`);
+      return [];
+    }
+  }
+
+  /** 保存已发现的地点 */
+  private async saveDiscoveredPlaces(places: DiscoveredPlace[]): Promise<void> {
+    if (!this.context) return;
+    let prefs = await preferences.getPreferences(this.context, 'context_awareness');
+    await prefs.put('discovered_places', JSON.stringify(places));
+    await prefs.flush();
+  }
+
+  /** 将已发现的地点提升为正式 geofence */
+  async promoteDiscoveredPlace(placeId: string, name: string, category: GeofenceCategory): Promise<boolean> {
+    let places = await this.getDiscoveredPlaces();
+    let place: DiscoveredPlace | null = null;
+    let idx = -1;
+    for (let i = 0; i < places.length; i++) {
+      if (places[i].id === placeId) {
+        place = places[i];
+        idx = i;
+        break;
+      }
+    }
+    if (!place) return false;
+
+    // 创建正式 geofence
+    let gf: Geofence = {
+      id: 'gf_' + Date.now().toString(),
+      name: name,
+      latitude: place.latitude,
+      longitude: place.longitude,
+      radiusMeters: place.radiusMeters,
+      category: category,
+      learnedSignals: place.learnedSignals
+    };
+    this.addGeofence(gf);
+
+    // 标记为已确认
+    place.confirmAt = Date.now();
+    await this.saveDiscoveredPlaces(places);
+
+    this.log.info(TAG, `Promoted discovered place "${name}" (${category}) as geofence ${gf.id}`);
+    return true;
+  }
+
+  /** 删除已发现的地点 */
+  async removeDiscoveredPlace(placeId: string): Promise<void> {
+    let places = await this.getDiscoveredPlaces();
+    let filtered: DiscoveredPlace[] = [];
+    for (let i = 0; i < places.length; i++) {
+      if (places[i].id !== placeId) filtered.push(places[i]);
+    }
+    await this.saveDiscoveredPlaces(filtered);
   }
 
   // ==================== 智能场景推断 ====================
