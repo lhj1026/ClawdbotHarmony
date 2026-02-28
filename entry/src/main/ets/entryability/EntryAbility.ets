@@ -4,6 +4,7 @@ import { NodeRuntime } from '../service/gateway/NodeRuntime';
 import { LocalEmbedding } from '../service/embedding/LocalEmbedding';
 import { LogService } from '../common/LogService';
 import { ContextAwarenessService } from '../service/context/ContextAwarenessService';
+import { PushCapability } from '../service/gateway/PushCapability';
 
 export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
@@ -19,18 +20,65 @@ export default class EntryAbility extends UIAbility {
     }).catch((err: Error) => {
       console.error('[ClawdBot] ContextAwarenessService init/start failed: ' + err.message);
     });
+    // Initialize Push Kit token (non-blocking; errors are logged and ignored)
+    PushCapability.getInstance().init(this.context, this).catch((err: Error) => {
+      console.warn('[ClawdBot] PushCapability init failed (non-fatal): ' + err.message);
+    });
+
     // Initialize AppStorage keys for share data (must exist before @StorageLink binds)
     AppStorage.setOrCreate<number>('share_timestamp', 0);
     AppStorage.setOrCreate<string>('share_text', '');
     AppStorage.setOrCreate<string>('share_uri', '');
     AppStorage.setOrCreate<string>('share_uris', '');  // JSON array of URIs for multi-image
     AppStorage.setOrCreate<string>('share_type', '');
+    // Initialize AppStorage keys for push notification data
+    AppStorage.setOrCreate<string>('push_text', '');
+    AppStorage.setOrCreate<string>('push_sender', '');
+    AppStorage.setOrCreate<number>('push_timestamp', 0);
     this.handleShareWant(want);
+    this.handlePushWant(want);
   }
 
   onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     console.info('[ClawdBot] EntryAbility onNewWant');
     this.handleShareWant(want);
+    this.handlePushWant(want);
+  }
+
+  /**
+   * Handle push notification payload delivered via Want parameters.
+   * Called when app is cold-started or brought to foreground by tapping a push notification.
+   * Stores the payload in AppStorage so ChatPage can consume it when ready.
+   */
+  private handlePushWant(want: Want): void {
+    if (!want.parameters) {
+      return;
+    }
+    // Huawei Push Kit delivers payload under 'push_msg_data' or 'notifyData'
+    let rawPush = want.parameters['push_msg_data'] ?? want.parameters['notifyData'] ?? want.parameters['clawdbot_push'];
+    if (rawPush === undefined || rawPush === null) {
+      return;
+    }
+    let payload = String(rawPush);
+    if (payload.length === 0 || payload === 'undefined' || payload === 'null') {
+      return;
+    }
+    console.info('[ClawdBot] Push notification data received: ' + payload.substring(0, 200));
+
+    let text = payload;
+    let sender = 'Push';
+    try {
+      let data = JSON.parse(payload) as Record<string, string>;
+      text = data['text'] ?? data['message'] ?? data['body'] ?? payload;
+      sender = data['sender'] ?? data['from'] ?? 'Push';
+    } catch {
+      // Not JSON — use raw payload as text
+    }
+
+    AppStorage.setOrCreate<string>('push_text', text);
+    AppStorage.setOrCreate<string>('push_sender', sender);
+    AppStorage.setOrCreate<number>('push_timestamp', Date.now());
+    console.info(`[ClawdBot] Push data stored: sender="${sender}" textLen=${text.length}`);
   }
 
   private looksLikeImageUri(s: string): boolean {

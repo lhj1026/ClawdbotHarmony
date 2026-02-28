@@ -1543,7 +1543,7 @@ export struct SettingsPage {
         Column() {
           this.InfoRow(I18n.t('settings.appName'), 'ClawdBot')
           Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
-          this.InfoRow(I18n.t('settings.version'), '2.54.0')
+          this.InfoRow(I18n.t('settings.version'), '2.57.0')
           Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
           this.InfoRow(I18n.t('settings.developer'), 'OpenClaw')
           Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
@@ -2913,7 +2913,8 @@ export struct SettingsPage {
         this.latestVersion = tagName.startsWith('v') ? tagName.substring(1) : tagName;
 
         // Compare with current version
-        let currentVersion = '2.21.12';
+        let bundleInfo = bundleManager.getBundleInfoForSelfSync(bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT);
+        let currentVersion = bundleInfo.versionName;
         if (this.compareVersions(this.latestVersion, currentVersion) > 0) {
           this.updateAvailable = true;
           promptAction.showToast({ message: `发现新版本 ${this.latestVersion}`, duration: 2000 });

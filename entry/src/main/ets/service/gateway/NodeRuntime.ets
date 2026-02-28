@@ -59,9 +59,10 @@ import { ActionExecutor, ActionResult } from '../context/ActionExecutor';
 import { GeofenceSuggestion } from '../context/LocationDiscoveryService';
 import { Geofence, GeofenceCategory, LearnedPlaceSignals, UserAction } from '../context/ContextModels';
 import { FederatedSync } from '../context/FederatedSync';
+import { PushCapability } from './PushCapability';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.56.1';
+const APP_VERSION = '2.57.0';
 
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
@@ -86,6 +87,7 @@ export class NodeRuntime {
   private emailCapability: EmailCapability = new EmailCapability();
   private calendarCapability: CalendarCapability = new CalendarCapability();
   private execCapability: ExecCapability = new ExecCapability();
+  private pushCapability: PushCapability = PushCapability.getInstance();
 
   // Capability toggles (default all enabled)
   private _capLocation: boolean = true;
@@ -1846,6 +1848,27 @@ export class NodeRuntime {
     this.log.warn(TAG, 'All avatar URLs failed');
   }
 
+  /**
+   * Report current Push Kit token to the Gateway so it can reach the device
+   * via push notification when WebSocket is disconnected.
+   * Non-blocking; silently ignored if token is empty or server rejects it.
+   */
+  private reportPushToken(): void {
+    if (!this.operatorSession) return;
+    let token = this.pushCapability.getToken();
+    if (!token || token.length === 0) {
+      this.log.info(TAG, 'reportPushToken: no token available yet, skipping');
+      return;
+    }
+    let payload = JSON.stringify({ token: token, platform: 'harmony' });
+    this.operatorSession.request('node.pushToken', payload, 10000).then(() => {
+      this.log.info(TAG, `Push token reported to gateway (${token.substring(0, 20)}...)`);
+    }).catch((err: Error) => {
+      // Server may not support this method yet — non-fatal
+      this.log.warn(TAG, `reportPushToken failed (server may not support node.pushToken): ${err.message}`);
+    });
+  }
+
   /** Fetch agent identity from gateway config via operator session RPC. */
   async fetchAgentIdentity(): Promise<void> {
     if (!this.operatorSession) return;
@@ -2251,6 +2274,11 @@ export class NodeRuntime {
     this.emailCapability.setContext(context);
     this.calendarCapability.setContext(context);
 
+    // Wire push token refresh so re-connect and token rotations re-report to gateway
+    this.pushCapability.onTokenChanged = (_token: string) => {
+      this.reportPushToken();
+    };
+
     // Set up notification capability: bundleName, icon, permission, and chat callback
     if (this._capNotification) {
       this.notificationCapability.setBundleName(context.abilityInfo.bundleName);
@@ -2289,6 +2317,7 @@ export class NodeRuntime {
         if (state === ConnectionState.Connected) {
           Monitor.startModule('Gateway');
           this.fetchAgentIdentity().catch(() => { /* ignore */ });
+          this.reportPushToken();
           // syncExperiencePack removed from auto-connect — user triggers manually via UI buttons
         } else if (state === ConnectionState.Disconnected) {
           Monitor.stopModule('Gateway');
