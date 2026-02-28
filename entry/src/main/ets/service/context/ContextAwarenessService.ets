@@ -1806,15 +1806,15 @@ export class ContextAwarenessService {
         // 记录训练数据
         this.trainingSync.recordRuleMatch(snapshot, top.ruleId, top.action.type || 'suggestion', top.confidence);
       } else if (this.exploreMode) {
-        // 探索模式：规则在 cooldown，但仍定期显示当前状态 + 匹配的建议
-        this.sendExploreStateDisplay(snapshot, top);
+        // 探索模式：规则在 cooldown，跳过（不重复显示状态卡片）
+        this.log.info(TAG, `[Explore] rule ${top.ruleId} on cooldown, skipping state display`);
       }
 
       // 非探索模式或已探索过的指纹：有引擎结果就够了
       if (!exploreTriggered) return;
     } else if (this.exploreMode && !exploreTriggered) {
-      // 探索模式：无引擎匹配也定期显示状态
-      this.sendExploreStateDisplay(snapshot, null);
+      // 探索模式：无引擎匹配，跳过（不显示无匹配的状态卡片）
+      this.log.info(TAG, `[Explore] no engine matches, skipping state display`);
       return;
     }
 
