@@ -100,6 +100,37 @@ struct ContextSettingsPage {
   // 🌍 环境: 时间、WiFi、GPS、蓝牙、围栏、环境音 (from system, wifi, bluetooth, gps, audio)
   // Everything else with non-digital source → environment
   // 💻 数字世界: source='digital' 的数据 (calendar, appUsage, foregroundApp, notification, media)
+
+  // Sub-group sort order within each category (同类 key 放一起)
+  private static PERSON_ORDER: string[] = [
+    'motionState', 'activityDuration',           // 运动
+    'step_count_today',                           // 步数
+    'isSleeping',                                 // 睡眠
+    'heart_rate', 'heart_rate_status', 'heart_rate_age_sec', 'wearing_state'  // 健康
+  ];
+  private static PHONE_ORDER: string[] = [
+    'batteryLevel', 'isCharging',                 // 电量
+    'networkType', 'sensorTier',                  // 网络
+    'screen_on', 'screen_locked', 'user_active',  // 屏幕
+    'phone_posture', 'ambient_brightness', 'proximity'  // 姿态
+  ];
+  private static ENV_ORDER: string[] = [
+    'hour', 'timeOfDay', 'dayOfWeek', 'isWeekend',           // 时间
+    'wifiSsid', 'wifiGeofence', 'wifiLost', 'wifiLostCategory', 'wifiLostWork',  // WiFi
+    'latitude', 'longitude', 'gpsSpeed', 'locationAccuracy', // GPS
+    'geofence',                                               // 围栏
+    'bt_in_vehicle', 'btFingerprint', 'bt_enabled', 'bt_connected_count',
+    'bt_audio_connected', 'bt_device_names', 'bt_fixed_devices',
+    'bt_portable_devices', 'bt_vehicle_devices',              // 蓝牙
+    'noise_level', 'sound_scene', 'has_voice', 'volume_db'   // 环境音
+  ];
+  private static DIGI_ORDER: string[] = [
+    'cal_eventCount', 'cal_hasUpcoming', 'cal_nextTitle', 'cal_nextMinutes',
+    'cal_nextLocation', 'cal_inMeeting', 'cal_currentTitle',  // 日历
+    'foreground_app', 'app_category', 'app_usage_min',         // 应用
+    'notif_enabled', 'notif_lastSentMinutes',                  // 通知
+    'audio_scene', 'audio_device', 'audio_ringing', 'audio_headphones'  // 媒体
+  ];
   private trayTimer: number = -1;
   // 当前状态概览
   @State statusTime: string = '';
@@ -1277,6 +1308,34 @@ struct ContextSettingsPage {
     return 'environment';
   }
 
+  /** Sort parallel arrays by key order. Keys not in order go to end, sorted alphabetically. */
+  private sortByKeyOrder(keys: string[], labels: string[], values: string[],
+    ages: string[], indicators: string[], qualities: string[], order: string[]): void {
+    let indices: number[] = [];
+    for (let i = 0; i < keys.length; i++) indices.push(i);
+    indices.sort((a: number, b: number): number => {
+      let oa = order.indexOf(keys[a]);
+      let ob = order.indexOf(keys[b]);
+      if (oa < 0) oa = 9999;
+      if (ob < 0) ob = 9999;
+      if (oa !== ob) return oa - ob;
+      return keys[a] < keys[b] ? -1 : keys[a] > keys[b] ? 1 : 0;
+    });
+    let sK: string[] = [], sL: string[] = [], sV: string[] = [];
+    let sA: string[] = [], sI: string[] = [], sQ: string[] = [];
+    for (let i = 0; i < indices.length; i++) {
+      let j = indices[i];
+      sK.push(keys[j]); sL.push(labels[j]); sV.push(values[j]);
+      sA.push(ages[j]); sI.push(indicators[j]); sQ.push(qualities[j]);
+    }
+    keys.splice(0, keys.length, ...sK);
+    labels.splice(0, labels.length, ...sL);
+    values.splice(0, values.length, ...sV);
+    ages.splice(0, ages.length, ...sA);
+    indicators.splice(0, indicators.length, ...sI);
+    qualities.splice(0, qualities.length, ...sQ);
+  }
+
   private refreshTrayStatus(): void {
     try {
       let cas = ContextAwarenessService.getInstance();
@@ -1309,6 +1368,12 @@ struct ContextSettingsPage {
           }
         }
       }
+      // Sort within each category so related keys are grouped together
+      this.sortByKeyOrder(perK, perL, perV, perA, perI, perQ, ContextSettingsPage.PERSON_ORDER);
+      this.sortByKeyOrder(phoK, phoL, phoV, phoA, phoI, phoQ, ContextSettingsPage.PHONE_ORDER);
+      this.sortByKeyOrder(envK, envL, envV, envA, envI, envQ, ContextSettingsPage.ENV_ORDER);
+      this.sortByKeyOrder(digK, digL, digV, digA, digI, digQ, ContextSettingsPage.DIGI_ORDER);
+
       this.personKeys = perK; this.personLabels = perL; this.personValues = perV;
       this.personAges = perA; this.personIndicators = perI; this.personQualities = perQ;
       this.phoneKeys = phoK; this.phoneLabels = phoL; this.phoneValues = phoV;
