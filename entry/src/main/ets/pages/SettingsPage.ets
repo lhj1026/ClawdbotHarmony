@@ -4,7 +4,7 @@ import { promptAction, router } from '@kit.ArkUI';
 import { fileIo, picker } from '@kit.CoreFileKit';
 import { http } from '@kit.NetworkKit';
 import { bundleManager } from '@kit.AbilityKit';
-import { request } from '@kit.BasicServicesKit';
+
 import { execCmd } from 'libexec.so';
 import { Constants } from '../common/Constants';
 import { NodeRuntime } from '../service/gateway/NodeRuntime';
@@ -134,11 +134,7 @@ export struct SettingsPage {
   @State gwMaxConcurrent: number = 4;
 
   // Update functionality
-  @State updateChecking: boolean = false;
-  @State updateDownloading: boolean = false;
-  @State updateProgress: number = 0;
-  @State latestVersion: string = '';
-  @State updateAvailable: boolean = false;
+
 
   // Experience Pack
   @State expCount: number = 0;
@@ -1538,63 +1534,6 @@ export struct SettingsPage {
         .backgroundColor(Color.White)
         .borderRadius(12)
 
-        // =============== About ===============
-        this.SectionTitle(I18n.t('settings.about'))
-        Column() {
-          this.InfoRow(I18n.t('settings.appName'), 'ClawdBot')
-          Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
-          this.InfoRow(I18n.t('settings.version'), '2.57.1')
-          Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
-          this.InfoRow(I18n.t('settings.developer'), 'OpenClaw')
-          Divider().margin({ top: 8, bottom: 8 }).color('#F0F0F0')
-
-          // Check for updates button
-          Row() {
-            Text(I18n.t('settings.checkUpdate'))
-              .fontSize(14)
-              .fontColor('#1A1A1A')
-              .layoutWeight(1)
-
-            if (this.updateChecking) {
-              LoadingProgress().width(20).height(20).color('#D2691E')
-            } else if (this.updateDownloading) {
-              Row({ space: 8 }) {
-                Progress({ value: this.updateProgress, total: 100, type: ProgressType.Linear })
-                  .width(80)
-                  .height(4)
-                Text(`${this.updateProgress}%`)
-                  .fontSize(12)
-                  .fontColor('#999999')
-              }
-            } else if (this.updateAvailable) {
-              Text(I18n.t('settings.newVersion').replace('{0}', this.latestVersion))
-                .fontSize(12)
-                .fontColor('#D2691E')
-                .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-                .backgroundColor('#FFF3E0')
-                .borderRadius(4)
-                .onClick(() => { this.downloadAndInstallUpdate(); })
-            } else {
-              Text('>')
-                .fontSize(14)
-                .fontColor('#CCCCCC')
-            }
-          }
-          .width('100%')
-          .height(44)
-          .alignItems(VerticalAlign.Center)
-          .onClick(() => {
-            if (!this.updateChecking && !this.updateDownloading) {
-              this.checkForUpdates();
-            }
-          })
-        }
-        .width('100%')
-        .padding(16)
-        .margin({ left: 16, right: 16 })
-        .backgroundColor(Color.White)
-        .borderRadius(12)
-
         // =============== Experience Pack ===============
         this.SectionTitle(I18n.t('settings.expPack'))
         Column() {
@@ -2891,185 +2830,6 @@ export struct SettingsPage {
     this.profiles = this.profiles.filter((p: SettingsProfile) => p.createdAt !== profile.createdAt || p.name !== profile.name);
     await this.persistProfiles();
     promptAction.showToast({ message: I18n.t('settings.profileDeleted'), duration: 1500 });
-  }
-
-  // =============== Update Functionality ===============
-
-  private async checkForUpdates(): Promise<void> {
-    this.updateChecking = true;
-    this.updateAvailable = false;
-
-    try {
-      // Fetch latest release info from GitHub API
-      let httpRequest = http.createHttp();
-      let response = await httpRequest.request(
-        'https://api.github.com/repos/lhj1026/ClawdbotHarmony/releases/latest',
-        { method: http.RequestMethod.GET, header: { 'Accept': 'application/vnd.github.v3+json' } }
-      );
-
-      if (response.responseCode === 200 && response.result) {
-        let data = JSON.parse(response.result as string) as Record<string, Object>;
-        let tagName = data['tag_name'] as string; // e.g., "v2.21.12"
-        this.latestVersion = tagName.startsWith('v') ? tagName.substring(1) : tagName;
-
-        // Compare with current version
-        let bundleInfo = bundleManager.getBundleInfoForSelfSync(bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT);
-        let currentVersion = bundleInfo.versionName;
-        if (this.compareVersions(this.latestVersion, currentVersion) > 0) {
-          this.updateAvailable = true;
-          promptAction.showToast({ message: `发现新版本 ${this.latestVersion}`, duration: 2000 });
-        } else {
-          promptAction.showToast({ message: '已是最新版本', duration: 1500 });
-        }
-      }
-      httpRequest.destroy();
-    } catch (e) {
-      console.error(`[SettingsPage] Check update failed: ${(e as Error).message ?? ''}`);
-      promptAction.showToast({ message: '检查更新失败', duration: 1500 });
-    }
-
-    this.updateChecking = false;
-  }
-
-  private compareVersions(v1: string, v2: string): number {
-    let parts1 = v1.split('.').map((s: string) => parseInt(s) || 0);
-    let parts2 = v2.split('.').map((s: string) => parseInt(s) || 0);
-    let maxLen = Math.max(parts1.length, parts2.length);
-    for (let i = 0; i < maxLen; i++) {
-      let p1 = i < parts1.length ? parts1[i] : 0;
-      let p2 = i < parts2.length ? parts2[i] : 0;
-      if (p1 > p2) return 1;
-      if (p1 < p2) return -1;
-    }
-    return 0;
-  }
-
-  private async downloadAndInstallUpdate(): Promise<void> {
-    this.updateDownloading = true;
-    this.updateProgress = 0;
-
-    try {
-      let ctx = getContext(this) as common.UIAbilityContext;
-      // Use cacheDir for temporary downloads
-      let cacheDir = ctx.cacheDir;
-      let fileName = `ClawdBot-${this.latestVersion}.hap`;
-      let hapPath = `${cacheDir}/${fileName}`;
-
-      // Get download URL from GitHub release
-      let httpRequest = http.createHttp();
-      let response = await httpRequest.request(
-        'https://api.github.com/repos/lhj1026/ClawdbotHarmony/releases/latest',
-        { method: http.RequestMethod.GET, header: { 'Accept': 'application/vnd.github.v3+json' } }
-      );
-
-      let downloadUrl = '';
-      if (response.responseCode === 200 && response.result) {
-        let data = JSON.parse(response.result as string) as Record<string, Object>;
-        let assets = data['assets'] as Object[];
-        if (assets && assets.length > 0) {
-          let asset = assets[0] as Record<string, Object>;
-          downloadUrl = asset['browser_download_url'] as string;
-        }
-      }
-      httpRequest.destroy();
-
-      if (downloadUrl.length === 0) {
-        promptAction.showToast({ message: '未找到下载链接', duration: 1500 });
-        this.updateDownloading = false;
-        return;
-      }
-
-      // Delete old file if exists
-      try { fileIo.unlinkSync(hapPath); } catch { /* ignore */ }
-
-      // Use system download API for large files
-      promptAction.showToast({ message: '开始下载...', duration: 1500 });
-      console.info(`[SettingsPage] Downloading from: ${downloadUrl} to ${hapPath}`);
-
-      let downloadConfig: request.DownloadConfig = {
-        url: downloadUrl,
-        filePath: hapPath,
-        enableMetered: true,
-        enableRoaming: true,
-        title: 'ClawdBot 更新',
-        description: `下载版本 ${this.latestVersion}`
-      };
-
-      let downloadTask = await request.downloadFile(ctx, downloadConfig);
-
-      downloadTask.on('progress', (receivedSize: number, totalSize: number) => {
-        if (totalSize > 0) {
-          this.updateProgress = Math.floor(receivedSize * 100 / totalSize);
-        }
-        console.info(`[SettingsPage] Download progress: ${receivedSize}/${totalSize}`);
-      });
-
-      downloadTask.on('complete', () => {
-        console.info(`[SettingsPage] Download complete: ${hapPath}`);
-        this.updateProgress = 100;
-        this.updateDownloading = false;
-        promptAction.showToast({ message: '下载完成，正在安装...', duration: 2000 });
-        setTimeout(() => {
-          this.installHap(hapPath);
-        }, 500);
-      });
-
-      downloadTask.on('fail', (err: number) => {
-        console.error(`[SettingsPage] Download failed with error code: ${err}`);
-        this.updateDownloading = false;
-        promptAction.showToast({ message: `下载失败 (错误码: ${err})`, duration: 2000 });
-      });
-
-    } catch (e) {
-      console.error(`[SettingsPage] Download update failed: ${(e as Error).message ?? ''}`);
-      promptAction.showToast({ message: `下载失败: ${(e as Error).message ?? ''}`, duration: 2000 });
-      this.updateDownloading = false;
-    }
-  }
-
-  private installHap(hapPath: string): void {
-    try {
-      console.info(`[SettingsPage] Attempting install via system installer: ${hapPath}`);
-      let ctx = getContext(this) as common.UIAbilityContext;
-
-      // Try to open HAP with system package installer via Want
-      let installWant: Want = {
-        action: 'ohos.want.action.INSTALL_BUNDLE',
-        uri: `file://${hapPath}`,
-        type: 'application/hap',
-        parameters: {
-          'hapFilePaths': [hapPath],
-          'installParam': JSON.stringify({ installFlag: 0, isKeepData: true })
-        }
-      };
-
-      ctx.startAbility(installWant).then(() => {
-        console.info('[SettingsPage] System installer launched');
-      }).catch((err: Error) => {
-        console.warn(`[SettingsPage] startAbility for install failed: ${err.message}, trying implicit`);
-        // Fallback: try implicit intent to open HAP file
-        let openWant: Want = {
-          action: 'ohos.want.action.viewData',
-          uri: `file://${hapPath}`,
-          type: 'application/hap'
-        };
-        ctx.startAbility(openWant).catch((err2: Error) => {
-          console.error(`[SettingsPage] All install methods failed: ${err2.message}`);
-          AlertDialog.show({
-            title: '需要手动安装',
-            message: `自动安装暂不支持\n\nHAP已下载到:\n${hapPath}\n\n请连接电脑执行:\nhdc file recv ${hapPath} ./ClawdBot.hap\nhdc install -r ./ClawdBot.hap`,
-            confirm: { value: '确定', action: () => {} }
-          });
-        });
-      });
-    } catch (e) {
-      console.error(`[SettingsPage] Install error: ${(e as Error).message ?? ''}`);
-      AlertDialog.show({
-        title: '需要手动安装',
-        message: `HAP已下载到:\n${hapPath}\n\n请连接电脑执行:\nhdc file recv ${hapPath} ./ClawdBot.hap\nhdc install -r ./ClawdBot.hap`,
-        confirm: { value: '确定', action: () => {} }
-      });
-    }
   }
 
   // ============ Experience Pack ============

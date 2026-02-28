@@ -1,6 +1,10 @@
-// About page with system status
-import { router } from '@kit.ArkUI';
+// About page with system status and OTA update
+import { router, promptAction } from '@kit.ArkUI';
 import { hidebug } from '@kit.PerformanceAnalysisKit';
+import { common, Want, bundleManager } from '@kit.AbilityKit';
+import { http } from '@kit.NetworkKit';
+import { request } from '@kit.BasicServicesKit';
+import { fileIo } from '@kit.CoreFileKit';
 import { I18n, t } from '../common/I18n';
 import { NodeRuntime } from '../service/gateway/NodeRuntime';
 import { SessionService } from '../service/SessionService';
@@ -18,6 +22,11 @@ struct AboutRoutePage {
   @State tokenUsage: string = '-';
   @State gatewayStatus: string = '-';
   @State expandedVersions: Set<string> = new Set([LATEST_VERSION]);
+  @State updateChecking: boolean = false;
+  @State updateDownloading: boolean = false;
+  @State updateProgress: number = 0;
+  @State latestVersion: string = '';
+  @State updateAvailable: boolean = false;
   private refreshTimer: number = -1;
   private sessionSvc: SessionService = SessionService.getInstance();
 
@@ -257,6 +266,151 @@ struct AboutRoutePage {
     .width('100%')
   }
 
+  private async checkForUpdates(): Promise<void> {
+    this.updateChecking = true;
+    this.updateAvailable = false;
+    try {
+      let httpRequest = http.createHttp();
+      let response = await httpRequest.request(
+        'https://api.github.com/repos/lhj1026/ClawdbotHarmony/releases/latest',
+        { method: http.RequestMethod.GET, header: { 'Accept': 'application/vnd.github.v3+json' } }
+      );
+      if (response.responseCode === 200 && response.result) {
+        let data = JSON.parse(response.result as string) as Record<string, Object>;
+        let tagName = data['tag_name'] as string;
+        this.latestVersion = tagName.startsWith('v') ? tagName.substring(1) : tagName;
+        let bundleInfo = bundleManager.getBundleInfoForSelfSync(bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT);
+        let currentVersion = bundleInfo.versionName;
+        if (this.compareVersions(this.latestVersion, currentVersion) > 0) {
+          this.updateAvailable = true;
+          promptAction.showToast({ message: `发现新版本 ${this.latestVersion}`, duration: 2000 });
+        } else {
+          promptAction.showToast({ message: '已是最新版本', duration: 1500 });
+        }
+      }
+      httpRequest.destroy();
+    } catch (e) {
+      console.error(`[AboutPage] Check update failed: ${(e as Error).message ?? ''}`);
+      promptAction.showToast({ message: '检查更新失败', duration: 1500 });
+    }
+    this.updateChecking = false;
+  }
+
+  private compareVersions(v1: string, v2: string): number {
+    let parts1 = v1.split('.').map((s: string) => parseInt(s) || 0);
+    let parts2 = v2.split('.').map((s: string) => parseInt(s) || 0);
+    let maxLen = Math.max(parts1.length, parts2.length);
+    for (let i = 0; i < maxLen; i++) {
+      let p1 = i < parts1.length ? parts1[i] : 0;
+      let p2 = i < parts2.length ? parts2[i] : 0;
+      if (p1 > p2) return 1;
+      if (p1 < p2) return -1;
+    }
+    return 0;
+  }
+
+  private async downloadAndInstallUpdate(): Promise<void> {
+    this.updateDownloading = true;
+    this.updateProgress = 0;
+    try {
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let cacheDir = ctx.cacheDir;
+      let fileName = `ClawdBot-${this.latestVersion}.hap`;
+      let hapPath = `${cacheDir}/${fileName}`;
+
+      let httpRequest = http.createHttp();
+      let response = await httpRequest.request(
+        'https://api.github.com/repos/lhj1026/ClawdbotHarmony/releases/latest',
+        { method: http.RequestMethod.GET, header: { 'Accept': 'application/vnd.github.v3+json' } }
+      );
+      let downloadUrl = '';
+      if (response.responseCode === 200 && response.result) {
+        let data = JSON.parse(response.result as string) as Record<string, Object>;
+        let assets = data['assets'] as Object[];
+        if (assets && assets.length > 0) {
+          let asset = assets[0] as Record<string, Object>;
+          downloadUrl = asset['browser_download_url'] as string;
+        }
+      }
+      httpRequest.destroy();
+
+      if (downloadUrl.length === 0) {
+        promptAction.showToast({ message: '未找到下载链接', duration: 1500 });
+        this.updateDownloading = false;
+        return;
+      }
+
+      try { fileIo.unlinkSync(hapPath); } catch { /* ignore */ }
+
+      promptAction.showToast({ message: '开始下载...', duration: 1500 });
+      let downloadConfig: request.DownloadConfig = {
+        url: downloadUrl,
+        filePath: hapPath,
+        enableMetered: true,
+        enableRoaming: true,
+        title: 'ClawdBot 更新',
+        description: `下载版本 ${this.latestVersion}`
+      };
+
+      let downloadTask = await request.downloadFile(ctx, downloadConfig);
+      downloadTask.on('progress', (receivedSize: number, totalSize: number) => {
+        if (totalSize > 0) {
+          this.updateProgress = Math.floor(receivedSize * 100 / totalSize);
+        }
+      });
+      downloadTask.on('complete', () => {
+        this.updateProgress = 100;
+        this.updateDownloading = false;
+        promptAction.showToast({ message: '下载完成，正在安装...', duration: 2000 });
+        setTimeout(() => { this.installHap(hapPath); }, 500);
+      });
+      downloadTask.on('fail', (err: number) => {
+        this.updateDownloading = false;
+        promptAction.showToast({ message: `下载失败 (错误码: ${err})`, duration: 2000 });
+      });
+    } catch (e) {
+      this.updateDownloading = false;
+      promptAction.showToast({ message: `下载失败: ${(e as Error).message ?? ''}`, duration: 2000 });
+    }
+  }
+
+  private installHap(hapPath: string): void {
+    try {
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let installWant: Want = {
+        action: 'ohos.want.action.INSTALL_BUNDLE',
+        uri: `file://${hapPath}`,
+        type: 'application/hap',
+        parameters: {
+          'hapFilePaths': [hapPath],
+          'installParam': JSON.stringify({ installFlag: 0, isKeepData: true })
+        }
+      };
+      ctx.startAbility(installWant).then(() => {
+        console.info('[AboutPage] System installer launched');
+      }).catch((err: Error) => {
+        let openWant: Want = {
+          action: 'ohos.want.action.viewData',
+          uri: `file://${hapPath}`,
+          type: 'application/hap'
+        };
+        ctx.startAbility(openWant).catch((err2: Error) => {
+          AlertDialog.show({
+            title: '需要手动安装',
+            message: `HAP已下载到:\n${hapPath}\n\n请连接电脑执行:\nhdc file recv ${hapPath} ./ClawdBot.hap\nhdc install -r ./ClawdBot.hap`,
+            confirm: { value: '确定', action: () => {} }
+          });
+        });
+      });
+    } catch (e) {
+      AlertDialog.show({
+        title: '需要手动安装',
+        message: `HAP已下载到:\n${hapPath}\n\n请连接电脑执行:\nhdc file recv ${hapPath} ./ClawdBot.hap\nhdc install -r ./ClawdBot.hap`,
+        confirm: { value: '确定', action: () => {} }
+      });
+    }
+  }
+
   build() {
     Column() {
       // Header
@@ -293,6 +447,48 @@ struct AboutRoutePage {
             this.InfoRow(t('settings.basedOn'), 'OpenClaw')
             Divider().color('#F0F0F0')
             this.InfoRow(t('settings.platform'), 'HarmonyOS NEXT')
+            Divider().color('#F0F0F0')
+
+            // Check for updates button
+            Row() {
+              Text(t('settings.checkUpdate'))
+                .fontSize(14)
+                .fontColor('#1A1A1A')
+                .layoutWeight(1)
+
+              if (this.updateChecking) {
+                LoadingProgress().width(20).height(20).color('#D2691E')
+              } else if (this.updateDownloading) {
+                Row({ space: 8 }) {
+                  Progress({ value: this.updateProgress, total: 100, type: ProgressType.Linear })
+                    .width(80)
+                    .height(4)
+                  Text(`${this.updateProgress}%`)
+                    .fontSize(12)
+                    .fontColor('#999999')
+                }
+              } else if (this.updateAvailable) {
+                Text(t('settings.newVersion').replace('{0}', this.latestVersion))
+                  .fontSize(12)
+                  .fontColor('#D2691E')
+                  .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+                  .backgroundColor('#FFF3E0')
+                  .borderRadius(4)
+                  .onClick(() => { this.downloadAndInstallUpdate(); })
+              } else {
+                Text('>')
+                  .fontSize(14)
+                  .fontColor('#CCCCCC')
+              }
+            }
+            .width('100%')
+            .height(44)
+            .alignItems(VerticalAlign.Center)
+            .onClick(() => {
+              if (!this.updateChecking && !this.updateDownloading) {
+                this.checkForUpdates();
+              }
+            })
           }
           .padding(16)
           .backgroundColor(Color.White)
