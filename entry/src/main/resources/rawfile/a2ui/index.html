@@ -651,21 +651,27 @@ body{font-family:-apple-system,HarmonyOS Sans,sans-serif;background:#0F0F1A;colo
       comps.forEach(function(c) {
         surfaces[sid2].components[c.id] = c;
       });
-      // Content-based dedup: if another surface has identical components, remove the duplicate
+      // Content-based dedup: compare text content of components, ignoring ids/actions/styles
       if (surfaces[sid2]._pendingDedup) {
         delete surfaces[sid2]._pendingDedup;
-        var newJson = JSON.stringify(comps);
-        var existingKeys = Object.keys(surfaces);
-        for (var di = 0; di < existingKeys.length; di++) {
-          var ek = existingKeys[di];
-          if (ek === sid2) continue;
-          var es = surfaces[ek];
-          var existComps = [];
-          for (var ck in es.components) existComps.push(es.components[ck]);
-          if (JSON.stringify(existComps) === newJson) {
-            // Exact duplicate content — remove the old one, keep new
-            delete surfaces[ek];
-            break;
+        var extractTexts = function(compMap) {
+          var texts = [];
+          for (var k in compMap) {
+            var c = compMap[k];
+            if (c.text && c.component !== 'Button') texts.push(c.text);
+          }
+          return texts.sort().join('||');
+        };
+        var newTexts = extractTexts(surfaces[sid2].components);
+        if (newTexts.length > 0) {
+          var existingKeys = Object.keys(surfaces);
+          for (var di = 0; di < existingKeys.length; di++) {
+            var ek = existingKeys[di];
+            if (ek === sid2) continue;
+            if (extractTexts(surfaces[ek].components) === newTexts) {
+              delete surfaces[ek];
+              break;
+            }
           }
         }
       }
