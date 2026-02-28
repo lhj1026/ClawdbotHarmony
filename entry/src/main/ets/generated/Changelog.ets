@@ -8,11 +8,11 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.58.1';
+export const APP_VERSION: string = '2.58.2';
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    version: '2.58.1',
+    version: '2.58.2',
     date: '2026-02-28',
     features: [
       '情景智能v2: 分层规则系统(Tier 0/1/2), 删除不准确的GPS围栏规则',
@@ -23,6 +23,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       '规则管理页面重写: 场景模板(8个预置场景)+高级模式, 一键添加规则',
       '数据托盘四分类: 🧑人/📱手机/🌍环境/💻数字世界',
       '数字世界独立分类: 日历、应用使用、前台应用、通知、媒体播放',
+      '数据托盘始终显示四分类标题，空分类显示"⏳ 等待数据..."',
     ],
     fixes: [
       '数据分类优化: GPS速度归环境, 心率归人, 屏幕/姿态归手机',
@@ -576,4 +577,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.58.1';
+export const LATEST_VERSION: string = '2.58.2';

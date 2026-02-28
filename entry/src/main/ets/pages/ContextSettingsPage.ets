@@ -445,14 +445,17 @@ struct ContextSettingsPage {
                   .padding(16)
               } else {
                 // ── 🧑 人（用户状态） ──
-                if (this.personKeys.length > 0) {
-                  Text('🧑 人（用户状态）(' + this.personKeys.length.toString() + ')')
-                    .fontSize(13)
-                    .fontWeight(FontWeight.Bold)
-                    .fontColor('#6A1B9A')
-                    .width('100%')
-                    .margin({ bottom: 4, top: 4 })
+                Text('🧑 人（用户状态）' + (this.personKeys.length > 0 ? '(' + this.personKeys.length.toString() + ')' : ''))
+                  .fontSize(13)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor('#6A1B9A')
+                  .width('100%')
+                  .margin({ bottom: 4, top: 4 })
 
+                if (this.personKeys.length === 0) {
+                  Text('⏳ 等待传感器数据...')
+                    .fontSize(12).fontColor('#BBBBBB').width('100%').padding({ left: 4, bottom: 4 })
+                } else {
                   Row() {
                     Text(I18n.t('ctx.tray.colName')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(90)
                     Text(I18n.t('ctx.tray.colValue')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).layoutWeight(1)
@@ -480,14 +483,17 @@ struct ContextSettingsPage {
                 }
 
                 // ── 📱 手机（设备状态） ──
-                if (this.phoneKeys.length > 0) {
-                  Text('📱 手机（设备状态）(' + this.phoneKeys.length.toString() + ')')
-                    .fontSize(13)
-                    .fontWeight(FontWeight.Bold)
-                    .fontColor('#1565C0')
-                    .width('100%')
-                    .margin({ bottom: 4, top: 12 })
+                Text('📱 手机（设备状态）' + (this.phoneKeys.length > 0 ? '(' + this.phoneKeys.length.toString() + ')' : ''))
+                  .fontSize(13)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor('#1565C0')
+                  .width('100%')
+                  .margin({ bottom: 4, top: 12 })
 
+                if (this.phoneKeys.length === 0) {
+                  Text('⏳ 等待设备数据...')
+                    .fontSize(12).fontColor('#BBBBBB').width('100%').padding({ left: 4, bottom: 4 })
+                } else {
                   Row() {
                     Text(I18n.t('ctx.tray.colName')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(90)
                     Text(I18n.t('ctx.tray.colValue')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).layoutWeight(1)
@@ -515,14 +521,17 @@ struct ContextSettingsPage {
                 }
 
                 // ── 🌍 环境（场景位置） ──
-                if (this.envKeys.length > 0) {
-                  Text('🌍 环境（场景位置）(' + this.envKeys.length.toString() + ')')
-                    .fontSize(13)
-                    .fontWeight(FontWeight.Bold)
-                    .fontColor('#2E7D32')
-                    .width('100%')
-                    .margin({ bottom: 4, top: 12 })
+                Text('🌍 环境（场景位置）' + (this.envKeys.length > 0 ? '(' + this.envKeys.length.toString() + ')' : ''))
+                  .fontSize(13)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor('#2E7D32')
+                  .width('100%')
+                  .margin({ bottom: 4, top: 12 })
 
+                if (this.envKeys.length === 0) {
+                  Text('⏳ 等待环境数据...')
+                    .fontSize(12).fontColor('#BBBBBB').width('100%').padding({ left: 4, bottom: 4 })
+                } else {
                   Row() {
                     Text(I18n.t('ctx.tray.colName')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(90)
                     Text(I18n.t('ctx.tray.colValue')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).layoutWeight(1)
@@ -550,14 +559,17 @@ struct ContextSettingsPage {
                 }
 
                 // ── 💻 数字世界（应用/信息） ──
-                if (this.digiKeys.length > 0) {
-                  Text('💻 数字世界（应用/信息）(' + this.digiKeys.length.toString() + ')')
-                    .fontSize(13)
-                    .fontWeight(FontWeight.Bold)
-                    .fontColor('#E65100')
-                    .width('100%')
-                    .margin({ bottom: 4, top: 12 })
+                Text('💻 数字世界（应用/信息）' + (this.digiKeys.length > 0 ? '(' + this.digiKeys.length.toString() + ')' : ''))
+                  .fontSize(13)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor('#E65100')
+                  .width('100%')
+                  .margin({ bottom: 4, top: 12 })
 
+                if (this.digiKeys.length === 0) {
+                  Text('⏳ 等待应用数据...')
+                    .fontSize(12).fontColor('#BBBBBB').width('100%').padding({ left: 4, bottom: 4 })
+                } else {
                   Row() {
                     Text(I18n.t('ctx.tray.colName')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(90)
                     Text(I18n.t('ctx.tray.colValue')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).layoutWeight(1)
