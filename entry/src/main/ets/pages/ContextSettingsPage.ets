@@ -77,6 +77,13 @@ struct ContextSettingsPage {
   @State envAges: string[] = [];
   @State envIndicators: string[] = [];
   @State envQualities: string[] = [];
+  // 数据托盘 — 💻 数字世界（应用/信息）
+  @State digiKeys: string[] = [];
+  @State digiLabels: string[] = [];
+  @State digiValues: string[] = [];
+  @State digiAges: string[] = [];
+  @State digiIndicators: string[] = [];
+  @State digiQualities: string[] = [];
 
   // Key → category mapping
   // 🧑 人: 运动、健康、睡眠、行为习惯
@@ -407,7 +414,7 @@ struct ContextSettingsPage {
             // ===== 数据托盘 =====
             Column() {
               Row() {
-                Text('\u{1F4E1} ' + I18n.t('ctx.tray.title') + ' (' + (this.personKeys.length + this.phoneKeys.length + this.envKeys.length).toString() + ')')
+                Text('\u{1F4E1} ' + I18n.t('ctx.tray.title') + ' (' + (this.personKeys.length + this.phoneKeys.length + this.envKeys.length + this.digiKeys.length).toString() + ')')
                   .fontSize(16)
                   .fontWeight(FontWeight.Bold)
                   .fontColor('#1A1A1A')
@@ -426,7 +433,7 @@ struct ContextSettingsPage {
                 .width('100%')
                 .margin({ bottom: 8 })
 
-              if (this.personKeys.length === 0 && this.phoneKeys.length === 0 && this.envKeys.length === 0) {
+              if (this.personKeys.length === 0 && this.phoneKeys.length === 0 && this.envKeys.length === 0 && this.digiKeys.length === 0) {
                 Text(I18n.t('ctx.tray.empty'))
                   .fontSize(13)
                   .fontColor('#999999')
@@ -537,6 +544,41 @@ struct ContextSettingsPage {
                         .fontSize(12).width(18)
                     }.width('100%').padding({ top: 2, bottom: 2 })
                   }, (key: string, idx: number) => 'env_' + key + '_' + idx.toString())
+                }
+
+                // ── 💻 数字世界（应用/信息） ──
+                if (this.digiKeys.length > 0) {
+                  Text('💻 数字世界（应用/信息）(' + this.digiKeys.length.toString() + ')')
+                    .fontSize(13)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor('#E65100')
+                    .width('100%')
+                    .margin({ bottom: 4, top: 12 })
+
+                  Row() {
+                    Text(I18n.t('ctx.tray.colName')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(90)
+                    Text(I18n.t('ctx.tray.colValue')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).layoutWeight(1)
+                    Text(I18n.t('ctx.tray.colAge')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(40)
+                    Text(I18n.t('ctx.tray.colQuality')).fontSize(11).fontColor('#999999').fontWeight(FontWeight.Medium).width(32)
+                    Text('').width(18)
+                  }.width('100%').padding({ bottom: 2 })
+
+                  ForEach(this.digiKeys, (key: string, idx: number) => {
+                    Row() {
+                      Text(idx < this.digiLabels.length ? this.digiLabels[idx] : key)
+                        .fontSize(12).fontColor('#1A1A1A').width(90).maxLines(1)
+                        .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      Text(idx < this.digiValues.length ? this.digiValues[idx] : '')
+                        .fontSize(12).fontColor('#666666').layoutWeight(1).maxLines(1)
+                        .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      Text(idx < this.digiAges.length ? this.digiAges[idx] : '')
+                        .fontSize(11).fontColor('#999999').width(40)
+                      Text(idx < this.digiQualities.length ? this.digiQualities[idx] : '')
+                        .fontSize(11).fontColor('#999999').width(32)
+                      Text(idx < this.digiIndicators.length ? this.digiIndicators[idx] : '')
+                        .fontSize(12).width(18)
+                    }.width('100%').padding({ top: 2, bottom: 2 })
+                  }, (key: string, idx: number) => 'dig_' + key + '_' + idx.toString())
                 }
               }
             }
@@ -1228,6 +1270,7 @@ struct ContextSettingsPage {
       let perK: string[] = [], perL: string[] = [], perV: string[] = [], perA: string[] = [], perI: string[] = [], perQ: string[] = [];
       let phoK: string[] = [], phoL: string[] = [], phoV: string[] = [], phoA: string[] = [], phoI: string[] = [], phoQ: string[] = [];
       let envK: string[] = [], envL: string[] = [], envV: string[] = [], envA: string[] = [], envI: string[] = [], envQ: string[] = [];
+      let digK: string[] = [], digL: string[] = [], digV: string[] = [], digA: string[] = [], digI: string[] = [], digQ: string[] = [];
 
       for (let i = 0; i < statuses.length; i++) {
         let s: TrayStatus = statuses[i];
@@ -1237,13 +1280,18 @@ struct ContextSettingsPage {
         let ind = s.fresh ? '\u{1F7E2}' : (s.effectiveQuality > 0 ? '\u{1F7E1}' : '\u{1F534}');
         let qual = (s.effectiveQuality * 100).toFixed(0) + '%';
 
-        let cat = this.getKeyCategory(s.key);
-        if (cat === 'person') {
-          perK.push(s.key); perL.push(label); perV.push(val); perA.push(age); perI.push(ind); perQ.push(qual);
-        } else if (cat === 'phone') {
-          phoK.push(s.key); phoL.push(label); phoV.push(val); phoA.push(age); phoI.push(ind); phoQ.push(qual);
+        // Digital world data (calendar, appUsage, foregroundApp, notification) identified by source
+        if (s.source === 'digital') {
+          digK.push(s.key); digL.push(label); digV.push(val); digA.push(age); digI.push(ind); digQ.push(qual);
         } else {
-          envK.push(s.key); envL.push(label); envV.push(val); envA.push(age); envI.push(ind); envQ.push(qual);
+          let cat = this.getKeyCategory(s.key);
+          if (cat === 'person') {
+            perK.push(s.key); perL.push(label); perV.push(val); perA.push(age); perI.push(ind); perQ.push(qual);
+          } else if (cat === 'phone') {
+            phoK.push(s.key); phoL.push(label); phoV.push(val); phoA.push(age); phoI.push(ind); phoQ.push(qual);
+          } else {
+            envK.push(s.key); envL.push(label); envV.push(val); envA.push(age); envI.push(ind); envQ.push(qual);
+          }
         }
       }
       this.personKeys = perK; this.personLabels = perL; this.personValues = perV;
@@ -1252,6 +1300,8 @@ struct ContextSettingsPage {
       this.phoneAges = phoA; this.phoneIndicators = phoI; this.phoneQualities = phoQ;
       this.envKeys = envK; this.envLabels = envL; this.envValues = envV;
       this.envAges = envA; this.envIndicators = envI; this.envQualities = envQ;
+      this.digiKeys = digK; this.digiLabels = digL; this.digiValues = digV;
+      this.digiAges = digA; this.digiIndicators = digI; this.digiQualities = digQ;
 
       // 更新顶部状态概览
       this.updateStatusHeader(statuses);
@@ -1259,6 +1309,7 @@ struct ContextSettingsPage {
       this.personKeys = [];
       this.phoneKeys = [];
       this.envKeys = [];
+      this.digiKeys = [];
     }
   }
 
