@@ -94,15 +94,20 @@
         "key": "isSleeping",
         "op": "neq",
         "value": "true"
+      },
+      {
+        "key": "activityDuration",
+        "op": "gte",
+        "value": "2400"
       }
     ],
     "action": {
       "id": "suggest_move",
       "type": "suggestion",
-      "payload": "坐了很久了，起来活动一下吧 🏃"
+      "payload": "已经坐了40分钟了，起来活动一下吧 🏃"
     },
     "priority": 1.0,
-    "cooldownMs": 5400000,
+    "cooldownMs": 2400000,
     "enabled": true
   },
   {
@@ -122,7 +127,7 @@
       {
         "key": "activityDuration",
         "op": "gte",
-        "value": "3600"
+        "value": "2400"
       },
       {
         "key": "isSleeping",
@@ -142,10 +147,10 @@
     "action": {
       "id": "alert_move_home",
       "type": "alert",
-      "payload": "在家坐了超过1小时了！起来活动一下 🏃‍♂️"
+      "payload": "已经坐了40分钟了！起来活动一下 🏃♂️"
     },
     "priority": 3.0,
-    "cooldownMs": 3600000,
+    "cooldownMs": 2400000,
     "enabled": true
   },
   {
@@ -165,7 +170,7 @@
       {
         "key": "activityDuration",
         "op": "gte",
-        "value": "3600"
+        "value": "2400"
       },
       {
         "key": "isSleeping",
@@ -185,10 +190,10 @@
     "action": {
       "id": "alert_move_home_wifi",
       "type": "alert",
-      "payload": "在家坐了超过1小时了！起来活动一下 🏃‍♂️"
+      "payload": "已经坐了40分钟了！起来活动一下 🏃♂️"
     },
     "priority": 2.5,
-    "cooldownMs": 3600000,
+    "cooldownMs": 2400000,
     "enabled": true
   },
   {
