@@ -187,6 +187,9 @@ export class NodeRuntime {
   private _lastRecRuleId: string = '';
   // 等待状态确认后才弹出的推荐
   private _pendingStateRec: PendingStateRec | null = null;
+  // A2UI 状态卡片去重：记录上次显示的状态文本
+  private _lastStateCardText: string = '';
+  private _lastStateCardTime: number = 0;
   private _lastRecRuleName: string = '';
   private _lastRecReason: string = '';
   private _lastRecConfidence: number = 0;
@@ -455,6 +458,16 @@ export class NodeRuntime {
       }
 
       if (stateInfo.length > 0) {
+        // 源头去重：如果状态文本相同且 60 秒内，只更新缓存的推荐不重复弹卡
+        let now = Date.now();
+        if (stateInfo === this._lastStateCardText && now - this._lastStateCardTime < 60000) {
+          this.log.info(TAG, `[A2UI] Dedup: same state card within 60s, updating pending rec only`);
+          this._pendingStateRec = { ruleId, ruleName, reason: rec.reason, confidence };
+          return;
+        }
+        this._lastStateCardText = stateInfo;
+        this._lastStateCardTime = now;
+
         // 缓存推荐，等用户确认状态正确后再显示
         this._pendingStateRec = { ruleId, ruleName, reason: rec.reason, confidence };
 
@@ -3750,38 +3763,75 @@ export class NodeRuntime {
       lines.push(`🏃 ${motionMap[motion] ?? motion}`);
     }
 
-    // 位置 (从 tray 获取围栏信息)
+    // 位置 (综合 tray + DigitalWorld + 围栏列表)
     let tray = cas.getDataTray();
-    let geofenceSlot = tray ? tray.get('geofence') : undefined;
-    let geofence = geofenceSlot?.value ?? d['geofence'] ?? '';
-    if (geofence.length > 0) {
-      // 尝试获取围栏名称
-      let gfName = geofence;
+    let locationShown = false;
+
+    // WiFi SSID
+    let wifiSsid = d['wifi_ssid'] ?? d['ssid'] ?? '';
+    if (wifiSsid.length === 0) {
+      let wifiSlot = tray.get('wifiSsid');
+      wifiSsid = (wifiSlot && wifiSlot.value) ? wifiSlot.value : '';
+    }
+
+    // WiFi 围栏类别 (home/work/transit...)
+    let wifiGfSlot = tray.get('wifiGeofence');
+    let wifiGeofenceCat = (wifiGfSlot && wifiGfSlot.value) ? wifiGfSlot.value : '';
+
+    // 查找匹配围栏的名称
+    if (wifiGeofenceCat.length > 0 || wifiSsid.length > 0) {
+      let gfName = '';
+      let gfCat = wifiGeofenceCat;
       try {
         let allGf = cas.getAllGeofences();
         for (let i = 0; i < allGf.length; i++) {
-          if (allGf[i].id === geofence) {
-            gfName = `${allGf[i].name} (${allGf[i].category})`;
-            break;
+          let gf = allGf[i];
+          // 通过 WiFi SSID 匹配
+          if (wifiSsid.length > 0 && gf.learnedSignals?.wifiSSIDs) {
+            for (let j = 0; j < gf.learnedSignals.wifiSSIDs.length; j++) {
+              if (gf.learnedSignals.wifiSSIDs[j] === wifiSsid) {
+                gfName = gf.name;
+                gfCat = gf.category ?? gfCat;
+                break;
+              }
+            }
+            if (gfName.length > 0) break;
           }
         }
-      } catch { /* use raw id */ }
-      lines.push(`📍 围栏: ${gfName}`);
-    }
-    let wifiGeofenceSlot = tray ? tray.get('wifiGeofence') : undefined;
-    let wifiGeofence = wifiGeofenceSlot?.value ?? '';
-    if (wifiGeofence.length > 0) {
+      } catch { /* ignore */ }
+
       let catLabels: Record<string, string> = {
-        'home': '🏠 家', 'work': '🏢 公司', 'restaurant': '🍽️ 餐饮',
-        'shopping': '🛒 购物', 'gym': '💪 健身', 'transit': '🚉 交通'
+        'home': '🏠', 'work': '🏢', 'restaurant': '🍽️',
+        'shopping': '🛒', 'gym': '💪', 'transit': '🚉', 'hotel': '🏨'
       };
-      lines.push(`📡 WiFi围栏: ${catLabels[wifiGeofence] ?? wifiGeofence}`);
+      let emoji = catLabels[gfCat] ?? '📍';
+      if (gfName.length > 0) {
+        lines.push(`${emoji} ${gfName}`);
+      } else if (gfCat.length > 0) {
+        lines.push(`${emoji} ${gfCat}`);
+      }
+      locationShown = true;
     }
-    let wifiSsid = d['wifi_ssid'] ?? d['ssid'] ?? '';
-    if (wifiSsid.length === 0) {
-      let wifiSlot = tray ? tray.get('wifiSsid') : undefined;
-      wifiSsid = wifiSlot?.value ?? '';
+
+    // GPS 围栏 (如果 WiFi 没匹配到)
+    if (!locationShown) {
+      let gfSlot = tray.get('geofence');
+      let geofenceId = (gfSlot && gfSlot.value) ? gfSlot.value : '';
+      if (geofenceId.length > 0) {
+        let gfName = geofenceId;
+        try {
+          let allGf = cas.getAllGeofences();
+          for (let i = 0; i < allGf.length; i++) {
+            if (allGf[i].id === geofenceId) {
+              gfName = `${allGf[i].name} (${allGf[i].category})`;
+              break;
+            }
+          }
+        } catch { /* use raw id */ }
+        lines.push(`📍 ${gfName}`);
+      }
     }
+
     if (wifiSsid.length > 0) {
       lines.push(`📶 WiFi: ${wifiSsid}`);
     }
