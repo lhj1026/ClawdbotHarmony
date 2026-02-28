@@ -64,6 +64,13 @@ import { PushCapability } from './PushCapability';
 const TAG = 'NodeRuntime';
 const APP_VERSION = '2.58.17';
 
+interface PendingStateRec {
+  ruleId: string;
+  ruleName: string;
+  reason: string;
+  confidence: number;
+}
+
 export class NodeRuntime {
   private static instance: NodeRuntime | undefined = undefined;
 
@@ -177,6 +184,8 @@ export class NodeRuntime {
   private _agentId: string = 'main';  // agent ID from config (for avatar URL)
   private _cachedAvatarPath: string = '';  // local file path of downloaded avatar
   private _lastRecRuleId: string = '';
+  // 等待状态确认后才弹出的推荐
+  private _pendingStateRec: PendingStateRec | null = null;
   private _lastRecRuleName: string = '';
   private _lastRecReason: string = '';
   private _lastRecConfidence: number = 0;
@@ -437,17 +446,19 @@ export class NodeRuntime {
       this._activeRecommendations.set(ruleId, rec);
       setTimeout(() => { this._activeRecommendations.delete(ruleId); }, 5 * 60 * 1000);
 
-      // 探索模式：显示检测到的状态 + 建议
+      // 先确认状态，状态正确后再弹推荐
       let stateInfo = rec.exploreStateInfo ?? '';
       if (stateInfo.length === 0 && cas.isExploreMode()) {
-        // Fallback: build state from DigitalWorldService
         stateInfo = this.buildExploreStateFromDigital(cas);
         this.log.info(TAG, `[Explore] fallback stateInfo built (${stateInfo.length} chars)`);
       }
 
       if (stateInfo.length > 0) {
-        let a2uiJsonl = this.buildExploreStateA2UI(ruleId, ruleName, rec.reason, confidence, stateInfo);
+        // 缓存推荐，等用户确认状态正确后再显示
+        this._pendingStateRec = { ruleId, ruleName, reason: rec.reason, confidence };
 
+        // 只显示状态卡片
+        let stateCardJsonl = this.buildStateOnlyA2UI(ruleId, ruleName, stateInfo);
         let event: GatewayChatEvent = {
           runId: `ctx-${Date.now()}`,
           sessionKey: '',
@@ -455,15 +466,14 @@ export class NodeRuntime {
           state: 'final',
           message: {
             role: 'assistant',
-            content: [{ type: 'text', text: `🔍 探索模式检测到新状态\n${stateInfo}\n\n💡 ${rec.reason}` }],
+            content: [{ type: 'text', text: `🔍 检测到状态变化\n${stateInfo}` }],
           },
         };
         this.dispatchChatEvent(event);
-        this.dispatchA2UI('push', a2uiJsonl);
+        this.dispatchA2UI('push', stateCardJsonl);
       } else {
-        // 普通模式：原有逻辑
+        // 无状态信息（非探索模式）：直接显示推荐
         let a2uiJsonl = this.buildContextRecommendationA2UI(ruleId, ruleName, rec.reason, confidence);
-
         let event: GatewayChatEvent = {
           runId: `ctx-${Date.now()}`,
           sessionKey: '',
@@ -1213,6 +1223,25 @@ export class NodeRuntime {
           `🧠 ${I18n.t('ctx.fb.learnPattern')}${boostText}`;
         this.sendFeedbackResponse(legacyMsg);
         this.pushA2UIConfirmation(legacyMsg);
+      } else if (feedback === 'state_correct') {
+        // 用户确认状态正确 → 弹出对应推荐卡片
+        this.sendFeedbackResponse('✅ 状态已确认');
+        this.pushA2UIConfirmation('✅ 状态已确认');
+        if (this._pendingStateRec) {
+          let pr = this._pendingStateRec;
+          this._pendingStateRec = null;
+          // 显示推荐卡片
+          let recJsonl = this.buildContextRecommendationA2UI(pr.ruleId, pr.ruleName, pr.reason, pr.confidence);
+          this.dispatchA2UI('push', recJsonl);
+        }
+      } else if (feedback === 'state_incorrect') {
+        // 用户说状态不准 → 不弹推荐，让用户纠正场景
+        this._pendingStateRec = null;
+        this.sendFeedbackResponse('❌ 状态不准确，已记录反馈');
+        if (ruleId.length > 0) {
+          this.adjustRulePriority(engine, ruleId, -0.2);
+        }
+        this.showSceneCorrectionCard(ruleId);
       } else if (feedback === 'view_snapshot') {
         // Show current scene snapshot with all sensor data
         this.showSceneSnapshotCard();
@@ -3567,6 +3596,24 @@ export class NodeRuntime {
   /**
    * Build A2UI card for explore mode: shows detected state + suggestion with action buttons.
    */
+  /**
+   * 只构建状态检测卡片（不含推荐），等用户确认后再弹推荐
+   */
+  private buildStateOnlyA2UI(ruleId: string, ruleName: string, stateInfo: string): string {
+    let safeRuleId = ruleId.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    let safeRuleName = ruleName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    let safeState = stateInfo.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+    let detailsText = I18n.t('context.feedback.viewDetails');
+
+    return `{"type":"form","id":"ctx_state_${Date.now()}","children":[` +
+      `{"type":"text","text":"🔍 检测到状态变化","style":{"fontSize":18,"fontWeight":"bold"}},` +
+      `{"type":"text","text":"${safeState}","style":{"fontSize":14}},` +
+      `{"type":"button","text":"✅ 状态正确","variant":"primary","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"state_correct"}}}},` +
+      `{"type":"button","text":"❌ 状态不准","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"state_incorrect"}}}},` +
+      `{"type":"button","text":"🔍 ${detailsText}","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"view_snapshot"}}}}` +
+      `]}`;
+  }
+
   private buildExploreStateA2UI(ruleId: string, ruleName: string, reason: string, confidence: number, stateInfo: string): string {
     let safeReason = reason.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     let safeRuleId = ruleId.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
