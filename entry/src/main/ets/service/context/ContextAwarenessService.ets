@@ -1041,12 +1041,7 @@ export class ContextAwarenessService {
           this.log.info(TAG, `WiFi change detected: "${oldSsid}" -> "${ssid}"`);
           this.lastWifiSsid = ssid;
           this.engine.pushEvent('wifi_change');
-          // 诊断 A2UI
-          let diagJsonl2 = '{"type":"form","id":"wifi_scan_' + Date.now() + '","children":[' +
-            '{"type":"text","text":"📡 WiFi变化","style":{"fontSize":14,"fontWeight":"bold"}},' +
-            '{"type":"text","text":"' + oldSsid + ' → ' + ssid + '","style":{"fontSize":12}}' +
-            ']}';
-          this.dispatchA2UI('push', diagJsonl2);
+
 
           // 触发连接/断开回调
           if (ssid.length > 0 && oldSsid !== ssid) {
@@ -3181,14 +3176,7 @@ export class ContextAwarenessService {
 
     let diagMsg = `WiFi地点发现: ssid=${ssid}, hasGps=${hasGps}, accuracy=${hasGps ? this.lastLocation!.accuracy.toFixed(0) : 'N/A'}, source=${discoverySource}`;
     this.log.info(TAG, diagMsg);
-    // A2UI 诊断通知
-    let diagJsonl = '{"type":"form","id":"wifi_diag_' + now + '","children":[' +
-      '{"type":"text","text":"📶 WiFi地点发现","style":{"fontSize":14,"fontWeight":"bold"}},' +
-      '{"type":"text","text":"SSID: ' + ssid + '","style":{"fontSize":12}},' +
-      '{"type":"text","text":"GPS: ' + (hasGps ? 'lat=' + lat.toFixed(4) + ' lng=' + lng.toFixed(4) + ' acc=' + (this.lastLocation?.accuracy?.toFixed(0) ?? '?') + 'm' : '无') + '","style":{"fontSize":12,"color":"#666"}},' +
-      '{"type":"text","text":"来源: ' + discoverySource + '","style":{"fontSize":12,"color":"#666"}}' +
-      ']}';
-    this.dispatchA2UI('push', diagJsonl);
+
 
     try {
       let places = await this.getDiscoveredPlaces();
