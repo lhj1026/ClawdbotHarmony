@@ -505,59 +505,46 @@ export class NodeRuntime {
         });
       }
 
-      // 先确认状态，状态正确后再弹推荐
+      // 构建状态信息
       let stateInfo = rec.exploreStateInfo ?? '';
       if (stateInfo.length === 0 && cas.isExploreMode()) {
         stateInfo = this.buildExploreStateFromDigital(cas);
         this.log.info(TAG, `[Explore] fallback stateInfo built (${stateInfo.length} chars)`);
       }
 
-      if (stateInfo.length > 0) {
-        // 去重：如果已有未确认的状态卡片，不弹新的，只更新缓存的推荐
-        if (this._pendingStateRec !== null) {
-          this.log.info(TAG, `[A2UI] Dedup: pending state card exists, updating rec only (${ruleId})`);
-          this._pendingStateRec = { ruleId, ruleName, reason: rec.reason, confidence, alternatives };
-          return;
-        }
-
-        // 缓存推荐，等用户确认状态正确后再显示
-        this._pendingStateRec = { ruleId, ruleName, reason: rec.reason, confidence, alternatives };
-
-        // 只显示状态卡片
-        let stateCardJsonl = this.buildStateOnlyA2UI(ruleId, ruleName, stateInfo);
-        let event: GatewayChatEvent = {
-          runId: `ctx-${Date.now()}`,
-          sessionKey: '',
-          seq: 0,
-          state: 'final',
-          message: {
-            role: 'assistant',
-            content: [{ type: 'text', text: `🔍 检测到状态变化\n${stateInfo}` }],
-          },
-        };
-        this.dispatchChatEvent(event);
-        this.dispatchA2UI('push', stateCardJsonl);
-      } else {
-        // 无状态信息（非探索模式）：直接显示推荐选择卡片
-        let a2uiJsonl: string;
-        if (alternatives.length > 1) {
-          a2uiJsonl = this.buildRecommendationSelectionA2UI(alternatives);
-        } else {
-          a2uiJsonl = this.buildContextRecommendationA2UI(ruleId, ruleName, rec.reason, confidence);
-        }
-        let event: GatewayChatEvent = {
-          runId: `ctx-${Date.now()}`,
-          sessionKey: '',
-          seq: 0,
-          state: 'final',
-          message: {
-            role: 'assistant',
-            content: [{ type: 'text', text: `💡 ${alternatives.length}个推荐` }],
-          },
-        };
-        this.dispatchChatEvent(event);
-        this.dispatchA2UI('push', a2uiJsonl);
+      // 去重：如果已有未关闭的卡片，不弹新的
+      if (this._pendingStateRec !== null) {
+        this.log.info(TAG, `[A2UI] Dedup: pending card exists, skip (${ruleId})`);
+        return;
       }
+      this._pendingStateRec = { ruleId, ruleName, reason: rec.reason, confidence, alternatives };
+
+      // 一张合并卡片：状态 + 推荐选项
+      let a2uiJsonl: string;
+      if (stateInfo.length > 0 && alternatives.length > 0) {
+        a2uiJsonl = this.buildCombinedStateRecA2UI(stateInfo, alternatives);
+      } else if (alternatives.length > 1) {
+        a2uiJsonl = this.buildRecommendationSelectionA2UI(alternatives);
+      } else {
+        a2uiJsonl = this.buildContextRecommendationA2UI(ruleId, ruleName, rec.reason, confidence);
+      }
+
+      let chatText = stateInfo.length > 0
+        ? `🔍 检测到状态变化\n${stateInfo}`
+        : `💡 ${alternatives.length}个推荐`;
+
+      let event: GatewayChatEvent = {
+        runId: `ctx-${Date.now()}`,
+        sessionKey: '',
+        seq: 0,
+        state: 'final',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: chatText }],
+        },
+      };
+      this.dispatchChatEvent(event);
+      this.dispatchA2UI('push', a2uiJsonl);
 
       // Also send system notification if in background
       if (!this._isInForeground) {
@@ -1299,24 +1286,9 @@ export class NodeRuntime {
       } else if (feedback === 'state_correct') {
         // 用户确认状态正确 → 关闭状态卡片，弹出推荐选择卡片
         this.dispatchA2UI('reset', '');
+        // 旧两步流程兼容 — 现在合并卡片中不再触发此事件
         this.sendFeedbackResponse('✅ 状态已确认');
-        if (this._pendingStateRec) {
-          let pr = this._pendingStateRec;
-          this._pendingStateRec = null;
-          if (pr.alternatives && pr.alternatives.length > 1) {
-            // 多个推荐 → 显示选择卡片
-            let selectionJsonl = this.buildRecommendationSelectionA2UI(pr.alternatives);
-            this.dispatchA2UI('push', selectionJsonl);
-          } else if (pr.alternatives && pr.alternatives.length === 1) {
-            // 只有一个 → 直接显示确认卡片
-            let alt = pr.alternatives[0];
-            let recJsonl = this.buildContextRecommendationA2UI(alt.ruleId, alt.ruleName, alt.actionDesc, alt.confidence);
-            this.dispatchA2UI('push', recJsonl);
-          } else {
-            let recJsonl = this.buildContextRecommendationA2UI(pr.ruleId, pr.ruleName, pr.reason, pr.confidence);
-            this.dispatchA2UI('push', recJsonl);
-          }
-        }
+        this._pendingStateRec = null;
       } else if (feedback === 'state_incorrect') {
         // 用户说状态不准 → 关闭状态卡片，进入场景纠正
         this.dispatchA2UI('reset', '');
@@ -1327,8 +1299,9 @@ export class NodeRuntime {
         }
         this.showSceneCorrectionCard(ruleId);
       } else if (feedback === 'rec_select') {
-        // 用户从多选卡片中选择了一个推荐
+        // 用户选择了一个推荐 → 关闭卡片 + 执行
         this.dispatchA2UI('reset', '');
+        this._pendingStateRec = null;
         let displayName = ruleName.length > 0 ? ruleName : ruleId;
         this.sendFeedbackResponse(`✅ 执行: ${displayName}`);
         // 正向反馈
@@ -1351,8 +1324,9 @@ export class NodeRuntime {
           this.dispatchA2UI('push', a2uiJsonl);
         }
       } else if (feedback === 'dismiss') {
-        // Dismiss is a mild negative signal, don't record as thumbs_down
+        // Dismiss — 关闭卡片
         this.dispatchA2UI('reset', '');
+        this._pendingStateRec = null;
         this.sendFeedbackResponse('🙈 ' + I18n.t('ctx.fb.dismissed'));
       }
       // Handle new place detection events
@@ -3746,47 +3720,67 @@ export class NodeRuntime {
   /**
    * 构建推荐选择卡片：显示 top N 推荐，用户点击选择执行
    */
-  private buildRecommendationSelectionA2UI(alternatives: PendingAlternative[]): string {
+  /**
+   * 构建合并卡片：状态信息 + 推荐选项，一张卡片完成
+   */
+  private buildCombinedStateRecA2UI(stateInfo: string, alternatives: PendingAlternative[]): string {
     let children: string[] = [];
-    children.push(`{"type":"text","text":"💡 推荐操作","style":{"fontSize":18,"fontWeight":"bold"}}`);
-    children.push(`{"type":"text","text":"选择要执行的操作:","style":{"fontSize":13,"color":"#888"}}`);
+    let safeState = stateInfo.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
 
+    // 状态信息区
+    children.push(`{"type":"text","text":"🔍 检测到状态变化","style":{"fontSize":18,"fontWeight":"bold"}}`);
+    children.push(`{"type":"text","text":"${safeState}","style":{"fontSize":14}}`);
+
+    // 分割线
+    children.push(`{"type":"text","text":"── 💡 推荐操作 ──","style":{"fontSize":14,"color":"#888","textAlign":"center"}}`);
+
+    // 推荐按钮
     for (let i = 0; i < alternatives.length; i++) {
       let alt = alternatives[i];
-      let safeDesc = alt.actionDesc.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
       let safeRuleId = alt.ruleId.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
       let safeRuleName = alt.ruleName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-      let emoji = i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉';
-      let variant = i === 0 ? '"variant":"primary",' : '';
       let safeActionDesc = alt.actionDesc.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
       let displayText = safeActionDesc.length > 0 ? safeActionDesc : safeRuleName;
+      let emoji = i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉';
+      let variant = i === 0 ? '"variant":"primary",' : '';
       children.push(
         `{"type":"button","text":"${emoji} ${displayText} (${alt.confidence}%)",${variant}"action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"rec_select"}}}}`
       );
     }
 
-    // 忽略按钮
-    let dismissText = I18n.t('context.feedback.dismiss');
+    // 底部操作
     children.push(
-      `{"type":"button","text":"🙈 ${dismissText}","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"feedback":"dismiss"}}}}`
+      `{"type":"button","text":"🙈 忽略","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"feedback":"dismiss"}}}}`
+    );
+
+    return `{"type":"form","id":"ctx_combined_${Date.now()}","children":[${children.join(',')}]}`;
+  }
+
+  /**
+   * 构建推荐选择卡片（无状态信息时使用）
+   */
+  private buildRecommendationSelectionA2UI(alternatives: PendingAlternative[]): string {
+    let children: string[] = [];
+    children.push(`{"type":"text","text":"💡 推荐操作","style":{"fontSize":18,"fontWeight":"bold"}}`);
+
+    for (let i = 0; i < alternatives.length; i++) {
+      let alt = alternatives[i];
+      let safeRuleId = alt.ruleId.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      let safeRuleName = alt.ruleName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      let safeActionDesc = alt.actionDesc.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      let displayText = safeActionDesc.length > 0 ? safeActionDesc : safeRuleName;
+      let emoji = i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉';
+      let variant = i === 0 ? '"variant":"primary",' : '';
+      children.push(
+        `{"type":"button","text":"${emoji} ${displayText} (${alt.confidence}%)",${variant}"action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"rec_select"}}}}`
+      );
+    }
+
+    children.push(
+      `{"type":"button","text":"🙈 忽略","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"feedback":"dismiss"}}}}`
     );
 
     return `{"type":"form","id":"ctx_select_${Date.now()}","children":[${children.join(',')}]}`;
-  }
-
-  private buildStateOnlyA2UI(ruleId: string, ruleName: string, stateInfo: string): string {
-    let safeRuleId = ruleId.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-    let safeRuleName = ruleName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-    let safeState = stateInfo.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
-    let detailsText = I18n.t('context.feedback.viewDetails');
-
-    return `{"type":"form","id":"ctx_state_${Date.now()}","children":[` +
-      `{"type":"text","text":"🔍 检测到状态变化","style":{"fontSize":18,"fontWeight":"bold"}},` +
-      `{"type":"text","text":"${safeState}","style":{"fontSize":14}},` +
-      `{"type":"button","text":"✅ 状态正确","variant":"primary","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"state_correct"}}}},` +
-      `{"type":"button","text":"❌ 状态不准","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"state_incorrect"}}}},` +
-      `{"type":"button","text":"🔍 ${detailsText}","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","feedback":"view_snapshot"}}}}` +
-      `]}`;
   }
 
   private buildExploreStateA2UI(ruleId: string, ruleName: string, reason: string, confidence: number, stateInfo: string): string {
