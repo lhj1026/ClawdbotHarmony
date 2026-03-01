@@ -641,6 +641,26 @@ export class ContextAwarenessService {
         snapshot.wifiLostWork = 'true';
       }
     }
+
+    // 补充 C++ snapshot 缺失的 tray 字段
+    let wifiGfSlot = this.tray.get('wifiGeofence');
+    if (wifiGfSlot && wifiGfSlot.value && wifiGfSlot.value.length > 0) {
+      snapshot.wifiGeofence = wifiGfSlot.value;
+    }
+    // 补充 geofence（C++ 可能因过期没返回）
+    if (!snapshot.geofence || snapshot.geofence.length === 0) {
+      let gfSlot = this.tray.get('geofence');
+      if (gfSlot && gfSlot.value && gfSlot.value.length > 0) {
+        snapshot.geofence = gfSlot.value;
+      }
+    }
+    // 补充 wifiSsid
+    if (!snapshot.wifiSsid || snapshot.wifiSsid.length === 0) {
+      if (this.lastWifiSsid && this.lastWifiSsid.length > 0) {
+        snapshot.wifiSsid = this.lastWifiSsid;
+      }
+    }
+
     return snapshot;
   }
 
