@@ -191,7 +191,7 @@ export class ContextEngineService {
       this.prefsStore = await preferences.getPreferences(context, 'context_engine');
 
       // Rules version: bump this when default_rules.json changes significantly
-      const RULES_VERSION = 5; // v5: airport scene rules (6 rules) + flight mode
+      const RULES_VERSION = 6; // v6: action function tags (morning_briefing, calendar_summary etc.)
       let storedVersion: number = Number(await this.prefsStore.get('rules_version', 0));
 
       // Load all rules from unified storage
