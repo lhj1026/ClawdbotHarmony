@@ -2855,14 +2855,35 @@ export class ContextAwarenessService {
     lines.push(`🏃 ${motionLabel}${durationStr}`);
 
     // 位置
+    let catLabels: Record<string, string> = {
+      'home': '🏠 家', 'work': '🏢 公司', 'restaurant': '🍽️ 餐饮',
+      'shopping': '🛒 购物', 'gym': '💪 健身', 'transit': '🚉 交通', 'hotel': '🏨 酒店'
+    };
+    let locationShown = false;
     if (snapshot.geofence && snapshot.geofence.length > 0) {
-      lines.push(`📍 ${snapshot.geofence}`);
+      // 将 geofence ID 转换为名称
+      let gfName = '';
+      let gfCat = '';
+      let allGf = this.geofenceMgr.getAllGeofences();
+      for (let i = 0; i < allGf.length; i++) {
+        if (allGf[i].id === snapshot.geofence) {
+          gfName = allGf[i].name;
+          gfCat = allGf[i].category ?? '';
+          break;
+        }
+      }
+      if (gfName.length > 0) {
+        let emoji = catLabels[gfCat]?.substring(0, 2) ?? '📍';
+        lines.push(`${emoji} ${gfName}`);
+        locationShown = true;
+      }
+    }
+    if (!locationShown && snapshot.wifiGeofence && snapshot.wifiGeofence.length > 0) {
+      let label = catLabels[snapshot.wifiGeofence] ?? snapshot.wifiGeofence;
+      lines.push(`📍 ${label}`);
     }
     if (snapshot.wifiSsid && snapshot.wifiSsid.length > 0) {
       lines.push(`📶 WiFi: ${snapshot.wifiSsid}`);
-    }
-    if (snapshot.wifiGeofence && snapshot.wifiGeofence.length > 0) {
-      lines.push(`📡 WiFi围栏: ${snapshot.wifiGeofence}`);
     }
 
     // 蓝牙设备
