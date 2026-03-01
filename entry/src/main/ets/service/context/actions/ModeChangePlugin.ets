@@ -28,7 +28,8 @@ export class ModeChangePlugin implements ActionPlugin {
       'driving': '🚗 驾驶模式',
       'silent': '🔇 静音模式',
       'dnd': '🔕 勿扰模式',
-      'normal': '📱 正常模式'
+      'normal': '📱 正常模式',
+      'flight': '✈️ 飞行模式'
     };
 
     let label = modeLabels[mode] ?? `⚙️ ${mode}模式`;
@@ -47,10 +48,10 @@ export class ModeChangePlugin implements ActionPlugin {
   getDisplayInfo(action: UserAction): ActionDisplayInfo {
     let mode = action.target ?? 'normal';
     let emojiMap: Record<string, string> = {
-      'sleep': '🌙', 'driving': '🚗', 'silent': '🔇', 'dnd': '🔕', 'normal': '📱'
+      'sleep': '🌙', 'driving': '🚗', 'silent': '🔇', 'dnd': '🔕', 'normal': '📱', 'flight': '✈️'
     };
     let nameMap: Record<string, string> = {
-      'sleep': '睡眠模式', 'driving': '驾驶模式', 'silent': '静音', 'dnd': '勿扰', 'normal': '正常模式'
+      'sleep': '睡眠模式', 'driving': '驾驶模式', 'silent': '静音', 'dnd': '勿扰', 'normal': '正常模式', 'flight': '飞行模式'
     };
     return {
       title: nameMap[mode] ?? `${mode}模式`,

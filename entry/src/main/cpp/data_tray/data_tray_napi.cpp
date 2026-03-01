@@ -191,6 +191,18 @@ static napi_value GetSnapshot(napi_env env, napi_callback_info info) {
     if (snap.stepCount.has_value()) {
         napi_set_named_property(env, obj, "stepCount", CreateString(env, snap.stepCount.value()));
     }
+    if (snap.flightCountdownMin.has_value()) {
+        napi_set_named_property(env, obj, "flightCountdownMin", CreateString(env, snap.flightCountdownMin.value()));
+    }
+    if (snap.flightArrivalMin.has_value()) {
+        napi_set_named_property(env, obj, "flightArrivalMin", CreateString(env, snap.flightArrivalMin.value()));
+    }
+    if (snap.flightNumber.has_value()) {
+        napi_set_named_property(env, obj, "flightNumber", CreateString(env, snap.flightNumber.value()));
+    }
+    if (snap.hasUpcomingFlight.has_value()) {
+        napi_set_named_property(env, obj, "hasUpcomingFlight", CreateString(env, snap.hasUpcomingFlight.value()));
+    }
 
     return obj;
 }

@@ -1473,12 +1473,11 @@ export class NodeRuntime {
       try {
         let cas = ContextAwarenessService.getInstance();
         let calPlugin = cas.getCalendarPlugin();
-        if (calPlugin) {
-          this._actionExecutor = new ActionExecutor(calPlugin);
-        }
-      } catch { /* CalendarPlugin not available */ }
+        this._actionExecutor = new ActionExecutor(calPlugin);  // calPlugin 可以是 undefined
+      } catch {
+        this._actionExecutor = new ActionExecutor();  // 无 CalendarPlugin 也创建
+      }
     }
-    if (!this._actionExecutor) return;
 
     this._actionExecutor.execute(action).then((result: ActionResult) => {
       if (result.message.length > 0) {

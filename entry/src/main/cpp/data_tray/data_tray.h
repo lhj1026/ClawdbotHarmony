@@ -66,6 +66,11 @@ struct ContextSnapshot {
     std::optional<std::string> latitude;
     std::optional<std::string> longitude;
     std::optional<std::string> stepCount;
+    // 出行/航班
+    std::optional<std::string> flightCountdownMin;
+    std::optional<std::string> flightArrivalMin;
+    std::optional<std::string> flightNumber;
+    std::optional<std::string> hasUpcomingFlight;
 };
 
 // ============================================================
@@ -103,6 +108,12 @@ inline int64_t getDefaultTTL(const std::string& key) {
         {"heartRate", 60 * 1000},           // 1 min
         {"ambientLight", 30 * 1000},        // 30 sec
         {"noiseLevel", 30 * 1000},          // 30 sec
+
+        // 出行/航班
+        {"flightCountdownMin", 2 * 60 * 1000},   // 2 min TTL (updated every 30s)
+        {"flightArrivalMin",   2 * 60 * 1000},   // 2 min TTL
+        {"flightNumber",       30 * 60 * 1000},  // 30 min TTL
+        {"hasUpcomingFlight",  30 * 60 * 1000},  // 30 min TTL
     };
 
     auto it = defaultTTL.find(key);
@@ -218,6 +229,22 @@ public:
         auto steps = getUnlocked("stepCount");
         if (steps.value.has_value()) {
             snap.stepCount = steps.value;
+        }
+        auto flightCountdown = getUnlocked("flightCountdownMin");
+        if (flightCountdown.value.has_value()) {
+            snap.flightCountdownMin = flightCountdown.value;
+        }
+        auto flightArrival = getUnlocked("flightArrivalMin");
+        if (flightArrival.value.has_value()) {
+            snap.flightArrivalMin = flightArrival.value;
+        }
+        auto flightNum = getUnlocked("flightNumber");
+        if (flightNum.value.has_value()) {
+            snap.flightNumber = flightNum.value;
+        }
+        auto hasUpcoming = getUnlocked("hasUpcomingFlight");
+        if (hasUpcoming.value.has_value()) {
+            snap.hasUpcomingFlight = hasUpcoming.value;
         }
 
         return snap;

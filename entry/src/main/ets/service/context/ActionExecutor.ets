@@ -26,12 +26,13 @@ export class ActionExecutor {
   private log: LogService = LogService.getInstance();
   private appLaunchPlugin: AppLaunchPlugin;
 
-  constructor(calendarPlugin: CalendarPlugin) {
+  constructor(calendarPlugin?: CalendarPlugin) {
     this.router = new ActionRouter();
 
     // 注册内置插件（顺序决定优先级：先注册的优先匹配）
-    // CalendarInfo 要在 Notification 前面（都处理 show_info，但 calendar 更具体）
-    this.router.register(new CalendarInfoPlugin(calendarPlugin));
+    if (calendarPlugin) {
+      this.router.register(new CalendarInfoPlugin(calendarPlugin));
+    }
     this.router.register(new TravelInfoPlugin());
     this.router.register(new NotificationPlugin());
     this.router.register(new ModeChangePlugin());

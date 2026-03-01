@@ -144,6 +144,11 @@ export interface ContextSnapshot {
   sensorTier?: string;          // current sensor tier '0'-'3'
   heart_rate_status?: string;   // 'resting', 'normal', 'exercise'
   wearing_state?: string;       // 'on_wrist', 'off_wrist'
+  // 出行/航班
+  flightCountdownMin?: string;  // 距离起飞的分钟数（可为负）
+  flightArrivalMin?: string;    // 距离降落的分钟数（可为负）
+  flightNumber?: string;        // 航班号 e.g. "CA1234"
+  hasUpcomingFlight?: string;   // "true"/"false"
 }
 
 /** Minimal geofence info for rule binding (avoids circular import) */
@@ -184,7 +189,7 @@ export class ContextEngineService {
       this.prefsStore = await preferences.getPreferences(context, 'context_engine');
 
       // Rules version: bump this when default_rules.json changes significantly
-      const RULES_VERSION = 4; // v4: low battery threshold 15→30%
+      const RULES_VERSION = 5; // v5: airport scene rules (6 rules) + flight mode
       let storedVersion: number = Number(await this.prefsStore.get('rules_version', 0));
 
       // Load all rules from unified storage

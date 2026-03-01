@@ -588,5 +588,115 @@
     "priority": 1.5,
     "cooldownMs": 14400000,
     "enabled": true
+  },
+  {
+    "id": "airport_arrive",
+    "name": "到达机场显示登机牌",
+    "tier": 1,
+    "category": "environment",
+    "conditions": [
+      {"key": "wifiGeofence", "op": "eq", "value": "transit"},
+      {"key": "hasUpcomingFlight", "op": "eq", "value": "true"}
+    ],
+    "action": {
+      "id": "airport_arrive",
+      "type": "show_info",
+      "payload": "travel"
+    },
+    "priority": 3.0,
+    "cooldownMs": 1800000,
+    "enabled": true
+  },
+  {
+    "id": "airport_boarding_soon",
+    "name": "即将登机提醒",
+    "tier": 1,
+    "category": "environment",
+    "conditions": [
+      {"key": "wifiGeofence", "op": "eq", "value": "transit"},
+      {"key": "flightCountdownMin", "op": "lte", "value": "45"},
+      {"key": "flightCountdownMin", "op": "gt", "value": "10"}
+    ],
+    "action": {
+      "id": "airport_boarding_soon",
+      "type": "show_info",
+      "payload": "travel"
+    },
+    "priority": 5.0,
+    "cooldownMs": 600000,
+    "enabled": true
+  },
+  {
+    "id": "airport_boarding_now",
+    "name": "立即登机紧急提醒",
+    "tier": 1,
+    "category": "environment",
+    "conditions": [
+      {"key": "wifiGeofence", "op": "eq", "value": "transit"},
+      {"key": "flightCountdownMin", "op": "lte", "value": "10"}
+    ],
+    "action": {
+      "id": "airport_boarding_now",
+      "type": "show_info",
+      "payload": "travel"
+    },
+    "priority": 8.0,
+    "cooldownMs": 300000,
+    "enabled": true
+  },
+  {
+    "id": "airport_takeoff",
+    "name": "起飞开启飞行模式",
+    "tier": 1,
+    "category": "environment",
+    "conditions": [
+      {"key": "wifiGeofence", "op": "eq", "value": "transit"},
+      {"key": "flightCountdownMin", "op": "lte", "value": "0"},
+      {"key": "flightCountdownMin", "op": "gte", "value": "-30"}
+    ],
+    "action": {
+      "id": "airport_takeoff",
+      "type": "set_mode",
+      "payload": "flight"
+    },
+    "priority": 6.0,
+    "cooldownMs": 86400000,
+    "enabled": true
+  },
+  {
+    "id": "airport_landing",
+    "name": "落地关闭飞行模式",
+    "tier": 0,
+    "category": "environment",
+    "conditions": [
+      {"key": "flightArrivalMin", "op": "lte", "value": "10"},
+      {"key": "flightArrivalMin", "op": "gte", "value": "-30"}
+    ],
+    "action": {
+      "id": "airport_landing",
+      "type": "set_mode",
+      "payload": "normal"
+    },
+    "priority": 6.0,
+    "cooldownMs": 86400000,
+    "enabled": true
+  },
+  {
+    "id": "airport_exit",
+    "name": "离开机场出行建议",
+    "tier": 1,
+    "category": "environment",
+    "conditions": [
+      {"key": "wifiLost", "op": "eq", "value": "true"},
+      {"key": "wifiLostCategory", "op": "eq", "value": "transit"}
+    ],
+    "action": {
+      "id": "airport_exit",
+      "type": "suggestion",
+      "payload": "🏁 已离开机场，需要叫车或查看交通路线吗？"
+    },
+    "priority": 2.0,
+    "cooldownMs": 3600000,
+    "enabled": true
   }
 ]
