@@ -30,6 +30,11 @@ export struct NetworkDiagPage {
   @State portproxyLoading: boolean = false;
   @State fixLoading: boolean = false;
 
+  // ---- Preset commands ----
+  @State customCmd: string = '';
+  @State cmdLoading: boolean = false;
+  @State cmdResult: string = '';
+
   // ---- Gateway URL ----
   @State gatewayUrl: string = '';
 
@@ -173,6 +178,27 @@ export struct NetworkDiagPage {
       this.portproxyResult = `❌ 发送失败: ${JSON.stringify(e)}`;
     }
     this.portproxyLoading = false;
+  }
+
+  private async runPresetCmd(cmd: string): Promise<void> {
+    this.cmdLoading = true;
+    this.cmdResult = '⏳ 正在发送...';
+    try {
+      let nr = NodeRuntime.getInstance();
+      let runId = await nr.sendChatMessage(`/exec ${cmd}`, undefined);
+      this.cmdResult = `✅ 已发送 (runId: ${runId})\n💬 结果在主聊天界面显示`;
+    } catch (e) {
+      this.cmdResult = `❌ 发送失败: ${JSON.stringify(e)}`;
+    }
+    this.cmdLoading = false;
+  }
+
+  private async runCustomCmd(): Promise<void> {
+    let cmd = this.customCmd.trim();
+    if (cmd.length === 0) {
+      return;
+    }
+    await this.runPresetCmd(cmd);
   }
 
   private async fixPortproxy(): Promise<void> {
@@ -413,6 +439,143 @@ export struct NetworkDiagPage {
             }
             .width('100%')
             .height(120)
+            .backgroundColor('#F5F5F5')
+            .borderRadius(8)
+            .padding(10)
+          }
+        }
+        .width('100%')
+        .padding(16)
+        .backgroundColor(Color.White)
+        .borderRadius(12)
+
+        // Preset commands card
+        Column({ space: 10 }) {
+          Text('快捷命令')
+            .fontSize(13)
+            .fontColor('#D2691E')
+            .fontWeight(FontWeight.Bold)
+            .width('100%')
+
+          Text('点击预设命令或输入自定义命令，通过 /exec 在服务器执行')
+            .fontSize(11)
+            .fontColor('#999999')
+            .width('100%')
+
+          // Preset buttons row 1
+          Row({ space: 8 }) {
+            Button('查 portproxy')
+              .layoutWeight(1)
+              .height(36)
+              .backgroundColor('#F0EBE5')
+              .fontColor('#D2691E')
+              .fontSize(12)
+              .borderRadius(8)
+              .enabled(!this.cmdLoading)
+              .onClick(() => {
+                this.runPresetCmd('netsh interface portproxy show v4tov4');
+              })
+            Button('查端口监听')
+              .layoutWeight(1)
+              .height(36)
+              .backgroundColor('#F0EBE5')
+              .fontColor('#D2691E')
+              .fontSize(12)
+              .borderRadius(8)
+              .enabled(!this.cmdLoading)
+              .onClick(() => {
+                this.runPresetCmd('netstat -an | findstr 18789');
+              })
+            Button('查防火墙')
+              .layoutWeight(1)
+              .height(36)
+              .backgroundColor('#F0EBE5')
+              .fontColor('#D2691E')
+              .fontSize(12)
+              .borderRadius(8)
+              .enabled(!this.cmdLoading)
+              .onClick(() => {
+                this.runPresetCmd('netsh advfirewall firewall show rule name=all dir=in | findstr 18789');
+              })
+          }
+          .width('100%')
+
+          // Preset buttons row 2
+          Row({ space: 8 }) {
+            Button('WSL IP')
+              .layoutWeight(1)
+              .height(36)
+              .backgroundColor('#F0EBE5')
+              .fontColor('#D2691E')
+              .fontSize(12)
+              .borderRadius(8)
+              .enabled(!this.cmdLoading)
+              .onClick(() => {
+                this.runPresetCmd('hostname -I');
+              })
+            Button('服务状态')
+              .layoutWeight(1)
+              .height(36)
+              .backgroundColor('#F0EBE5')
+              .fontColor('#D2691E')
+              .fontSize(12)
+              .borderRadius(8)
+              .enabled(!this.cmdLoading)
+              .onClick(() => {
+                this.runPresetCmd('systemctl --user status openclaw-gateway');
+              })
+            Button('修复 portproxy')
+              .layoutWeight(1)
+              .height(36)
+              .backgroundColor('#F0EBE5')
+              .fontColor('#8B2500')
+              .fontSize(12)
+              .borderRadius(8)
+              .enabled(!this.cmdLoading)
+              .onClick(() => {
+                this.runPresetCmd(
+                  'netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=18789 && ' +
+                  'netsh interface portproxy add v4tov4 listenaddress=192.168.1.68 listenport=18789 connectaddress=172.17.9.26 connectport=18789 && ' +
+                  'netsh interface portproxy show v4tov4'
+                );
+              })
+          }
+          .width('100%')
+
+          // Custom command input
+          Row({ space: 8 }) {
+            TextInput({ placeholder: '自定义命令...', text: this.customCmd })
+              .layoutWeight(1)
+              .height(40)
+              .fontSize(13)
+              .backgroundColor('#F5F5F5')
+              .borderRadius(8)
+              .onChange((val: string) => {
+                this.customCmd = val;
+              })
+            Button(this.cmdLoading ? '⏳' : '执行')
+              .width(56)
+              .height(40)
+              .backgroundColor('#D2691E')
+              .fontColor(Color.White)
+              .fontSize(13)
+              .borderRadius(8)
+              .enabled(!this.cmdLoading && this.customCmd.trim().length > 0)
+              .onClick(() => {
+                this.runCustomCmd();
+              })
+          }
+          .width('100%')
+
+          if (this.cmdResult.length > 0) {
+            Scroll() {
+              Text(this.cmdResult)
+                .fontSize(12)
+                .fontColor('#1A1A1A')
+                .width('100%')
+            }
+            .width('100%')
+            .height(80)
             .backgroundColor('#F5F5F5')
             .borderRadius(8)
             .padding(10)
