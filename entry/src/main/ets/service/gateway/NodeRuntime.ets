@@ -70,7 +70,7 @@ import { TravelInfoService, FlightInfo, TrainInfo } from '../context/TravelInfoS
 import { AccessibilityService, ScreenNode, WindowInfo } from '../accessibility/AccessibilityService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.59.1';
+const APP_VERSION = '2.59.2';
 
 interface PendingStateRec {
   ruleId: string;
