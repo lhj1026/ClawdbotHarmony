@@ -472,8 +472,8 @@ export class NodeRuntime {
         for (let i = 0; i < rec.alternatives.length; i++) {
           let alt = rec.alternatives[i];
           let altName = ruleNameMap.get(alt.ruleId) ?? alt.ruleId;
-          // 生成动作描述文本
-          let desc = alt.action.payload ?? altName;
+          // 生成动作描述文本 (ContextAction.payload 是规则的描述性文字)
+          let desc = (alt.action.payload && alt.action.payload.length > 0) ? alt.action.payload : altName;
           alternatives.push({
             ruleId: alt.ruleId,
             ruleName: altName,
@@ -3750,8 +3750,10 @@ export class NodeRuntime {
       let safeRuleName = alt.ruleName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
       let emoji = i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉';
       let variant = i === 0 ? '"variant":"primary",' : '';
+      let safeActionDesc = alt.actionDesc.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      let displayText = safeActionDesc.length > 0 ? safeActionDesc : safeRuleName;
       children.push(
-        `{"type":"button","text":"${emoji} ${safeRuleName} (${alt.confidence}%)",${variant}"action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"rec_select"}}}}`
+        `{"type":"button","text":"${emoji} ${displayText} (${alt.confidence}%)",${variant}"action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"rec_select"}}}}`
       );
     }
 
