@@ -13,7 +13,7 @@ import { LogService } from '../../../common/LogService';
 import { DigitalPlugin, DigitalSnapshot } from './DigitalPluginInterface';
 
 const TAG = 'CalendarPlugin';
-const LOOKAHEAD_MS = 2 * 60 * 60 * 1000;  // 2 hours
+const LOOKAHEAD_MS = 36 * 60 * 60 * 1000;  // 36 hours (cover today + tomorrow morning)
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // refresh cache every 5 minutes
 
 /** Cached event summary */
@@ -211,7 +211,7 @@ export class CalendarPlugin implements DigitalPlugin {
 
       this.cachedEvents = events;
       this.lastRefresh = Date.now();
-      this.log.debug(TAG, `Refreshed: ${events.length} events in next 2h`);
+      this.log.debug(TAG, `Refreshed: ${events.length} events in next 36h`);
     } catch (err) {
       this.log.warn(TAG, `Refresh failed: ${(err as Error).message}`);
     }
