@@ -188,10 +188,19 @@ export class CalendarPlugin implements DigitalPlugin {
 
       try {
         let allCals: calendarManager.Calendar[] = await calMgr.getAllCalendars();
+        this.log.info(TAG, `Found ${allCals.length} calendars`);
         for (let i = 0; i < allCals.length; i++) {
+          let calConfig: calendarManager.CalendarConfig | undefined = undefined;
+          try { calConfig = await allCals[i].getConfig(); } catch (_e) { /* ignore */ }
+          let calName = calConfig?.enableReminder !== undefined ? `config_ok` : 'no_config';
+          this.log.info(TAG, `Calendar[${i}]: ${calName} id=${JSON.stringify(allCals[i]).substring(0, 100)}`);
           let calEvents: calendarManager.Event[] = await allCals[i].getEvents(filter);
+          this.log.info(TAG, `Calendar[${i}]: ${calEvents.length} events`);
           for (let j = 0; j < calEvents.length; j++) {
             let ev = calEvents[j];
+            if (j < 3) {
+              this.log.info(TAG, `  Event[${j}]: "${ev.title}" start=${new Date(ev.startTime).toISOString()}`);
+            }
             events.push({
               title: ev.title ?? '',
               startTime: ev.startTime,
@@ -200,10 +209,12 @@ export class CalendarPlugin implements DigitalPlugin {
             });
           }
         }
-      } catch {
+      } catch (calErr) {
+        this.log.warn(TAG, `getAllCalendars failed: ${(calErr as Error).message}, trying default`);
         // Fallback to default calendar
         let cal = await calMgr.getCalendar();
         let calEvents: calendarManager.Event[] = await cal.getEvents(filter);
+        this.log.info(TAG, `Default calendar: ${calEvents.length} events`);
         for (let j = 0; j < calEvents.length; j++) {
           let ev = calEvents[j];
           events.push({
