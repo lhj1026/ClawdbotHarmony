@@ -26,6 +26,7 @@ import {
   MotionState,
   TimeOfDay,
   NetworkType,
+  ActionType,
   UserAction,
   ActionOutcome,
   ContextRule,
@@ -1815,11 +1816,12 @@ export class ContextAwarenessService {
       if (available.length > 0) {
         // 构建包含所有可用匹配的推荐（top 1 为主推荐，其余作为备选）
         let top = available[0];
+        let topUserAction = this.contextActionToUserAction(top.action);
         let rec: ContextRecommendation = {
           rule: {
             id: top.ruleId,
             trigger: {} as RuleTrigger,
-            action: top.action as UserAction,
+            action: topUserAction,
             confidence: top.confidence,
             triggerCount: 0,
             acceptCount: 0,
@@ -1827,7 +1829,7 @@ export class ContextAwarenessService {
             updatedAt: Date.now(),
             enabled: true
           },
-          action: top.action as UserAction,
+          action: topUserAction,
           reason: `基于当前情景推荐 (${Math.round(top.confidence * 100)}% 匹配)`,
           snapshot: snapshot,
           alternatives: available  // 传递所有可用匹配
@@ -2847,6 +2849,15 @@ export class ContextAwarenessService {
   }
 
   /** 计算状态指纹：核心维度 + WiFi/BT 设备 + 小时段 */
+  /** 将 C++ ContextAction 转换为 UserAction */
+  private contextActionToUserAction(action: EngineAction): UserAction {
+    let type = (action.type ?? 'suggestion') as ActionType;
+    return {
+      type: type,
+      target: action.payload ?? '',
+    };
+  }
+
   private computeFingerprint(snapshot: ContextSnapshot): string {
     // 小时段：将24小时分为 3 小时一组 (0-2, 3-5, 6-8, ...) → 更细粒度
     let hourNum = parseInt(snapshot.hour || '0');

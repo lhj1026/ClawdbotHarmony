@@ -539,9 +539,9 @@
       }
     ],
     "action": {
-      "id": "transit_info",
-      "type": "notification",
-      "payload": "🚇 到达交通枢纽！查看您的行程信息？"
+      "id": "travel_info",
+      "type": "show_info",
+      "payload": "travel"
     },
     "priority": 2.5,
     "cooldownMs": 14400000,

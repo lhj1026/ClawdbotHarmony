@@ -482,9 +482,13 @@ export class NodeRuntime {
             actionType: alt.action.type ?? 'suggestion'
           });
           // 也缓存备选推荐（从引擎结果构造）
+          let altAction: UserAction = {
+            type: (alt.action.type ?? 'suggestion') as ActionType,
+            target: alt.action.payload ?? ''
+          };
           let altRec: ContextRecommendation = {
             rule: rec.rule,
-            action: { type: (alt.action.type ?? 'suggestion') as ActionType, target: alt.action.payload ?? '' },
+            action: altAction,
             reason: altName,
             snapshot: rec.snapshot
           };
@@ -1506,6 +1510,10 @@ export class NodeRuntime {
           },
         };
         this.dispatchChatEvent(event);
+        // 如果插件返回 A2UI 卡片，显示它
+        if (result.a2uiCard && result.a2uiCard.length > 0) {
+          this.dispatchA2UI('push', result.a2uiCard);
+        }
       }
     }).catch((err: Error) => {
       this.log.warn(TAG, `Action execution failed: ${err.message}`);

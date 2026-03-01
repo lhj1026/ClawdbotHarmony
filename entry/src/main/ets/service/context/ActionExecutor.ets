@@ -1,63 +1,59 @@
 /**
- * ActionExecutor.ets — 推荐动作执行路由器
+ * ActionExecutor.ets — 推荐动作执行器（基于插件路由）
  *
- * 根据推荐动作的 type 分发到对应的系统能力执行，返回结果文本。
- * 当前支持: show_info (日历)，其余类型返回通用确认。
+ * 保留原有接口 execute(action)，内部委托给 ActionRouter。
+ * 向后兼容：NodeRuntime 等调用方无需修改。
  */
-import { CalendarPlugin, EventInfo, EventConflict } from './plugins/CalendarPlugin';
+import { CalendarPlugin } from './plugins/CalendarPlugin';
 import { UserAction } from './ContextModels';
+import { ActionRouter } from './actions/ActionRouter';
+import { ActionResult } from './actions/ActionPlugin';
+import { NotificationPlugin } from './actions/NotificationPlugin';
+import { ModeChangePlugin } from './actions/ModeChangePlugin';
+import { CalendarInfoPlugin } from './actions/CalendarInfoPlugin';
+import { TravelInfoPlugin } from './actions/TravelInfoPlugin';
+import { AppLaunchPlugin } from './actions/AppLaunchPlugin';
+import { QRCodePlugin } from './actions/QRCodePlugin';
 import { LogService } from '../../common/LogService';
+import { common } from '@kit.AbilityKit';
 
 const TAG = 'ActionExecutor';
 
-export interface ActionResult {
-  success: boolean;
-  message: string;
-  actionType: string;
-}
+export { ActionResult } from './actions/ActionPlugin';
 
 export class ActionExecutor {
-  private calendarPlugin: CalendarPlugin;
+  private router: ActionRouter;
   private log: LogService = LogService.getInstance();
+  private appLaunchPlugin: AppLaunchPlugin;
 
   constructor(calendarPlugin: CalendarPlugin) {
-    this.calendarPlugin = calendarPlugin;
+    this.router = new ActionRouter();
+
+    // 注册内置插件（顺序决定优先级：先注册的优先匹配）
+    // CalendarInfo 要在 Notification 前面（都处理 show_info，但 calendar 更具体）
+    this.router.register(new CalendarInfoPlugin(calendarPlugin));
+    this.router.register(new TravelInfoPlugin());
+    this.router.register(new NotificationPlugin());
+    this.router.register(new ModeChangePlugin());
+    this.appLaunchPlugin = new AppLaunchPlugin();
+    this.router.register(this.appLaunchPlugin);
+    this.router.register(new QRCodePlugin());
+
+    this.log.info(TAG, `初始化完成，${this.router.getPlugins().length} 个插件已注册`);
   }
 
+  /** 设置 UIAbilityContext（用于 AppLaunchPlugin） */
+  setContext(context: common.UIAbilityContext): void {
+    this.appLaunchPlugin.setContext(context);
+  }
+
+  /** 获取路由器（用于外部注册自定义插件） */
+  getRouter(): ActionRouter {
+    return this.router;
+  }
+
+  /** 执行动作（向后兼容接口） */
   async execute(action: UserAction): Promise<ActionResult> {
-    this.log.info(TAG, `Execute action: type=${action.type}, target=${action.target ?? ''}`);
-    try {
-      switch (action.type) {
-        case 'show_info':
-          return await this.executeShowInfo(action);
-        case 'open_app':
-          return { success: true, message: `🚀 正在打开 ${action.target ?? '应用'}...`, actionType: 'open_app' };
-        case 'set_mode':
-          return { success: true, message: `⚙️ 已切换到 ${action.target ?? '模式'}`, actionType: 'set_mode' };
-        case 'show_notification':
-          return { success: true, message: `🔔 ${action.params?.['info'] ?? '通知已发送'}`, actionType: 'show_notification' };
-        default:
-          return { success: true, message: `✅ 动作 "${action.type}" 已记录`, actionType: action.type };
-      }
-    } catch (err) {
-      this.log.warn(TAG, `Execute failed: ${(err as Error).message}`);
-      return { success: false, message: `执行失败: ${(err as Error).message}`, actionType: action.type };
-    }
-  }
-
-  private async executeShowInfo(action: UserAction): Promise<ActionResult> {
-    let target = action.target ?? '';
-    if (target.indexOf('calendar') >= 0 || action.params?.['category'] === 'calendar') {
-      return await this.executeCalendarInfo();
-    }
-    let info = action.params?.['info'] ?? '信息已显示';
-    return { success: true, message: `ℹ️ ${info}`, actionType: 'show_info' };
-  }
-
-  private async executeCalendarInfo(): Promise<ActionResult> {
-    let events: EventInfo[] = await this.calendarPlugin.getUpcomingEvents(8);
-    let conflicts: EventConflict[] = this.calendarPlugin.findConflicts(events);
-    let markdown = this.calendarPlugin.formatEventsMarkdown(events, conflicts);
-    return { success: true, message: markdown, actionType: 'calendar_info' };
+    return await this.router.execute(action);
   }
 }
