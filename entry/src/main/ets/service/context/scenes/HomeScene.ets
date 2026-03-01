@@ -8,7 +8,9 @@
 import { ContextSnapshot } from '../ContextEngine';
 import { ScenePlugin, SceneMatch, SceneAction, SceneActionResult } from './ScenePlugin';
 import { SmartActionPlugin } from '../actions/SmartActionPlugin';
+import { ContextAwarenessService } from '../ContextAwarenessService';
 import { UserAction } from '../ContextModels';
+import { LogService } from '../../../common/LogService';
 
 type HomePhase = 'arrive' | 'morning' | 'lunch' | 'dinner' | 'evening' | 'bedtime';
 
@@ -18,6 +20,7 @@ export class HomeScene implements ScenePlugin {
   readonly emoji = '🏠';
 
   private smartPlugin: SmartActionPlugin | undefined;
+  private calendarWired: boolean = false;
 
   detectScene(snapshot: ContextSnapshot): SceneMatch | null {
     let wifiGf = snapshot.wifiGeofence ?? '';
@@ -117,6 +120,16 @@ export class HomeScene implements ScenePlugin {
     };
     let func = funcMap[actionId];
     if (func && this.smartPlugin) {
+      // 延迟绑定 CalendarPlugin（初始化时可能还没准备好）
+      if (!this.calendarWired) {
+        try {
+          let cas = ContextAwarenessService.getInstance();
+          let calPlugin = cas.getCalendarPlugin();
+          this.smartPlugin.setCalendarPlugin(calPlugin);
+          LogService.getInstance().info('HomeScene', `CalendarPlugin wired: ${calPlugin ? 'yes' : 'no'}`);
+        } catch (_e) { /* ignore */ }
+        this.calendarWired = true;
+      }
       let action: UserAction = {
         type: 'show_info',
         params: { 'function': func }
