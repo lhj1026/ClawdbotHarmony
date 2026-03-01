@@ -57,7 +57,7 @@ import { ContextEngineService, ContextSnapshot, ContextRule, ContextCondition, C
 import { FeedbackService } from '../context/FeedbackService';
 import { ActionExecutor, ActionResult } from '../context/ActionExecutor';
 import { GeofenceSuggestion } from '../context/LocationDiscoveryService';
-import { Geofence, GeofenceCategory, LearnedPlaceSignals, UserAction } from '../context/ContextModels';
+import { ActionType, Geofence, GeofenceCategory, LearnedPlaceSignals, UserAction } from '../context/ContextModels';
 import { FederatedSync } from '../context/FederatedSync';
 import { PushCapability } from './PushCapability';
 import { TravelInfoService, FlightInfo, TrainInfo } from '../context/TravelInfoService';
@@ -70,6 +70,15 @@ interface PendingStateRec {
   ruleName: string;
   reason: string;
   confidence: number;
+  alternatives?: PendingAlternative[];
+}
+
+interface PendingAlternative {
+  ruleId: string;
+  ruleName: string;
+  confidence: number;
+  actionDesc: string;  // 显示文本
+  actionType: string;
 }
 
 export class NodeRuntime {
@@ -450,6 +459,48 @@ export class NodeRuntime {
       this._activeRecommendations.set(ruleId, rec);
       setTimeout(() => { this._activeRecommendations.delete(ruleId); }, 5 * 60 * 1000);
 
+      // 构建备选列表
+      let alternatives: PendingAlternative[] = [];
+      if (rec.alternatives && rec.alternatives.length > 0) {
+        let engine = ContextEngineService.getInstance();
+        let allRulesJson2 = engine.exportRules();
+        let allRules2: ContextRule[] = JSON.parse(allRulesJson2) as ContextRule[];
+        let ruleNameMap: Map<string, string> = new Map();
+        for (let i = 0; i < allRules2.length; i++) {
+          ruleNameMap.set(allRules2[i].id, allRules2[i].name);
+        }
+        for (let i = 0; i < rec.alternatives.length; i++) {
+          let alt = rec.alternatives[i];
+          let altName = ruleNameMap.get(alt.ruleId) ?? alt.ruleId;
+          // 生成动作描述文本
+          let desc = alt.action.payload ?? altName;
+          alternatives.push({
+            ruleId: alt.ruleId,
+            ruleName: altName,
+            confidence: Math.round(alt.confidence * 100),
+            actionDesc: desc,
+            actionType: alt.action.type ?? 'suggestion'
+          });
+          // 也缓存备选推荐（从引擎结果构造）
+          let altRec: ContextRecommendation = {
+            rule: rec.rule,
+            action: { type: (alt.action.type ?? 'suggestion') as ActionType, target: alt.action.payload ?? '' },
+            reason: altName,
+            snapshot: rec.snapshot
+          };
+          this._activeRecommendations.set(alt.ruleId, altRec);
+          setTimeout(() => { this._activeRecommendations.delete(alt.ruleId); }, 5 * 60 * 1000);
+        }
+      } else {
+        // 没有 alternatives 时，用当前推荐作为唯一选项
+        let desc = rec.action.target ?? ruleName;
+        alternatives.push({
+          ruleId, ruleName, confidence,
+          actionDesc: desc,
+          actionType: rec.action.type ?? 'suggestion'
+        });
+      }
+
       // 先确认状态，状态正确后再弹推荐
       let stateInfo = rec.exploreStateInfo ?? '';
       if (stateInfo.length === 0 && cas.isExploreMode()) {
@@ -461,12 +512,12 @@ export class NodeRuntime {
         // 去重：如果已有未确认的状态卡片，不弹新的，只更新缓存的推荐
         if (this._pendingStateRec !== null) {
           this.log.info(TAG, `[A2UI] Dedup: pending state card exists, updating rec only (${ruleId})`);
-          this._pendingStateRec = { ruleId, ruleName, reason: rec.reason, confidence };
+          this._pendingStateRec = { ruleId, ruleName, reason: rec.reason, confidence, alternatives };
           return;
         }
 
         // 缓存推荐，等用户确认状态正确后再显示
-        this._pendingStateRec = { ruleId, ruleName, reason: rec.reason, confidence };
+        this._pendingStateRec = { ruleId, ruleName, reason: rec.reason, confidence, alternatives };
 
         // 只显示状态卡片
         let stateCardJsonl = this.buildStateOnlyA2UI(ruleId, ruleName, stateInfo);
@@ -483,8 +534,13 @@ export class NodeRuntime {
         this.dispatchChatEvent(event);
         this.dispatchA2UI('push', stateCardJsonl);
       } else {
-        // 无状态信息（非探索模式）：直接显示推荐
-        let a2uiJsonl = this.buildContextRecommendationA2UI(ruleId, ruleName, rec.reason, confidence);
+        // 无状态信息（非探索模式）：直接显示推荐选择卡片
+        let a2uiJsonl: string;
+        if (alternatives.length > 1) {
+          a2uiJsonl = this.buildRecommendationSelectionA2UI(alternatives);
+        } else {
+          a2uiJsonl = this.buildContextRecommendationA2UI(ruleId, ruleName, rec.reason, confidence);
+        }
         let event: GatewayChatEvent = {
           runId: `ctx-${Date.now()}`,
           sessionKey: '',
@@ -492,7 +548,7 @@ export class NodeRuntime {
           state: 'final',
           message: {
             role: 'assistant',
-            content: [{ type: 'text', text: `💡 ${rec.reason}` }],
+            content: [{ type: 'text', text: `💡 ${alternatives.length}个推荐` }],
           },
         };
         this.dispatchChatEvent(event);
@@ -1237,15 +1293,25 @@ export class NodeRuntime {
         this.sendFeedbackResponse(legacyMsg);
         this.pushA2UIConfirmation(legacyMsg);
       } else if (feedback === 'state_correct') {
-        // 用户确认状态正确 → 关闭状态卡片，弹出推荐卡片
+        // 用户确认状态正确 → 关闭状态卡片，弹出推荐选择卡片
         this.dispatchA2UI('reset', '');
         this.sendFeedbackResponse('✅ 状态已确认');
         if (this._pendingStateRec) {
           let pr = this._pendingStateRec;
           this._pendingStateRec = null;
-          // 显示推荐卡片
-          let recJsonl = this.buildContextRecommendationA2UI(pr.ruleId, pr.ruleName, pr.reason, pr.confidence);
-          this.dispatchA2UI('push', recJsonl);
+          if (pr.alternatives && pr.alternatives.length > 1) {
+            // 多个推荐 → 显示选择卡片
+            let selectionJsonl = this.buildRecommendationSelectionA2UI(pr.alternatives);
+            this.dispatchA2UI('push', selectionJsonl);
+          } else if (pr.alternatives && pr.alternatives.length === 1) {
+            // 只有一个 → 直接显示确认卡片
+            let alt = pr.alternatives[0];
+            let recJsonl = this.buildContextRecommendationA2UI(alt.ruleId, alt.ruleName, alt.actionDesc, alt.confidence);
+            this.dispatchA2UI('push', recJsonl);
+          } else {
+            let recJsonl = this.buildContextRecommendationA2UI(pr.ruleId, pr.ruleName, pr.reason, pr.confidence);
+            this.dispatchA2UI('push', recJsonl);
+          }
         }
       } else if (feedback === 'state_incorrect') {
         // 用户说状态不准 → 关闭状态卡片，进入场景纠正
@@ -1256,6 +1322,20 @@ export class NodeRuntime {
           this.adjustRulePriority(engine, ruleId, -0.2);
         }
         this.showSceneCorrectionCard(ruleId);
+      } else if (feedback === 'rec_select') {
+        // 用户从多选卡片中选择了一个推荐
+        this.dispatchA2UI('reset', '');
+        let displayName = ruleName.length > 0 ? ruleName : ruleId;
+        this.sendFeedbackResponse(`✅ 执行: ${displayName}`);
+        // 正向反馈
+        let delta = 0.2;
+        this.adjustRulePriority(engine, ruleId, delta);
+        fbService.onThumbsUp(ruleId);
+        // 执行推荐动作
+        let cachedRec = this._activeRecommendations.get(ruleId);
+        if (cachedRec && cachedRec.action) {
+          this.executeRecommendedAction(cachedRec.action);
+        }
       } else if (feedback === 'view_snapshot') {
         // Show current scene snapshot with all sensor data
         this.showSceneSnapshotCard();
@@ -3655,6 +3735,35 @@ export class NodeRuntime {
   /**
    * 只构建状态检测卡片（不含推荐），等用户确认后再弹推荐
    */
+  /**
+   * 构建推荐选择卡片：显示 top N 推荐，用户点击选择执行
+   */
+  private buildRecommendationSelectionA2UI(alternatives: PendingAlternative[]): string {
+    let children: string[] = [];
+    children.push(`{"type":"text","text":"💡 推荐操作","style":{"fontSize":18,"fontWeight":"bold"}}`);
+    children.push(`{"type":"text","text":"选择要执行的操作:","style":{"fontSize":13,"color":"#888"}}`);
+
+    for (let i = 0; i < alternatives.length; i++) {
+      let alt = alternatives[i];
+      let safeDesc = alt.actionDesc.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      let safeRuleId = alt.ruleId.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      let safeRuleName = alt.ruleName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      let emoji = i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉';
+      let variant = i === 0 ? '"variant":"primary",' : '';
+      children.push(
+        `{"type":"button","text":"${emoji} ${safeRuleName} (${alt.confidence}%)",${variant}"action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"rec_select"}}}}`
+      );
+    }
+
+    // 忽略按钮
+    let dismissText = I18n.t('context.feedback.dismiss');
+    children.push(
+      `{"type":"button","text":"🙈 ${dismissText}","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"feedback":"dismiss"}}}}`
+    );
+
+    return `{"type":"form","id":"ctx_select_${Date.now()}","children":[${children.join(',')}]}`;
+  }
+
   private buildStateOnlyA2UI(ruleId: string, ruleName: string, stateInfo: string): string {
     let safeRuleId = ruleId.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     let safeRuleName = ruleName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');

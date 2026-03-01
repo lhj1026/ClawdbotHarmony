@@ -77,6 +77,7 @@ export interface ContextRecommendation {
   reason: string;
   exploreStateInfo?: string;  // 探索模式：当前检测到的状态摘要
   snapshot?: ContextSnapshot;  // 推荐时的上下文快照，用于 Stream RL 训练
+  alternatives?: MatchResult[];  // Top N 匹配结果（含主推荐），用于多选卡片
 }
 
 type RecommendationListener = (rec: ContextRecommendation) => void;
@@ -1800,9 +1801,20 @@ export class ContextAwarenessService {
     }
 
     if (results.length > 0) {
-      let top = results[0];
-      this.log.info(TAG, `[Explore-DBG] top match: ruleId=${top.ruleId}, confidence=${top.confidence.toFixed(2)}, cooldown=${this.isOnCooldown(top.ruleId)}, exploreTriggered=${exploreTriggered}`);
-      if (!this.isOnCooldown(top.ruleId)) {
+      // 过滤掉 cooldown 中的规则，取 top 3
+      let available: MatchResult[] = [];
+      for (let i = 0; i < results.length; i++) {
+        if (!this.isOnCooldown(results[i].ruleId)) {
+          available.push(results[i]);
+          if (available.length >= 3) break;
+        }
+      }
+
+      this.log.info(TAG, `[Evaluate] ${results.length} matches, ${available.length} available (not on cooldown)`);
+
+      if (available.length > 0) {
+        // 构建包含所有可用匹配的推荐（top 1 为主推荐，其余作为备选）
+        let top = available[0];
         let rec: ContextRecommendation = {
           rule: {
             id: top.ruleId,
@@ -1817,23 +1829,24 @@ export class ContextAwarenessService {
           },
           action: top.action as UserAction,
           reason: `基于当前情景推荐 (${Math.round(top.confidence * 100)}% 匹配)`,
-          snapshot: snapshot
+          snapshot: snapshot,
+          alternatives: available  // 传递所有可用匹配
         };
 
         this.notifyRecommendation(rec);
-        this.setOnCooldown(top.ruleId);
+        // 只对展示的规则设置 cooldown
+        for (let i = 0; i < available.length; i++) {
+          this.setOnCooldown(available[i].ruleId);
+        }
 
         // 记录训练数据
         this.trainingSync.recordRuleMatch(snapshot, top.ruleId, top.action.type || 'suggestion', top.confidence);
       } else if (this.exploreMode) {
-        // 探索模式：规则在 cooldown，跳过（不重复显示状态卡片）
-        this.log.info(TAG, `[Explore] rule ${top.ruleId} on cooldown, skipping state display`);
+        this.log.info(TAG, `[Explore] all rules on cooldown, skipping`);
       }
 
-      // 非探索模式或已探索过的指纹：有引擎结果就够了
       if (!exploreTriggered) return;
     } else if (this.exploreMode && !exploreTriggered) {
-      // 探索模式：无引擎匹配，跳过（不显示无匹配的状态卡片）
       this.log.info(TAG, `[Explore] no engine matches, skipping state display`);
       return;
     }
