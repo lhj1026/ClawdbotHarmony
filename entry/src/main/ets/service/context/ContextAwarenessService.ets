@@ -1945,8 +1945,17 @@ export class ContextAwarenessService {
     this.log.info(TAG, `New place detected! (${lat.toFixed(4)}, ${lng.toFixed(4)}) WiFi=${wifiSsid}`);
     this.newPlaceDetectionStart = 0;
 
-    let placeName = await this.reverseGeocode(lat, lng);
-    this.showNewPlaceCard(lat, lng, wifiSsid, placeName);
+    // 优先用 OSM Nominatim 获取 POI 名称和类别
+    let geoResult = await GeoCodingService.getInstance().reverseGeocode(lat, lng);
+    let placeName = '';
+    let geoCategory = '';
+    if (geoResult.success && geoResult.name && geoResult.name.length > 0) {
+      placeName = geoResult.name;
+      geoCategory = geoResult.category ?? '';
+    } else {
+      placeName = await this.reverseGeocode(lat, lng);
+    }
+    this.showNewPlaceCard(lat, lng, wifiSsid, placeName, geoCategory);
   }
 
   /**
@@ -2120,15 +2129,16 @@ export class ContextAwarenessService {
   /**
    * 显示新地点确认卡片
    */
-  private showNewPlaceCard(lat: number, lng: number, wifiSsid: string, placeName: string): void {
+  private showNewPlaceCard(lat: number, lng: number, wifiSsid: string, placeName: string, geoCategory: string = ''): void {
     let escapedName = placeName.replace(/"/g, "'");
     let escapedWifi = wifiSsid.replace(/"/g, "'");
     
-    // 推断类别
-    let category = this.inferCategoryFromTime();
+    // 优先用 OSM 类别，fallback 到时间推断
+    let category = geoCategory.length > 0 ? geoCategory : this.inferCategoryFromTime();
     
-    // 自动保存地点（不需要用户确认）
-    this.autoSaveNewPlace(lat, lng, wifiSsid, placeName, category);
+    // 自动保存地点（不需要用户确认），重复则跳过
+    let saved = this.autoSaveNewPlace(lat, lng, wifiSsid, placeName, category);
+    if (!saved) return;
     
     // 获取类别的中文显示名
     let categoryLabels: Record<string, string> = {
@@ -2153,8 +2163,22 @@ export class ContextAwarenessService {
   /**
    * 自动保存新发现的地点为围栏
    */
-  private autoSaveNewPlace(lat: number, lng: number, wifiSsid: string, placeName: string, category: string): void {
+  private autoSaveNewPlace(lat: number, lng: number, wifiSsid: string, placeName: string, category: string): boolean {
     try {
+      // 去重：检查是否已有距离 <200m 或同 WiFi 的围栏
+      let existing = this.geofenceMgr.getAllGeofences();
+      for (let i = 0; i < existing.length; i++) {
+        let gf = existing[i];
+        let dist = this.haversineDistance(lat, lng, gf.latitude, gf.longitude);
+        if (dist < 200) {
+          this.log.info(TAG, `Skip auto-save: existing geofence "${gf.name}" within ${Math.round(dist)}m`);
+          return false;
+        }
+        if (wifiSsid.length > 0 && gf.learnedSignals?.wifiSSIDs && gf.learnedSignals.wifiSSIDs.indexOf(wifiSsid) >= 0) {
+          this.log.info(TAG, `Skip auto-save: existing geofence "${gf.name}" has same WiFi "${wifiSsid}"`);
+          return false;
+        }
+      }
       let geofence: Geofence = {
         id: `auto_${Date.now()}`,
         name: placeName.length > 0 ? placeName : wifiSsid,
@@ -2173,8 +2197,10 @@ export class ContextAwarenessService {
       };
       this.geofenceMgr.addGeofence(geofence);
       this.log.info(TAG, `Auto-saved geofence: ${geofence.name} (${category}) at (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
+      return true;
     } catch (err) {
       this.log.error(TAG, `Failed to auto-save place: ${(err as Error).message}`);
+      return false;
     }
   }
 
@@ -2906,9 +2932,18 @@ export class ContextAwarenessService {
     };
     let rawType = action.type ?? 'suggestion';
     let mappedType = (typeMap[rawType] ?? 'show_notification') as ActionType;
+
+    // 查找规则的 function 字段
+    let ruleFunction = this.engine.getRuleFunction(action.id);
+    let params: Record<string, string> | undefined = undefined;
+    if (ruleFunction && ruleFunction.length > 0) {
+      params = { 'function': ruleFunction };
+    }
+
     return {
       type: mappedType,
       target: action.payload ?? '',
+      params: params,
     };
   }
 
@@ -3271,6 +3306,14 @@ export class ContextAwarenessService {
     this.rebindAfterGeofenceChange();
   }
   
+  updateGeofence(id: string, name: string, category: GeofenceCategory): boolean {
+    let result = this.geofenceMgr.updateGeofence(id, name, category);
+    if (result) {
+      this.rebindAfterGeofenceChange();
+    }
+    return result;
+  }
+
   removeGeofence(id: string): boolean {
     let result = this.geofenceMgr.removeGeofence(id);
     if (result) {

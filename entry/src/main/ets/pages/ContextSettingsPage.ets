@@ -75,6 +75,10 @@ struct ContextSettingsPage {
   @State promotingPlaceId: string = '';
   @State promoteName: string = '';
   @State promoteCategory: number = 0;
+  // 编辑围栏
+  @State editingGeofenceId: string = '';
+  @State editGfName: string = '';
+  @State editGfCategory: number = 0;
   // 数据托盘 — 🧑 人（用户状态）
   @State personKeys: string[] = [];
   @State personLabels: string[] = [];
@@ -725,29 +729,63 @@ struct ContextSettingsPage {
                 Text('已确认围栏 (' + this.geofenceNames.length.toString() + ')')
                   .fontSize(13).fontWeight(FontWeight.Medium).fontColor('#333333').width('100%').margin({ bottom: 6 })
                 ForEach(this.geofenceIds, (gfId: string, index: number) => {
-                  Row() {
-                    Column({ space: 2 }) {
-                      Text(this.geofenceNames[index])
-                        .fontSize(14).fontColor('#1A1A1A')
-                      Row({ space: 4 }) {
-                        Text(this.geofenceDetails[index])
-                          .fontSize(11).fontColor('#999999')
-                        // 显示学习到的信号摘要
-                        if (this.getSignalSummaryForGeofence(gfId).length > 0) {
-                          Text(this.getSignalSummaryForGeofence(gfId))
-                            .fontSize(10).fontColor('#007AFF')
+                  Column() {
+                    Row() {
+                      Column({ space: 2 }) {
+                        Text(this.geofenceNames[index])
+                          .fontSize(14).fontColor('#1A1A1A')
+                        Row({ space: 4 }) {
+                          Text(this.geofenceDetails[index])
+                            .fontSize(11).fontColor('#999999')
+                          if (this.getSignalSummaryForGeofence(gfId).length > 0) {
+                            Text(this.getSignalSummaryForGeofence(gfId))
+                              .fontSize(10).fontColor('#007AFF')
+                          }
                         }
                       }
+                      .layoutWeight(1)
+                      .alignItems(HorizontalAlign.Start)
+                      Text('编辑')
+                        .fontSize(12).fontColor('#007AFF').padding(4)
+                        .onClick(() => { this.startEditGeofence(gfId); })
+                      Text('删除')
+                        .fontSize(12).fontColor('#FF3B30').padding(4)
+                        .onClick(() => { this.deleteGeofence(gfId); })
                     }
-                    .layoutWeight(1)
-                    .alignItems(HorizontalAlign.Start)
-                    Text('删除')
-                      .fontSize(12).fontColor('#FF3B30').padding(4)
-                      .onClick(() => { this.deleteGeofence(gfId); })
+                    .width('100%').padding({ top: 6, bottom: 6 })
+                    if (this.editingGeofenceId === gfId) {
+                      Column({ space: 6 }) {
+                        TextInput({ placeholder: '地点名称', text: this.editGfName })
+                          .onChange((val: string) => { this.editGfName = val; })
+                          .width('100%').height(34).fontSize(12).borderRadius(6)
+                        Flex({ wrap: FlexWrap.Wrap }) {
+                          ForEach(this.catLabels, (label: string, idx: number) => {
+                            Text(label)
+                              .fontSize(10)
+                              .fontColor(this.editGfCategory === idx ? Color.White : '#333333')
+                              .backgroundColor(this.editGfCategory === idx ? '#007AFF' : '#F0F0F0')
+                              .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+                              .borderRadius(10).margin(2)
+                              .onClick(() => { this.editGfCategory = idx; })
+                          }, (label: string) => label)
+                        }
+                        .width('100%')
+                        Row({ space: 6 }) {
+                          Button('取消').fontSize(11).backgroundColor('#F0F0F0').fontColor('#666666')
+                            .layoutWeight(1).height(30).borderRadius(6)
+                            .onClick(() => { this.editingGeofenceId = ''; })
+                          Button('✅ 保存').fontSize(11).backgroundColor('#007AFF').fontColor(Color.White)
+                            .layoutWeight(1).height(30).borderRadius(6)
+                            .onClick(() => { this.saveEditGeofence(); })
+                        }
+                        .width('100%')
+                      }
+                      .padding(6).backgroundColor('#F8F8FC').borderRadius(6).margin({ top: 4 })
+                    }
                   }
-                  .width('100%').padding({ top: 6, bottom: 6 })
+                  .width('100%')
                   Divider().color('#F0F0F0')
-                }, (gfId: string) => gfId)
+                }, (gfId: string) => gfId + '_' + this.editingGeofenceId)
               }
 
               // -- 自动发现的地点 --
@@ -1576,6 +1614,32 @@ struct ContextSettingsPage {
     // WiFi
     let wifi = trayMap['wifiSsid'] ?? '';
     this.statusWifi = wifi.length > 0 ? 'WiFi: ' + wifi : '';
+  }
+
+  private startEditGeofence(id: string): void {
+    try {
+      let gf = ContextAwarenessService.getInstance().getAllGeofences().find((g: Geofence) => g.id === id);
+      if (gf) {
+        this.editingGeofenceId = id;
+        this.editGfName = gf.name;
+        let catIdx = this.catIds.indexOf(gf.category);
+        this.editGfCategory = catIdx >= 0 ? catIdx : 6;
+      }
+    } catch (err) {
+      this.log.error('CtxSettings', 'startEdit error: ' + (err as Error).message);
+    }
+  }
+
+  private saveEditGeofence(): void {
+    if (this.editGfName.trim().length === 0 || this.editingGeofenceId.length === 0) return;
+    try {
+      let cat = this.catIds[this.editGfCategory] as GeofenceCategory;
+      ContextAwarenessService.getInstance().updateGeofence(this.editingGeofenceId, this.editGfName.trim(), cat);
+      this.editingGeofenceId = '';
+    } catch (err) {
+      this.log.error('CtxSettings', 'saveEdit error: ' + (err as Error).message);
+    }
+    this.refresh();
   }
 
   private deleteGeofence(id: string): void {

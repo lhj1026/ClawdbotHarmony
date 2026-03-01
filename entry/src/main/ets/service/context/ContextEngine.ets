@@ -165,6 +165,8 @@ export class ContextEngineService {
 
   // Pending LLM rules: held until user gives positive feedback
   private pendingLlmRules: Map<string, ContextRule> = new Map();
+  // ruleId → action function mapping (e.g. "morning_briefing", "calendar_summary")
+  private ruleFunctionMap: Map<string, string> = new Map();
 
   static getInstance(): ContextEngineService {
     if (!ContextEngineService.instance) {
@@ -212,6 +214,9 @@ export class ContextEngineService {
       let ok = nativeLoadRules(allRulesJson);
       log.info(TAG, `Engine init: loaded ${nativeGetRuleCount()} rules from unified storage, success=${ok}`);
 
+      // Parse function field from rules JSON for ArkTS-side routing
+      this.parseRuleFunctions(allRulesJson);
+
       // Load MAB stats
       let statsJson: string = String(await this.prefsStore.get('mab_stats', '{}'));
       nativeLoadStats(statsJson);
@@ -257,6 +262,32 @@ export class ContextEngineService {
       log.error(TAG, `Failed to load default_rules.json: ${(err as Error).message}`);
       return '[]';
     }
+  }
+
+  /** Parse action.function from rules JSON and cache in ruleFunctionMap */
+  private parseRuleFunctions(rulesJson: string): void {
+    try {
+      let rules = JSON.parse(rulesJson) as Record<string, Object>[];
+      this.ruleFunctionMap.clear();
+      for (let i = 0; i < rules.length; i++) {
+        let rule = rules[i];
+        let id = String(rule['id'] ?? '');
+        let action = rule['action'] as Record<string, string> | undefined;
+        if (action && action['function'] && action['function'].length > 0) {
+          this.ruleFunctionMap.set(id, action['function']);
+        }
+      }
+      if (this.ruleFunctionMap.size > 0) {
+        log.info(TAG, `Parsed ${this.ruleFunctionMap.size} rule functions`);
+      }
+    } catch (err) {
+      log.warn(TAG, `parseRuleFunctions error: ${(err as Error).message}`);
+    }
+  }
+
+  /** Get action function for a rule (e.g. "morning_briefing", "calendar_summary") */
+  getRuleFunction(ruleId: string): string | undefined {
+    return this.ruleFunctionMap.get(ruleId);
   }
 
   /** Load rules (replaces all). Persists to preferences. */

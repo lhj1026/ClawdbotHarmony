@@ -138,6 +138,26 @@ export class GeofenceManager {
     this.rebindEngineRules();
   }
   
+  updateGeofence(id: string, name: string, category: GeofenceCategory): boolean {
+    let gf = this.geofences.get(id);
+    if (!gf) return false;
+    let updated: Geofence = {
+      id: gf.id,
+      name: name,
+      latitude: gf.latitude,
+      longitude: gf.longitude,
+      radiusMeters: gf.radiusMeters,
+      category: category,
+      metadata: gf.metadata,
+      learnedSignals: gf.learnedSignals
+    };
+    this.geofences.set(id, updated);
+    this.log.info(TAG, `Updated geofence: ${name} (${id}) category=${category}`);
+    this.saveToFile().catch(() => {});
+    this.rebindEngineRules();
+    return true;
+  }
+
   removeGeofence(id: string): boolean {
     let removed = this.geofences.delete(id);
     this.currentlyInside.delete(id);

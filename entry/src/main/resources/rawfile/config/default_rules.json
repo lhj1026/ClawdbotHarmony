@@ -97,7 +97,8 @@
     "action": {
       "id": "greet_weekend",
       "type": "suggestion",
-      "payload": "周末早上好！☀️ 今天有什么安排？"
+      "payload": "周末早上好！☀️ 今天有什么安排？",
+      "function": "morning_briefing"
     },
     "priority": 1.0,
     "cooldownMs": 28800000,
@@ -128,7 +129,8 @@
     "action": {
       "id": "greet_workday",
       "type": "suggestion",
-      "payload": "早上好！查看今日日程和天气？📋"
+      "payload": "早上好！查看今日日程和天气？📋",
+      "function": "morning_briefing"
     },
     "priority": 1.5,
     "cooldownMs": 28800000,
@@ -180,7 +182,8 @@
     "action": {
       "id": "greet_work",
       "type": "suggestion",
-      "payload": "到公司了 💼 查看今天的会议和待办？"
+      "payload": "到公司了 💼 查看今天的会议和待办？",
+      "function": "calendar_summary"
     },
     "priority": 1.8,
     "cooldownMs": 28800000,
@@ -206,7 +209,8 @@
     "action": {
       "id": "brief_leave_home",
       "type": "suggestion",
-      "payload": "出门了！今日天气和日程概览 ☀️"
+      "payload": "出门了！今日天气和日程概览 ☀️",
+      "function": "morning_briefing"
     },
     "priority": 2.0,
     "cooldownMs": 28800000,
@@ -237,7 +241,8 @@
     "action": {
       "id": "suggest_leave_work",
       "type": "suggestion",
-      "payload": "下班了！查看回家路线？🚗"
+      "payload": "下班了！查看回家路线？🚗",
+      "function": "open_app:map"
     },
     "priority": 2.0,
     "cooldownMs": 28800000,
@@ -391,7 +396,8 @@
     "action": {
       "id": "suggest_commute",
       "type": "suggestion",
-      "payload": "早上通勤中 🚗 要听新闻摘要吗？"
+      "payload": "早上通勤中 🚗 要听新闻摘要吗？",
+      "function": "morning_briefing"
     },
     "priority": 2.0,
     "cooldownMs": 28800000,
@@ -489,7 +495,8 @@
     "action": {
       "id": "suggest_relax",
       "type": "suggestion",
-      "payload": "在家放松时间 🎵 听音乐？看个片？或者看看明天的安排？"
+      "payload": "在家放松时间 🎵 听音乐？看个片？或者看看明天的安排？",
+      "function": "calendar_tomorrow"
     },
     "priority": 1.0,
     "cooldownMs": 28800000,
@@ -520,7 +527,8 @@
     "action": {
       "id": "meeting_reminder",
       "type": "notification",
-      "payload": "📅 会议即将开始！准备好了吗？"
+      "payload": "📅 会议即将开始！准备好了吗？",
+      "function": "calendar_summary"
     },
     "priority": 3.0,
     "cooldownMs": 3600000,

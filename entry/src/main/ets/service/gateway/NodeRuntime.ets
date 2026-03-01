@@ -84,6 +84,7 @@ interface PendingAlternative {
   confidence: number;
   actionDesc: string;  // 显示文本
   actionType: string;
+  actionFunction?: string;  // 执行功能（如 morning_briefing, calendar_summary）
 }
 
 export class NodeRuntime {
@@ -492,12 +493,14 @@ export class NodeRuntime {
           let rawDesc = (alt.action.payload && alt.action.payload.length > 0) ? alt.action.payload : altName;
           // 去掉 "travel: " 等路由前缀，只保留用户可读部分
           let desc = rawDesc.indexOf(': ') >= 0 ? rawDesc.substring(rawDesc.indexOf(': ') + 2) : rawDesc;
+          let altFunc = engine.getRuleFunction(alt.ruleId);
           alternatives.push({
             ruleId: alt.ruleId,
             ruleName: altName,
             confidence: Math.round(alt.confidence * 100),
             actionDesc: desc,
-            actionType: alt.action.type ?? 'suggestion'
+            actionType: alt.action.type ?? 'suggestion',
+            actionFunction: altFunc
           });
           // 也缓存备选推荐（从引擎结果构造）
           // C++ engine type → ActionType 映射
@@ -509,9 +512,11 @@ export class NodeRuntime {
             'open_app': 'open_app', 'show_qrcode': 'show_qrcode',
             'set_mode': 'set_mode', 'quick_action': 'quick_action',
           };
+          let altParams: Record<string, string> | undefined = altFunc ? { 'function': altFunc } : undefined;
           let altAction: UserAction = {
             type: (altTypeMap[altRawType] ?? 'show_notification') as ActionType,
-            target: alt.action.payload ?? ''
+            target: alt.action.payload ?? '',
+            params: altParams
           };
           let altRec: ContextRecommendation = {
             rule: rec.rule,
@@ -526,10 +531,12 @@ export class NodeRuntime {
         // 没有 alternatives 时，用当前推荐作为唯一选项
         let rawDesc2 = rec.action.target ?? ruleName;
         let desc = rawDesc2.indexOf(': ') >= 0 ? rawDesc2.substring(rawDesc2.indexOf(': ') + 2) : rawDesc2;
+        let singleFunc = ContextEngineService.getInstance().getRuleFunction(ruleId);
         alternatives.push({
           ruleId, ruleName, confidence,
           actionDesc: desc,
-          actionType: rec.action.type ?? 'suggestion'
+          actionType: rec.action.type ?? 'suggestion',
+          actionFunction: singleFunc
         });
       }
 
@@ -1539,6 +1546,10 @@ export class NodeRuntime {
       } catch {
         this._actionExecutor = new ActionExecutor();  // 无 CalendarPlugin 也创建
       }
+      // 连接 Agent 通信：SmartActionPlugin 通过此回调发送自然语言请求给 OpenClaw
+      this._actionExecutor.setSendToAgent(async (text: string): Promise<void> => {
+        await this.sendChatMessage(text, 'context-action');
+      });
     }
 
     this._actionExecutor.execute(action).then((result: ActionResult) => {
