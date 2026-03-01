@@ -2895,19 +2895,14 @@ export class ContextAwarenessService {
         }
       }
     }
-    // 方法2: 通过 WiFi SSID 查找
+    // 方法2: 通过 WiFi SSID 查找 (使用 locationFusion 的学习数据)
     if (gfName.length === 0 && snapshot.wifiSsid && snapshot.wifiSsid.length > 0) {
       for (let i = 0; i < allGf.length; i++) {
-        let signals = allGf[i].learnedSignals;
-        if (signals && signals.wifiSSIDs) {
-          for (let j = 0; j < signals.wifiSSIDs.length; j++) {
-            if (signals.wifiSSIDs[j] === snapshot.wifiSsid) {
-              gfName = allGf[i].name;
-              gfCat = allGf[i].category ?? gfCat;
-              break;
-            }
-          }
-          if (gfName.length > 0) break;
+        let summary = this.locationFusion.getLearnedSignalsSummary(allGf[i]);
+        if (summary && summary.wifiSsids.includes(snapshot.wifiSsid)) {
+          gfName = allGf[i].name;
+          gfCat = allGf[i].category ?? gfCat;
+          break;
         }
       }
     }
