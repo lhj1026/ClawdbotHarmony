@@ -56,6 +56,11 @@ import { ContextAwarenessService, ContextRecommendation, LocationCandidate, Acti
 import { ContextEngineService, ContextSnapshot, ContextRule, ContextCondition, ContextAction, MatchResult, GeofenceBinding } from '../context/ContextEngine';
 import { FeedbackService } from '../context/FeedbackService';
 import { ActionExecutor, ActionResult } from '../context/ActionExecutor';
+import { SceneRouter, SceneEvaluation } from '../context/scenes/SceneRouter';
+import { SceneMatch, SceneAction } from '../context/scenes/ScenePlugin';
+import { AirportScene } from '../context/scenes/AirportScene';
+import { HomeScene } from '../context/scenes/HomeScene';
+import { WorkScene } from '../context/scenes/WorkScene';
 import { GeofenceSuggestion } from '../context/LocationDiscoveryService';
 import { ActionType, Geofence, GeofenceCategory, LearnedPlaceSignals, UserAction } from '../context/ContextModels';
 import { FederatedSync } from '../context/FederatedSync';
@@ -205,6 +210,8 @@ export class NodeRuntime {
   private _contextListenersRegistered: boolean = false;
   private _activeRecommendations: Map<string, ContextRecommendation> = new Map();
   private _actionExecutor: ActionExecutor | undefined = undefined;
+  private _sceneRouter: SceneRouter | undefined = undefined;
+  private _activeSceneMatch: SceneEvaluation | undefined = undefined;
   private _identityListeners: Array<(identity: AgentIdentity | undefined) => void> = [];
 
   // App foreground/background state and chat page visibility for message notifications
@@ -429,6 +436,15 @@ export class NodeRuntime {
     this._contextListenersRegistered = true;
     this.log.info(TAG, '注册情景智能监听器');
 
+    // 初始化 SceneRouter（场景插件系统）
+    if (!this._sceneRouter) {
+      this._sceneRouter = new SceneRouter();
+      this._sceneRouter.register(new AirportScene());
+      this._sceneRouter.register(new HomeScene());
+      this._sceneRouter.register(new WorkScene());
+      this.log.info(TAG, `SceneRouter: ${this._sceneRouter.getPlugins().length} 场景插件已注册`);
+    }
+
     // Listen for recommendations and dispatch as chat events
     cas.addRecommendationListener((rec: ContextRecommendation) => {
       this.log.info(TAG, `情景推荐: ${rec.reason}`);
@@ -522,6 +538,30 @@ export class NodeRuntime {
       if (stateInfo.length === 0 && cas.isExploreMode()) {
         stateInfo = this.buildExploreStateFromDigital(cas);
         this.log.info(TAG, `[Explore] fallback stateInfo built (${stateInfo.length} chars)`);
+      }
+
+      // SceneRouter 优先：如果场景插件有匹配，替换 alternatives
+      if (this._sceneRouter && rec.snapshot) {
+        let sceneResults = this._sceneRouter.evaluate(rec.snapshot, 1);
+        if (sceneResults.length > 0) {
+          let se = sceneResults[0];
+          this.log.info(TAG, `[Scene] ${se.plugin.emoji} ${se.plugin.name} matched (${se.match.confidence}), ${se.recommendations.length} actions`);
+          // 用场景插件的状态描述和推荐替换
+          stateInfo = se.match.stateDescription;
+          alternatives = [];
+          for (let i = 0; i < se.recommendations.length; i++) {
+            let action = se.recommendations[i];
+            alternatives.push({
+              ruleId: `scene:${se.plugin.id}:${action.id}`,
+              ruleName: `${action.emoji} ${action.label}`,
+              confidence: Math.round(se.match.confidence * 100),
+              actionDesc: `${action.emoji} ${action.label}`,
+              actionType: 'scene_action'
+            });
+          }
+          // 缓存场景匹配信息，用于 executeAction
+          this._activeSceneMatch = se;
+        }
       }
 
       // 去重：如果已有未关闭的卡片，不弹新的
@@ -1316,14 +1356,33 @@ export class NodeRuntime {
         this._pendingStateRec = null;
         let displayName = ruleName.length > 0 ? ruleName : ruleId;
         this.sendFeedbackResponse(`✅ 执行: ${displayName}`);
-        // 正向反馈
-        let delta = 0.2;
-        this.adjustRulePriority(engine, ruleId, delta);
-        fbService.onThumbsUp(ruleId);
-        // 执行推荐动作
-        let cachedRec = this._activeRecommendations.get(ruleId);
-        if (cachedRec && cachedRec.action) {
-          this.executeRecommendedAction(cachedRec.action);
+
+        // 检查是否是场景插件动作
+        if (ruleId.startsWith('scene:') && this._sceneRouter && this._activeSceneMatch) {
+          let parts = ruleId.split(':');
+          let sceneId = parts[1] ?? '';
+          let actionId = parts[2] ?? '';
+          this._sceneRouter.executeAction(sceneId, actionId, this._activeSceneMatch.match).then((result) => {
+            if (result.message.length > 0) {
+              let event: GatewayChatEvent = {
+                runId: `scene-${Date.now()}`, sessionKey: '', seq: 0, state: 'final',
+                message: { role: 'assistant', content: [{ type: 'text', text: result.message }] },
+              };
+              this.dispatchChatEvent(event);
+              if (result.a2uiCard && result.a2uiCard.length > 0) {
+                this.dispatchA2UI('push', result.a2uiCard);
+              }
+            }
+          }).catch(() => {});
+        } else {
+          // 原有规则引擎动作
+          let delta = 0.2;
+          this.adjustRulePriority(engine, ruleId, delta);
+          fbService.onThumbsUp(ruleId);
+          let cachedRec = this._activeRecommendations.get(ruleId);
+          if (cachedRec && cachedRec.action) {
+            this.executeRecommendedAction(cachedRec.action);
+          }
         }
       } else if (feedback === 'view_snapshot') {
         // Show current scene snapshot with all sensor data
