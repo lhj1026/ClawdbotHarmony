@@ -108,14 +108,23 @@ export class CalendarPlugin implements DigitalPlugin {
   /** Get upcoming events within a time window. Refreshes cache if stale. */
   async getUpcomingEvents(hoursAhead?: number): Promise<EventInfo[]> {
     let now = Date.now();
+    this.log.info(TAG, `getUpcomingEvents: hoursAhead=${hoursAhead ?? 8} permissionGranted=${this.permissionGranted} cachedEvents=${this.cachedEvents.length} lastRefresh=${this.lastRefresh > 0 ? Math.round((now - this.lastRefresh) / 1000) + 's ago' : 'never'}`);
     if (now - this.lastRefresh > REFRESH_INTERVAL_MS && this.permissionGranted) {
       await this.refreshEvents();
+      this.log.info(TAG, `After refresh: ${this.cachedEvents.length} events cached`);
     }
     let windowMs = (hoursAhead ?? 8) * 60 * 60 * 1000;
     let cutoff = now + windowMs;
-    return this.cachedEvents.filter((ev: EventInfo): boolean =>
+    let filtered = this.cachedEvents.filter((ev: EventInfo): boolean =>
       ev.startTime > now && ev.startTime < cutoff
     );
+    this.log.info(TAG, `Filtered: ${filtered.length}/${this.cachedEvents.length} events in ${hoursAhead ?? 8}h window`);
+    if (this.cachedEvents.length > 0 && filtered.length === 0) {
+      // Log first cached event for debugging
+      let first = this.cachedEvents[0];
+      this.log.info(TAG, `First cached event: "${first.title}" start=${new Date(first.startTime).toISOString()} (${Math.round((first.startTime - now) / 60000)}min from now)`);
+    }
+    return filtered;
   }
 
   /** Detect time-overlapping event pairs */
@@ -211,7 +220,7 @@ export class CalendarPlugin implements DigitalPlugin {
 
       this.cachedEvents = events;
       this.lastRefresh = Date.now();
-      this.log.debug(TAG, `Refreshed: ${events.length} events in next 36h`);
+      this.log.info(TAG, `Refreshed: ${events.length} events in next 36h (now=${new Date(now).toISOString()} end=${new Date(endTime).toISOString()})`);
     } catch (err) {
       this.log.warn(TAG, `Refresh failed: ${(err as Error).message}`);
     }
