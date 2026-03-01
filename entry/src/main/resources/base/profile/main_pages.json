@@ -12,6 +12,7 @@
     "pages/ConversationsRoutePage",
     "pages/DocViewerPage",
     "pages/ContextSettingsPage",
-    "pages/RuleManagementPage"
+    "pages/RuleManagementPage",
+    "pages/NetworkDiagRoutePage"
   ]
 }

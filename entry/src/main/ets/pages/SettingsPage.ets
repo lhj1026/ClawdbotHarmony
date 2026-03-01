@@ -1064,6 +1064,17 @@ export struct SettingsPage {
                 .borderRadius(10)
                 .margin({ top: 8 })
                 .onClick(() => { this.toggleOperatorConnection(); })
+
+              Button('🔧 网络诊断')
+                .width('100%')
+                .height(40)
+                .backgroundColor('#F5F5F5')
+                .fontColor('#D2691E')
+                .fontSize(14)
+                .fontWeight(FontWeight.Medium)
+                .borderRadius(10)
+                .margin({ top: 8 })
+                .onClick(() => { router.pushUrl({ url: 'pages/NetworkDiagRoutePage' }); })
             }
           }
           .width('100%')
