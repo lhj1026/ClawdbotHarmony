@@ -1855,7 +1855,7 @@ export class ContextAwarenessService {
       if (available.length > 0) {
         // 构建包含所有可用匹配的推荐（top 1 为主推荐，其余作为备选）
         let top = available[0];
-        let topUserAction = this.contextActionToUserAction(top.action);
+        let topUserAction = this.contextActionToUserAction(top.action, top.ruleId);
         let rec: ContextRecommendation = {
           rule: {
             id: top.ruleId,
@@ -2915,7 +2915,7 @@ export class ContextAwarenessService {
 
   /** 计算状态指纹：核心维度 + WiFi/BT 设备 + 小时段 */
   /** 将 C++ ContextAction 转换为 UserAction */
-  private contextActionToUserAction(action: EngineAction): UserAction {
+  private contextActionToUserAction(action: EngineAction, ruleId?: string): UserAction {
     // C++ engine types → ArkTS ActionType 映射
     let typeMap: Record<string, string> = {
       'suggestion': 'show_notification',
@@ -2933,11 +2933,13 @@ export class ContextAwarenessService {
     let rawType = action.type ?? 'suggestion';
     let mappedType = (typeMap[rawType] ?? 'show_notification') as ActionType;
 
-    // 查找规则的 function 字段
-    let ruleFunction = this.engine.getRuleFunction(action.id);
+    // 查找规则的 function 字段（用 ruleId，不是 action.id）
+    let lookupId = ruleId ?? action.id;
+    let ruleFunction = this.engine.getRuleFunction(lookupId);
     let params: Record<string, string> | undefined = undefined;
     if (ruleFunction && ruleFunction.length > 0) {
       params = { 'function': ruleFunction };
+      this.log.info(TAG, `[ActionMap] rule=${lookupId} → function=${ruleFunction}`);
     }
 
     return {

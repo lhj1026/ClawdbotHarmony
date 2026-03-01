@@ -1538,6 +1538,8 @@ export class NodeRuntime {
 
   /** Execute the recommended action via ActionExecutor, send result to chat */
   private executeRecommendedAction(action: UserAction): void {
+    this.log.info(TAG, `executeRecommendedAction: type=${action.type}, target=${action.target?.substring(0, 50) ?? ''}, params=${JSON.stringify(action.params ?? {})}`);
+
     if (!this._actionExecutor) {
       try {
         let cas = ContextAwarenessService.getInstance();
