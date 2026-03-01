@@ -1546,10 +1546,7 @@ export class NodeRuntime {
       } catch {
         this._actionExecutor = new ActionExecutor();  // 无 CalendarPlugin 也创建
       }
-      // 连接 Agent 通信：SmartActionPlugin 通过此回调发送自然语言请求给 OpenClaw
-      this._actionExecutor.setSendToAgent(async (text: string): Promise<void> => {
-        await this.sendChatMessage(text, 'context-action');
-      });
+
     }
 
     this._actionExecutor.execute(action).then((result: ActionResult) => {

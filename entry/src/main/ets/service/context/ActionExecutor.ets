@@ -34,6 +34,7 @@ export class ActionExecutor {
     // 注册内置插件（顺序决定优先级：先注册的优先匹配）
     // SmartActionPlugin 最先注册：有 function 标签的动作优先路由到这里
     this.smartActionPlugin = new SmartActionPlugin();
+    this.smartActionPlugin.setCalendarPlugin(calendarPlugin);
     this.router.register(this.smartActionPlugin);
     if (calendarPlugin) {
       this.router.register(new CalendarInfoPlugin(calendarPlugin));
@@ -53,10 +54,7 @@ export class ActionExecutor {
     this.appLaunchPlugin.setContext(context);
   }
 
-  /** 设置 Agent 通信回调（用于 SmartActionPlugin） */
-  setSendToAgent(fn: (text: string) => Promise<void>): void {
-    this.smartActionPlugin.setSendToAgent(fn);
-  }
+
 
   /** 获取路由器（用于外部注册自定义插件） */
   getRouter(): ActionRouter {
