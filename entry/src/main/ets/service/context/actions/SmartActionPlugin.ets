@@ -51,7 +51,7 @@ export class SmartActionPlugin implements ActionPlugin {
       case 'morning_briefing':
         return await this.morningBriefing();
       case 'calendar_summary':
-        return await this.calendarSummary(12); // 今天剩余
+        return await this.calendarSummary(24); // 今天+明天早上
       case 'calendar_tomorrow':
         return await this.calendarSummary(36); // 往后36小时覆盖明天
       default:
