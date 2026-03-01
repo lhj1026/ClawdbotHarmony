@@ -473,7 +473,9 @@ export class NodeRuntime {
           let alt = rec.alternatives[i];
           let altName = ruleNameMap.get(alt.ruleId) ?? alt.ruleId;
           // 生成动作描述文本 (ContextAction.payload 是规则的描述性文字)
-          let desc = (alt.action.payload && alt.action.payload.length > 0) ? alt.action.payload : altName;
+          let rawDesc = (alt.action.payload && alt.action.payload.length > 0) ? alt.action.payload : altName;
+          // 去掉 "travel: " 等路由前缀，只保留用户可读部分
+          let desc = rawDesc.indexOf(': ') >= 0 ? rawDesc.substring(rawDesc.indexOf(': ') + 2) : rawDesc;
           alternatives.push({
             ruleId: alt.ruleId,
             ruleName: altName,
@@ -506,7 +508,8 @@ export class NodeRuntime {
         }
       } else {
         // 没有 alternatives 时，用当前推荐作为唯一选项
-        let desc = rec.action.target ?? ruleName;
+        let rawDesc2 = rec.action.target ?? ruleName;
+        let desc = rawDesc2.indexOf(': ') >= 0 ? rawDesc2.substring(rawDesc2.indexOf(': ') + 2) : rawDesc2;
         alternatives.push({
           ruleId, ruleName, confidence,
           actionDesc: desc,

@@ -541,7 +541,7 @@
     "action": {
       "id": "travel_info",
       "type": "show_info",
-      "payload": "travel"
+      "payload": "travel: 🚇 查看行程信息"
     },
     "priority": 2.5,
     "cooldownMs": 14400000,
@@ -595,13 +595,21 @@
     "tier": 1,
     "category": "environment",
     "conditions": [
-      {"key": "wifiGeofence", "op": "eq", "value": "transit"},
-      {"key": "hasUpcomingFlight", "op": "eq", "value": "true"}
+      {
+        "key": "wifiGeofence",
+        "op": "eq",
+        "value": "transit"
+      },
+      {
+        "key": "hasUpcomingFlight",
+        "op": "eq",
+        "value": "true"
+      }
     ],
     "action": {
       "id": "airport_arrive",
       "type": "show_info",
-      "payload": "travel"
+      "payload": "travel: ✈️ 查看登机牌"
     },
     "priority": 3.0,
     "cooldownMs": 1800000,
@@ -613,14 +621,26 @@
     "tier": 1,
     "category": "environment",
     "conditions": [
-      {"key": "wifiGeofence", "op": "eq", "value": "transit"},
-      {"key": "flightCountdownMin", "op": "lte", "value": "45"},
-      {"key": "flightCountdownMin", "op": "gt", "value": "10"}
+      {
+        "key": "wifiGeofence",
+        "op": "eq",
+        "value": "transit"
+      },
+      {
+        "key": "flightCountdownMin",
+        "op": "lte",
+        "value": "45"
+      },
+      {
+        "key": "flightCountdownMin",
+        "op": "gt",
+        "value": "10"
+      }
     ],
     "action": {
       "id": "airport_boarding_soon",
       "type": "show_info",
-      "payload": "travel"
+      "payload": "travel: ⚠️ 即将登机，查看登机牌"
     },
     "priority": 5.0,
     "cooldownMs": 600000,
@@ -632,13 +652,21 @@
     "tier": 1,
     "category": "environment",
     "conditions": [
-      {"key": "wifiGeofence", "op": "eq", "value": "transit"},
-      {"key": "flightCountdownMin", "op": "lte", "value": "10"}
+      {
+        "key": "wifiGeofence",
+        "op": "eq",
+        "value": "transit"
+      },
+      {
+        "key": "flightCountdownMin",
+        "op": "lte",
+        "value": "10"
+      }
     ],
     "action": {
       "id": "airport_boarding_now",
       "type": "show_info",
-      "payload": "travel"
+      "payload": "travel: 🔴 立即登机！查看登机牌"
     },
     "priority": 8.0,
     "cooldownMs": 300000,
@@ -650,9 +678,21 @@
     "tier": 1,
     "category": "environment",
     "conditions": [
-      {"key": "wifiGeofence", "op": "eq", "value": "transit"},
-      {"key": "flightCountdownMin", "op": "lte", "value": "0"},
-      {"key": "flightCountdownMin", "op": "gte", "value": "-30"}
+      {
+        "key": "wifiGeofence",
+        "op": "eq",
+        "value": "transit"
+      },
+      {
+        "key": "flightCountdownMin",
+        "op": "lte",
+        "value": "0"
+      },
+      {
+        "key": "flightCountdownMin",
+        "op": "gte",
+        "value": "-30"
+      }
     ],
     "action": {
       "id": "airport_takeoff",
@@ -669,8 +709,16 @@
     "tier": 0,
     "category": "environment",
     "conditions": [
-      {"key": "flightArrivalMin", "op": "lte", "value": "10"},
-      {"key": "flightArrivalMin", "op": "gte", "value": "-30"}
+      {
+        "key": "flightArrivalMin",
+        "op": "lte",
+        "value": "10"
+      },
+      {
+        "key": "flightArrivalMin",
+        "op": "gte",
+        "value": "-30"
+      }
     ],
     "action": {
       "id": "airport_landing",
@@ -687,8 +735,16 @@
     "tier": 1,
     "category": "environment",
     "conditions": [
-      {"key": "wifiLost", "op": "eq", "value": "true"},
-      {"key": "wifiLostCategory", "op": "eq", "value": "transit"}
+      {
+        "key": "wifiLost",
+        "op": "eq",
+        "value": "true"
+      },
+      {
+        "key": "wifiLostCategory",
+        "op": "eq",
+        "value": "transit"
+      }
     ],
     "action": {
       "id": "airport_exit",

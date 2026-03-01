@@ -24,10 +24,11 @@ export class TravelInfoPlugin implements ActionPlugin {
 
   canHandle(action: UserAction): boolean {
     if (action.type !== 'show_info') return false;
-    let target = action.target ?? '';
+    let target = (action.target ?? '').toLowerCase();
     let category = action.params?.['category'] ?? '';
     return target.indexOf('travel') >= 0 || target.indexOf('flight') >= 0 ||
-      target.indexOf('train') >= 0 || category === 'travel';
+      target.indexOf('train') >= 0 || target.indexOf('登机') >= 0 ||
+      target.indexOf('行程') >= 0 || category === 'travel';
   }
 
   async execute(action: UserAction): Promise<ActionResult> {
