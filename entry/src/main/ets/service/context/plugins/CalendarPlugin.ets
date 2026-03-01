@@ -1,8 +1,12 @@
 /**
  * CalendarPlugin — Read upcoming calendar events
  *
- * Queries the system calendar for events in the next 2 hours.
- * Provides: hasUpcomingEvent, nextEventTitle, nextEventMinutes, eventCount
+ * ⚠️ HarmonyOS NEXT limitation: CalendarKit can ONLY read calendars created by THIS app.
+ * Third-party calendars (WeLink, etc.) are not accessible — no DataShare consumer API available.
+ *
+ * Current strategy:
+ * - CalendarKit for app-owned events (e.g. events added via CalendarCapability)
+ * - For WeLink/system calendar events: rely on Gateway agent calendar tools (gog, etc.)
  *
  * Permission: ohos.permission.READ_CALENDAR (user_grant, already declared)
  * API: @kit.CalendarKit — calendarManager
@@ -45,7 +49,6 @@ export class CalendarPlugin implements DigitalPlugin {
       let atManager = abilityAccessCtrl.createAtManager();
       let result = await atManager.requestPermissionsFromUser(context,
         ['ohos.permission.READ_CALENDAR']);
-      // Check if permission was granted (authResults[0] === 0 means granted)
       if (result.authResults.length > 0 && result.authResults[0] === 0) {
         this.permissionGranted = true;
       }
@@ -54,22 +57,18 @@ export class CalendarPlugin implements DigitalPlugin {
       this.log.warn(TAG, `Permission request failed: ${(err as Error).message}`);
     }
 
-    // Initial load
     if (this.permissionGranted) {
       await this.refreshEvents();
     }
   }
 
   getSnapshot(): DigitalSnapshot {
-    // Refresh cache if stale
     let now = Date.now();
     if (now - this.lastRefresh > REFRESH_INTERVAL_MS && this.permissionGranted) {
-      this.refreshEvents();  // fire-and-forget, use cached data for now
+      this.refreshEvents();  // fire-and-forget
     }
 
     let data: Record<string, string> = {};
-
-    // Filter to only future events
     let upcoming = this.cachedEvents.filter((ev: EventInfo): boolean => ev.startTime > now);
     data['cal_eventCount'] = upcoming.length.toString();
     data['cal_hasUpcoming'] = (upcoming.length > 0) ? 'true' : 'false';
@@ -84,7 +83,6 @@ export class CalendarPlugin implements DigitalPlugin {
       }
     }
 
-    // Check if user is currently IN an event
     let current = this.cachedEvents.filter((ev: EventInfo): boolean =>
       ev.startTime <= now && ev.endTime > now
     );
@@ -105,25 +103,18 @@ export class CalendarPlugin implements DigitalPlugin {
     this.log.info(TAG, 'Destroyed');
   }
 
-  /** Get upcoming events within a time window. Refreshes cache if stale. */
+  /** Get upcoming events within a time window */
   async getUpcomingEvents(hoursAhead?: number): Promise<EventInfo[]> {
     let now = Date.now();
-    this.log.info(TAG, `getUpcomingEvents: hoursAhead=${hoursAhead ?? 8} permissionGranted=${this.permissionGranted} cachedEvents=${this.cachedEvents.length} lastRefresh=${this.lastRefresh > 0 ? Math.round((now - this.lastRefresh) / 1000) + 's ago' : 'never'}`);
     if (now - this.lastRefresh > REFRESH_INTERVAL_MS && this.permissionGranted) {
       await this.refreshEvents();
-      this.log.info(TAG, `After refresh: ${this.cachedEvents.length} events cached`);
     }
     let windowMs = (hoursAhead ?? 8) * 60 * 60 * 1000;
     let cutoff = now + windowMs;
     let filtered = this.cachedEvents.filter((ev: EventInfo): boolean =>
       ev.startTime > now && ev.startTime < cutoff
     );
-    this.log.info(TAG, `Filtered: ${filtered.length}/${this.cachedEvents.length} events in ${hoursAhead ?? 8}h window`);
-    if (this.cachedEvents.length > 0 && filtered.length === 0) {
-      // Log first cached event for debugging
-      let first = this.cachedEvents[0];
-      this.log.info(TAG, `First cached event: "${first.title}" start=${new Date(first.startTime).toISOString()} (${Math.round((first.startTime - now) / 60000)}min from now)`);
-    }
+    this.log.info(TAG, `getUpcomingEvents(${hoursAhead ?? 8}h): ${filtered.length}/${this.cachedEvents.length} events`);
     return filtered;
   }
 
@@ -148,7 +139,7 @@ export class CalendarPlugin implements DigitalPlugin {
     return conflicts;
   }
 
-  /** Format events as human-readable markdown for chat display */
+  /** Format events as human-readable text for chat display */
   formatEventsMarkdown(events: EventInfo[], conflicts?: EventConflict[]): string {
     if (events.length === 0) {
       return '📅 接下来没有日程安排';
@@ -175,6 +166,27 @@ export class CalendarPlugin implements DigitalPlugin {
     return lines.join('\n');
   }
 
+  /** Inject events from external source (e.g. Gateway agent calendar query) */
+  injectEvents(events: EventInfo[]): void {
+    let seen = new Set<string>();
+    for (let ev of this.cachedEvents) {
+      seen.add(`${ev.title}@${ev.startTime}`);
+    }
+    let added = 0;
+    for (let ev of events) {
+      let key = `${ev.title}@${ev.startTime}`;
+      if (!seen.has(key)) {
+        this.cachedEvents.push(ev);
+        seen.add(key);
+        added++;
+      }
+    }
+    if (added > 0) {
+      this.cachedEvents.sort((a: EventInfo, b: EventInfo): number => a.startTime - b.startTime);
+      this.log.info(TAG, `Injected ${added} external events, total=${this.cachedEvents.length}`);
+    }
+  }
+
   private async refreshEvents(): Promise<void> {
     if (!this.context || !this.permissionGranted) return;
 
@@ -183,24 +195,14 @@ export class CalendarPlugin implements DigitalPlugin {
       let now = Date.now();
       let endTime = now + LOOKAHEAD_MS;
       let filter = calendarManager.EventFilter.filterByTime(now, endTime);
-
       let events: EventInfo[] = [];
 
       try {
         let allCals: calendarManager.Calendar[] = await calMgr.getAllCalendars();
-        this.log.info(TAG, `Found ${allCals.length} calendars`);
         for (let i = 0; i < allCals.length; i++) {
-          let calConfig: calendarManager.CalendarConfig | undefined = undefined;
-          try { calConfig = await allCals[i].getConfig(); } catch (_e) { /* ignore */ }
-          let calName = calConfig?.enableReminder !== undefined ? `config_ok` : 'no_config';
-          this.log.info(TAG, `Calendar[${i}]: ${calName} id=${JSON.stringify(allCals[i]).substring(0, 100)}`);
           let calEvents: calendarManager.Event[] = await allCals[i].getEvents(filter);
-          this.log.info(TAG, `Calendar[${i}]: ${calEvents.length} events`);
           for (let j = 0; j < calEvents.length; j++) {
             let ev = calEvents[j];
-            if (j < 3) {
-              this.log.info(TAG, `  Event[${j}]: "${ev.title}" start=${new Date(ev.startTime).toISOString()}`);
-            }
             events.push({
               title: ev.title ?? '',
               startTime: ev.startTime,
@@ -210,28 +212,13 @@ export class CalendarPlugin implements DigitalPlugin {
           }
         }
       } catch (calErr) {
-        this.log.warn(TAG, `getAllCalendars failed: ${(calErr as Error).message}, trying default`);
-        // Fallback to default calendar
-        let cal = await calMgr.getCalendar();
-        let calEvents: calendarManager.Event[] = await cal.getEvents(filter);
-        this.log.info(TAG, `Default calendar: ${calEvents.length} events`);
-        for (let j = 0; j < calEvents.length; j++) {
-          let ev = calEvents[j];
-          events.push({
-            title: ev.title ?? '',
-            startTime: ev.startTime,
-            endTime: ev.endTime,
-            location: ev.location?.location ?? ''
-          });
-        }
+        this.log.warn(TAG, `getAllCalendars failed: ${(calErr as Error).message}`);
       }
 
-      // Sort by start time
       events.sort((a: EventInfo, b: EventInfo): number => a.startTime - b.startTime);
-
       this.cachedEvents = events;
       this.lastRefresh = Date.now();
-      this.log.info(TAG, `Refreshed: ${events.length} events in next 36h (now=${new Date(now).toISOString()} end=${new Date(endTime).toISOString()})`);
+      this.log.info(TAG, `Refreshed: ${events.length} events (CalendarKit only — WeLink not accessible)`);
     } catch (err) {
       this.log.warn(TAG, `Refresh failed: ${(err as Error).message}`);
     }
