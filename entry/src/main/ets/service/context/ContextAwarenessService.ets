@@ -2865,42 +2865,59 @@ export class ContextAwarenessService {
     // 运动状态
     let motionMap: Record<string, string> = {
       'stationary': '静止', 'walking': '步行', 'running': '跑步',
-      'driving': '驾车', 'transit': '乘车', 'cycling': '骑行'
+      'driving': '驾车', 'transit': '乘车', 'cycling': '骑行',
+      'unknown': '未知'
     };
     let motionLabel = motionMap[snapshot.motionState] ?? snapshot.motionState;
-    let durationSec = parseInt(snapshot.activityDuration || '0');
-    let durationStr = durationSec > 0
-      ? ` (${durationSec >= 3600 ? Math.floor(durationSec / 3600) + '小时' : Math.floor(durationSec / 60) + '分钟'})`
-      : '';
-    lines.push(`🏃 ${motionLabel}${durationStr}`);
+    if (motionLabel.length > 0 && motionLabel !== '未知' && motionLabel !== 'unknown') {
+      let durationSec = parseInt(snapshot.activityDuration || '0');
+      let durationStr = durationSec > 0
+        ? ` (${durationSec >= 3600 ? Math.floor(durationSec / 3600) + '小时' : Math.floor(durationSec / 60) + '分钟'})`
+        : '';
+      lines.push(`🏃 ${motionLabel}${durationStr}`);
+    }
 
-    // 位置
+    // 位置：综合 geofence ID、wifiGeofence category、WiFi SSID 查找围栏名称
     let catLabels: Record<string, string> = {
       'home': '🏠 家', 'work': '🏢 公司', 'restaurant': '🍽️ 餐饮',
       'shopping': '🛒 购物', 'gym': '💪 健身', 'transit': '🚉 交通', 'hotel': '🏨 酒店'
     };
-    let locationShown = false;
+    let gfName = '';
+    let gfCat = snapshot.wifiGeofence ?? '';
+    let allGf = this.geofenceMgr.getAllGeofences();
+    // 方法1: 通过 geofence ID 查找
     if (snapshot.geofence && snapshot.geofence.length > 0) {
-      // 将 geofence ID 转换为名称
-      let gfName = '';
-      let gfCat = '';
-      let allGf = this.geofenceMgr.getAllGeofences();
       for (let i = 0; i < allGf.length; i++) {
         if (allGf[i].id === snapshot.geofence) {
           gfName = allGf[i].name;
-          gfCat = allGf[i].category ?? '';
+          gfCat = allGf[i].category ?? gfCat;
           break;
         }
       }
-      if (gfName.length > 0) {
-        let emoji = catLabels[gfCat]?.substring(0, 2) ?? '📍';
-        lines.push(`${emoji} ${gfName}`);
-        locationShown = true;
+    }
+    // 方法2: 通过 WiFi SSID 查找
+    if (gfName.length === 0 && snapshot.wifiSsid && snapshot.wifiSsid.length > 0) {
+      for (let i = 0; i < allGf.length; i++) {
+        let signals = allGf[i].learnedSignals;
+        if (signals && signals.wifiSSIDs) {
+          for (let j = 0; j < signals.wifiSSIDs.length; j++) {
+            if (signals.wifiSSIDs[j] === snapshot.wifiSsid) {
+              gfName = allGf[i].name;
+              gfCat = allGf[i].category ?? gfCat;
+              break;
+            }
+          }
+          if (gfName.length > 0) break;
+        }
       }
     }
-    if (!locationShown && snapshot.wifiGeofence && snapshot.wifiGeofence.length > 0) {
-      let label = catLabels[snapshot.wifiGeofence] ?? snapshot.wifiGeofence;
-      lines.push(`📍 ${label}`);
+    // 显示
+    if (gfName.length > 0) {
+      let catLabel = catLabels[gfCat] ?? gfCat;
+      lines.push(`📍 ${gfName} (${catLabel})`);
+    } else if (gfCat.length > 0) {
+      let catLabel = catLabels[gfCat] ?? gfCat;
+      lines.push(`📍 ${catLabel}`);
     }
     if (snapshot.wifiSsid && snapshot.wifiSsid.length > 0) {
       lines.push(`📶 WiFi: ${snapshot.wifiSsid}`);
