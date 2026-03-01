@@ -2385,9 +2385,13 @@ Respond ONLY with the JSON array.`;
       }
       this.scrollToEnd();
     } else if (type === 'reset') {
+      // 清空 A2UI 内容 — 通过替换消息对象触发 UI 刷新
       let idx = this.findGwAssistantIndex();
       if (idx >= 0) {
-        this.messages[idx].a2uiContent = '';
+        let msg = this.messages[idx];
+        msg.a2uiContent = '';
+        // ArkUI @Observed 需要数组变更才能触发子组件刷新
+        this.messages.splice(idx, 1, msg);
       }
       this.a2uiInjectFn = undefined;
     } else if (type === 'canvas.present') {
