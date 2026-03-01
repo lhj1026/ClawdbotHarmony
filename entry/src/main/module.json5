@@ -64,6 +64,21 @@
         ]
       }
     ],
+    "extensionAbilities": [
+      {
+        "name": "ClawdBotAccessibilityExtension",
+        "srcEntry": "./ets/accessibility/ClawdBotAccessibilityExtension.ets",
+        "description": "ClawdBot无障碍服务",
+        "label": "$string:entry_label",
+        "type": "accessibility",
+        "metadata": [
+          {
+            "name": "ohos.accessibilityextensionability",
+            "resource": "$profile:accessibility_config"
+          }
+        ]
+      }
+    ],
     "requestPermissions": [
       {
         "name": "ohos.permission.KEEP_BACKGROUND_RUNNING"

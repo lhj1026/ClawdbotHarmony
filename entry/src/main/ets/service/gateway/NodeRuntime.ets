@@ -67,6 +67,7 @@ import { ActionType, Geofence, GeofenceCategory, LearnedPlaceSignals, UserAction
 import { FederatedSync } from '../context/FederatedSync';
 import { PushCapability } from './PushCapability';
 import { TravelInfoService, FlightInfo, TrainInfo } from '../context/TravelInfoService';
+import { AccessibilityService, ScreenNode, WindowInfo } from '../accessibility/AccessibilityService';
 
 const TAG = 'NodeRuntime';
 const APP_VERSION = '2.59.1';
@@ -125,6 +126,7 @@ export class NodeRuntime {
   private _capEmail: boolean = true;
   private _capCalendar: boolean = true;
   private _capExec: boolean = true;
+  private _capAccessibility: boolean = true;
 
   // Observable state
   private _operatorState: ConnectionState = ConnectionState.Disconnected;
@@ -3269,6 +3271,37 @@ export class NodeRuntime {
           result = await this.handleUiTap(paramsJson);
           break;
         }
+        // ---- Accessibility ----
+        case Command.ACCESSIBILITY_GET_SCREEN: {
+          this.log.info(TAG, 'Executing accessibility.getScreen...');
+          result = await this.handleA11yGetScreen();
+          break;
+        }
+        case Command.ACCESSIBILITY_FIND_ELEMENTS: {
+          this.log.info(TAG, 'Executing accessibility.findElements...');
+          result = await this.handleA11yFindElements(paramsJson);
+          break;
+        }
+        case Command.ACCESSIBILITY_CLICK: {
+          this.log.info(TAG, 'Executing accessibility.click...');
+          result = await this.handleA11yClick(paramsJson);
+          break;
+        }
+        case Command.ACCESSIBILITY_SCROLL: {
+          this.log.info(TAG, 'Executing accessibility.scroll...');
+          result = await this.handleA11yScroll(paramsJson);
+          break;
+        }
+        case Command.ACCESSIBILITY_GET_WINDOWS: {
+          this.log.info(TAG, 'Executing accessibility.getWindows...');
+          result = await this.handleA11yGetWindows();
+          break;
+        }
+        case Command.ACCESSIBILITY_TYPE: {
+          this.log.info(TAG, 'Executing accessibility.type...');
+          result = await this.handleA11yType(paramsJson);
+          break;
+        }
         default:
           this.log.warn(TAG, `Unsupported invoke command: ${command}`);
           this.dispatchInvoke(command, paramsStr, `unsupported command: ${command}`, true);
@@ -3756,6 +3789,136 @@ export class NodeRuntime {
       this.log.error(TAG, 'ui.tap exception: ' + msg);
       let cmd = 'hdc shell input tap ' + x + ' ' + y;
       return '{"ok":false,"error":"Exception: ' + msg.replace(/"/g, "'") + '","hint":"Try external mode: ui.tap with {x, y, external: true}","fallback_command":"' + cmd + '","x":' + x + ',"y":' + y + '}';
+    }
+  }
+
+  // ==================== Accessibility handlers ====================
+
+  private async handleA11yGetScreen(): Promise<string> {
+    let svc = AccessibilityService.getInstance();
+    if (!svc.isReady()) {
+      return '{"ok":false,"error":"AccessibilityService not ready. Enable ClawdBot accessibility service in system settings."}';
+    }
+    try {
+      let nodes: ScreenNode[] = await svc.getScreenContent();
+      return JSON.stringify({ ok: true, nodes: nodes, count: nodes.length });
+    } catch (err) {
+      let msg: string = (err as Error).message ?? String(err);
+      this.log.error(TAG, `handleA11yGetScreen error: ${msg}`);
+      return `{"ok":false,"error":${JSON.stringify(msg)}}`;
+    }
+  }
+
+  private async handleA11yFindElements(paramsJson: string | undefined): Promise<string> {
+    let text: string = '';
+    if (paramsJson) {
+      try {
+        let p = JSON.parse(paramsJson) as Record<string, string>;
+        if (p['text'] !== undefined) text = p['text'];
+      } catch { /* ignore */ }
+    }
+    if (text.length === 0) {
+      return '{"ok":false,"error":"missing text parameter"}';
+    }
+    let svc = AccessibilityService.getInstance();
+    if (!svc.isReady()) {
+      return '{"ok":false,"error":"AccessibilityService not ready"}';
+    }
+    try {
+      let nodes: ScreenNode[] = await svc.findElements(text);
+      return JSON.stringify({ ok: true, nodes: nodes, count: nodes.length });
+    } catch (err) {
+      let msg: string = (err as Error).message ?? String(err);
+      this.log.error(TAG, `handleA11yFindElements error: ${msg}`);
+      return `{"ok":false,"error":${JSON.stringify(msg)}}`;
+    }
+  }
+
+  private async handleA11yClick(paramsJson: string | undefined): Promise<string> {
+    let nodeId: number = -1;
+    if (paramsJson) {
+      try {
+        let p = JSON.parse(paramsJson) as Record<string, Object>;
+        if (p['nodeId'] !== undefined) nodeId = p['nodeId'] as number;
+        if (p['id'] !== undefined) nodeId = p['id'] as number;
+      } catch { /* ignore */ }
+    }
+    if (nodeId < 0) {
+      return '{"ok":false,"error":"missing nodeId parameter"}';
+    }
+    let svc = AccessibilityService.getInstance();
+    if (!svc.isReady()) {
+      return '{"ok":false,"error":"AccessibilityService not ready"}';
+    }
+    try {
+      let ok: boolean = await svc.performClick(nodeId);
+      return JSON.stringify({ ok: ok, nodeId: nodeId });
+    } catch (err) {
+      let msg: string = (err as Error).message ?? String(err);
+      this.log.error(TAG, `handleA11yClick error: ${msg}`);
+      return `{"ok":false,"error":${JSON.stringify(msg)}}`;
+    }
+  }
+
+  private async handleA11yScroll(paramsJson: string | undefined): Promise<string> {
+    let direction: string = 'down';
+    if (paramsJson) {
+      try {
+        let p = JSON.parse(paramsJson) as Record<string, string>;
+        if (p['direction'] !== undefined) direction = p['direction'];
+      } catch { /* ignore */ }
+    }
+    let svc = AccessibilityService.getInstance();
+    if (!svc.isReady()) {
+      return '{"ok":false,"error":"AccessibilityService not ready"}';
+    }
+    try {
+      let ok: boolean = await svc.performScroll(direction);
+      return JSON.stringify({ ok: ok, direction: direction });
+    } catch (err) {
+      let msg: string = (err as Error).message ?? String(err);
+      this.log.error(TAG, `handleA11yScroll error: ${msg}`);
+      return `{"ok":false,"error":${JSON.stringify(msg)}}`;
+    }
+  }
+
+  private async handleA11yGetWindows(): Promise<string> {
+    let svc = AccessibilityService.getInstance();
+    if (!svc.isReady()) {
+      return '{"ok":false,"error":"AccessibilityService not ready"}';
+    }
+    try {
+      let windows: WindowInfo[] = await svc.getWindowInfo();
+      return JSON.stringify({ ok: true, windows: windows, count: windows.length });
+    } catch (err) {
+      let msg: string = (err as Error).message ?? String(err);
+      this.log.error(TAG, `handleA11yGetWindows error: ${msg}`);
+      return `{"ok":false,"error":${JSON.stringify(msg)}}`;
+    }
+  }
+
+  private async handleA11yType(paramsJson: string | undefined): Promise<string> {
+    let text: string = '';
+    if (paramsJson) {
+      try {
+        let p = JSON.parse(paramsJson) as Record<string, string>;
+        if (p['text'] !== undefined) text = p['text'];
+      } catch { /* ignore */ }
+    }
+    if (text.length === 0) {
+      return '{"ok":false,"error":"missing text parameter"}';
+    }
+    let svc = AccessibilityService.getInstance();
+    if (!svc.isReady()) {
+      return '{"ok":false,"error":"AccessibilityService not ready"}';
+    }
+    try {
+      let ok: boolean = await svc.injectText(text);
+      return JSON.stringify({ ok: ok });
+    } catch (err) {
+      let msg: string = (err as Error).message ?? String(err);
+      this.log.error(TAG, `handleA11yType error: ${msg}`);
+      return `{"ok":false,"error":${JSON.stringify(msg)}}`;
     }
   }
 
@@ -4534,6 +4697,15 @@ export class NodeRuntime {
     if (this._capExec) {
       caps.push(Capability.Exec);
       commands.push(Command.EXEC_RUN);
+    }
+    if (this._capAccessibility) {
+      caps.push(Capability.Accessibility);
+      commands.push(Command.ACCESSIBILITY_GET_SCREEN);
+      commands.push(Command.ACCESSIBILITY_FIND_ELEMENTS);
+      commands.push(Command.ACCESSIBILITY_CLICK);
+      commands.push(Command.ACCESSIBILITY_SCROLL);
+      commands.push(Command.ACCESSIBILITY_GET_WINDOWS);
+      commands.push(Command.ACCESSIBILITY_TYPE);
     }
 
     // Context engine test / simulate — always available

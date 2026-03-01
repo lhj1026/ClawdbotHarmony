@@ -1,0 +1,8 @@
+{
+  "accessibilityCapabilities": [
+    "retrieve",
+    "event"
+  ],
+  "accessibilityCapabilityRatio": "low",
+  "description": "ClawdBot无障碍服务，用于读取和操控其他应用界面"
+}

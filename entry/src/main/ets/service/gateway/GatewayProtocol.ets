@@ -20,6 +20,7 @@ export class Capability {
   static readonly Email: string = 'email';
   static readonly Calendar: string = 'calendar';
   static readonly Exec: string = 'exec';
+  static readonly Accessibility: string = 'accessibility';
 }
 
 export class Command {
@@ -74,4 +75,11 @@ export class Command {
   static readonly UI_BACK: string = 'ui.back';
   static readonly UI_GET_STATE: string = 'ui.get_state';
   static readonly UI_TAP: string = 'ui.tap';
+  // Accessibility
+  static readonly ACCESSIBILITY_GET_SCREEN: string = 'accessibility.getScreen';
+  static readonly ACCESSIBILITY_FIND_ELEMENTS: string = 'accessibility.findElements';
+  static readonly ACCESSIBILITY_CLICK: string = 'accessibility.click';
+  static readonly ACCESSIBILITY_SCROLL: string = 'accessibility.scroll';
+  static readonly ACCESSIBILITY_GET_WINDOWS: string = 'accessibility.getWindows';
+  static readonly ACCESSIBILITY_TYPE: string = 'accessibility.type';
 }

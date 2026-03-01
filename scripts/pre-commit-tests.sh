@@ -36,10 +36,11 @@ echo ""
 # ------------------------------------------
 echo -e "${YELLOW}[1/5] Checking version consistency...${NC}"
 
-V_APP=$(grep -o '"versionName"[[:space:]]*:[[:space:]]*"[^"]*"' "$PROJECT_ROOT/AppScope/app.json5" | grep -o '[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*')
-V_NODE=$(grep -o "APP_VERSION[[:space:]]*=[[:space:]]*'[^']*'" "$PROJECT_ROOT/entry/src/main/ets/service/gateway/NodeRuntime.ets" | grep -o '[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*')
-V_INDEX=$(grep -o "Text('v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*')" "$PROJECT_ROOT/entry/src/main/ets/pages/Index.ets" | grep -o '[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*')
-V_SETTINGS=$(grep "settings.version" "$PROJECT_ROOT/entry/src/main/ets/pages/SettingsPage.ets" | grep -o '[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*')
+V_APP=$(grep -o '"versionName"[[:space:]]*:[[:space:]]*"[^"]*"' "$PROJECT_ROOT/AppScope/app.json5" | grep -o '[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*' || true)
+V_NODE=$(grep -o "APP_VERSION[[:space:]]*=[[:space:]]*'[^']*'" "$PROJECT_ROOT/entry/src/main/ets/service/gateway/NodeRuntime.ets" | grep -o '[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*' || true)
+V_INDEX=$(grep -o "Text('v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*')" "$PROJECT_ROOT/entry/src/main/ets/pages/Index.ets" | grep -o '[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*' || true)
+# 版本号在 generated/Changelog.ets 中定义为 APP_VERSION（AboutRoutePage.ets 引用它）
+V_SETTINGS=$(grep -o "APP_VERSION[[:space:]]*:[[:space:]]*string[[:space:]]*=[[:space:]]*'[^']*'" "$PROJECT_ROOT/entry/src/main/ets/generated/Changelog.ets" | grep -o '[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*' | head -1 || true)
 
 VERSION_OK=true
 if [ -z "$V_APP" ] || [ -z "$V_NODE" ] || [ -z "$V_INDEX" ] || [ -z "$V_SETTINGS" ]; then
@@ -56,7 +57,7 @@ else
   echo -e "    app.json5:        ${V_APP:-MISSING}"
   echo -e "    NodeRuntime.ets:  ${V_NODE:-MISSING}"
   echo -e "    Index.ets:        ${V_INDEX:-MISSING}"
-  echo -e "    SettingsPage.ets: ${V_SETTINGS:-MISSING}"
+  echo -e "    Changelog.ets:    ${V_SETTINGS:-MISSING}"
   ERRORS=$((ERRORS + 1))
 fi
 
@@ -184,10 +185,17 @@ fi
 # ------------------------------------------
 echo -e "${YELLOW}[5/5] Building project (compile check)...${NC}"
 
-# Convert WSL project path to Windows path for PowerShell
+# Build using cmd.exe (WSL-compatible) or powershell.exe (Git for Windows)
 WIN_PROJECT="C:\\Users\\Liuho\\ClawdbotHarmony"
+CMD_EXE="/mnt/c/Windows/System32/cmd.exe"
 
-BUILD_OUTPUT=$(powershell.exe -Command "Set-Location '${WIN_PROJECT}'; cmd.exe /c 'build_debug.bat build-only'" 2>&1)
+if [ -f "$CMD_EXE" ]; then
+  # WSL 环境：直接调用 cmd.exe
+  BUILD_OUTPUT=$("$CMD_EXE" /c "cd /d C:\\Users\\Liuho\\ClawdBotHarmony && C:\\Users\\Liuho\\ClawdBotHarmony\\scripts\\_build.bat" 2>&1) || true
+else
+  # Git for Windows 环境：调用 powershell.exe
+  BUILD_OUTPUT=$(powershell.exe -Command "Set-Location '${WIN_PROJECT}'; cmd.exe /c 'build_debug.bat build-only'" 2>&1) || true
+fi
 BUILD_EXIT=$?
 
 if echo "$BUILD_OUTPUT" | grep -q "BUILD SUCCESSFUL"; then
