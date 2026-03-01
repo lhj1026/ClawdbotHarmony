@@ -2460,6 +2460,9 @@ Respond ONLY with the JSON array.`;
       return;
     }
 
+    // Force feedback/scene events to unsolicited path — they should never hijack a pending reply
+    let isFeedbackEvent = event.runId.startsWith('feedback-') || event.runId.startsWith('scene-');
+
     // Accept events if:
     // 1. We have a pending assistant message (gwAssistantMsgId is set)
     // 2. AND either: runId matches, OR we haven't locked to a runId yet, OR
@@ -2467,7 +2470,7 @@ Respond ONLY with the JSON array.`;
     let isWaiting = this.gwAssistantMsgId.length > 0;
     let runIdMatch = this.gwRunId.length === 0 || event.runId === this.gwRunId;
 
-    if (!isWaiting) {
+    if (!isWaiting || isFeedbackEvent) {
       // Not waiting for a local response — this is an unsolicited event.
       // Only show events from Harmony sessions (agent:main:harmony:*) or main session.
       // Ignore events from other channels (WhatsApp, Telegram, etc.) to avoid message mixing.

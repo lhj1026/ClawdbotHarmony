@@ -2010,7 +2010,7 @@ export class NodeRuntime {
   private sendFeedbackResponse(text: string): void {
     let event: GatewayChatEvent = {
       runId: `feedback-${Date.now()}`,
-      sessionKey: '',
+      sessionKey: 'agent:main:harmony:default',
       seq: 0,
       state: 'final',
       message: {
