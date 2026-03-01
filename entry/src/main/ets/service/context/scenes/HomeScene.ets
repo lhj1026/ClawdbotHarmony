@@ -3,9 +3,12 @@
  *
  * 检测: wifiGeofence=home
  * 子场景: 到家、早安、晚餐、睡前、充电
+ * calendar/weather/calendar_tomorrow 委托给 SmartActionPlugin 执行
  */
 import { ContextSnapshot } from '../ContextEngine';
 import { ScenePlugin, SceneMatch, SceneAction, SceneActionResult } from './ScenePlugin';
+import { SmartActionPlugin } from '../actions/SmartActionPlugin';
+import { UserAction } from '../ContextModels';
 
 type HomePhase = 'arrive' | 'morning' | 'lunch' | 'dinner' | 'evening' | 'bedtime';
 
@@ -13,6 +16,8 @@ export class HomeScene implements ScenePlugin {
   readonly id = 'home';
   readonly name = '在家';
   readonly emoji = '🏠';
+
+  private smartPlugin: SmartActionPlugin | undefined;
 
   detectScene(snapshot: ContextSnapshot): SceneMatch | null {
     let wifiGf = snapshot.wifiGeofence ?? '';
@@ -98,12 +103,34 @@ export class HomeScene implements ScenePlugin {
     }
   }
 
+  /** 设置 SmartActionPlugin 引用（用于 calendar/weather 执行） */
+  setSmartPlugin(plugin: SmartActionPlugin): void {
+    this.smartPlugin = plugin;
+  }
+
   async executeAction(actionId: string, _match: SceneMatch): Promise<SceneActionResult> {
+    // calendar/weather/calendar_tomorrow 委托给 SmartActionPlugin
+    let funcMap: Record<string, string> = {
+      'calendar': 'calendar_summary',
+      'weather': 'morning_briefing',  // morning_briefing 包含天气
+      'calendar_tomorrow': 'calendar_tomorrow',
+    };
+    let func = funcMap[actionId];
+    if (func && this.smartPlugin) {
+      let action: UserAction = {
+        type: 'show_info',
+        params: { 'function': func }
+      };
+      let result = await this.smartPlugin.execute(action);
+      return { success: result.success, message: result.message, a2uiCard: result.a2uiCard };
+    }
+
     switch (actionId) {
       case 'calendar':
-        return { success: true, message: '📅 查看今日日程（需要日历插件）' };
+      case 'calendar_tomorrow':
+        return { success: true, message: '📅 日历未授权，无法查看日程' };
       case 'weather':
-        return { success: true, message: '🌤️ 查看天气（功能开发中）' };
+        return { success: true, message: '🌤️ 天气功能加载中...' };
       case 'sleep_mode':
         return { success: true, message: '🌙 已开启睡眠模式' };
       case 'music':

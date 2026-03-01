@@ -8,9 +8,20 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.59.0';
+export const APP_VERSION: string = '2.59.1';
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '2.59.1',
+    date: '2026-03-01',
+    features: [
+      '场景动作结果显示修复: scene action结果消息现在正确使用harmony sessionKey, 不再被ChatPage丢弃',
+      'HomeScene日程/天气功能: 点击"查看今日日程"和"今日天气"现在调用SmartActionPlugin, 使用HarmonyOS日历API和Open-Meteo天气API获取真实数据',
+    ],
+    fixes: [
+      '修复scene action结果sessionKey为空导致ChatPage显示"Ignoring unsolicited event"的问题',
+    ],
+  },
   {
     version: '2.59.0',
     date: '2026-02-28',
@@ -630,4 +641,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.59.0';
+export const LATEST_VERSION: string = '2.59.1';

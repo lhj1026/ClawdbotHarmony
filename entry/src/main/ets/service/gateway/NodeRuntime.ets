@@ -61,6 +61,7 @@ import { SceneMatch, SceneAction } from '../context/scenes/ScenePlugin';
 import { AirportScene } from '../context/scenes/AirportScene';
 import { HomeScene } from '../context/scenes/HomeScene';
 import { WorkScene } from '../context/scenes/WorkScene';
+import { SmartActionPlugin } from '../context/actions/SmartActionPlugin';
 import { GeofenceSuggestion } from '../context/LocationDiscoveryService';
 import { ActionType, Geofence, GeofenceCategory, LearnedPlaceSignals, UserAction } from '../context/ContextModels';
 import { FederatedSync } from '../context/FederatedSync';
@@ -68,7 +69,7 @@ import { PushCapability } from './PushCapability';
 import { TravelInfoService, FlightInfo, TrainInfo } from '../context/TravelInfoService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.59.0';
+const APP_VERSION = '2.59.1';
 
 interface PendingStateRec {
   ruleId: string;
@@ -441,7 +442,17 @@ export class NodeRuntime {
     if (!this._sceneRouter) {
       this._sceneRouter = new SceneRouter();
       this._sceneRouter.register(new AirportScene());
-      this._sceneRouter.register(new HomeScene());
+
+      // HomeScene 需要 SmartActionPlugin 来执行 calendar/weather
+      let homeScene = new HomeScene();
+      let smartPlugin = new SmartActionPlugin();
+      try {
+        let calPlugin = cas.getCalendarPlugin();
+        smartPlugin.setCalendarPlugin(calPlugin);
+      } catch (_e) { /* CalendarPlugin 不可用也没关系 */ }
+      homeScene.setSmartPlugin(smartPlugin);
+      this._sceneRouter.register(homeScene);
+
       this._sceneRouter.register(new WorkScene());
       this.log.info(TAG, `SceneRouter: ${this._sceneRouter.getPlugins().length} 场景插件已注册`);
     }
@@ -1371,8 +1382,9 @@ export class NodeRuntime {
           let actionId = parts[2] ?? '';
           this._sceneRouter.executeAction(sceneId, actionId, this._activeSceneMatch.match).then((result) => {
             if (result.message.length > 0) {
+              let harmonyKey = 'agent:main:harmony:default';
               let event: GatewayChatEvent = {
-                runId: `scene-${Date.now()}`, sessionKey: '', seq: 0, state: 'final',
+                runId: `scene-${Date.now()}`, sessionKey: harmonyKey, seq: 0, state: 'final',
                 message: { role: 'assistant', content: [{ type: 'text', text: result.message }] },
               };
               this.dispatchChatEvent(event);
@@ -1387,8 +1399,11 @@ export class NodeRuntime {
           this.adjustRulePriority(engine, ruleId, delta);
           fbService.onThumbsUp(ruleId);
           let cachedRec = this._activeRecommendations.get(ruleId);
+          this.log.info(TAG, `rec_select: ruleId=${ruleId}, cachedRec=${cachedRec ? 'found' : 'MISS'}, activeKeys=[${Array.from(this._activeRecommendations.keys()).join(',')}]`);
           if (cachedRec && cachedRec.action) {
             this.executeRecommendedAction(cachedRec.action);
+          } else {
+            this.sendFeedbackResponse(`⚠️ 推荐已过期，请重新触发`);
           }
         }
       } else if (feedback === 'view_snapshot') {
@@ -1571,6 +1586,11 @@ export class NodeRuntime {
       }
     }).catch((err: Error) => {
       this.log.warn(TAG, `Action execution failed: ${err.message}`);
+      let errEvent: GatewayChatEvent = {
+        runId: `ctx-action-err-${Date.now()}`, sessionKey: '', seq: 0, state: 'final',
+        message: { role: 'assistant', content: [{ type: 'text', text: `⚠️ 执行失败: ${err.message}` }] },
+      };
+      this.dispatchChatEvent(errEvent);
     });
   }
 
