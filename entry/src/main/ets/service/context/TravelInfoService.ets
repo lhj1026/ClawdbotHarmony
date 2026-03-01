@@ -8,7 +8,7 @@
  * Train regex:  [GCDZTSPKLY]\d{1,4}              (G1234, D5678, K123)
  */
 import { calendarManager } from '@kit.CalendarKit';
-import { abilityAccessCtrl, common } from '@kit.AbilityKit';
+import { abilityAccessCtrl, bundleManager, common } from '@kit.AbilityKit';
 import { LogService } from '../../common/LogService';
 import { I18n } from '../../common/I18n';
 
@@ -53,6 +53,7 @@ export interface TrainInfo {
   checkGate?: string;       // ticket check gate e.g. "8A"
   status: TrainStatus;
   calendarEventId?: string;
+  calendarEndTime?: number;   // calendar event end time (Unix ms)
 }
 
 /** Parsed event data for internal use */
@@ -84,17 +85,37 @@ export class TravelInfoService {
     this.context = context;
     try {
       let atManager = abilityAccessCtrl.createAtManager();
-      let result = await atManager.requestPermissionsFromUser(context, ['ohos.permission.READ_CALENDAR']);
-      if (result.authResults.length > 0 && result.authResults[0] === 0) {
+      // 先检查是否已授权
+      let granted = await atManager.checkAccessToken(
+        (await bundleManager.getBundleInfoForSelf(bundleManager.BundleFlag.GET_BUNDLE_INFO_WITH_APPLICATION)).appInfo.accessTokenId,
+        'ohos.permission.READ_CALENDAR'
+      );
+      if (granted === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED) {
         this.permissionGranted = true;
+        this.log.info(TAG, 'READ_CALENDAR already granted');
+      } else {
+        // 未授权则请求
+        let result = await atManager.requestPermissionsFromUser(context, ['ohos.permission.READ_CALENDAR']);
+        if (result.authResults.length > 0 && result.authResults[0] === 0) {
+          this.permissionGranted = true;
+        }
+        this.log.info(TAG, `Permission request result: ${this.permissionGranted}`);
       }
-      this.log.info(TAG, `Init: permission=${this.permissionGranted}`);
     } catch (err) {
-      this.log.warn(TAG, `Permission request failed: ${(err as Error).message}`);
+      this.log.warn(TAG, `Permission check/request failed: ${(err as Error).message}`);
+      // 兜底：尝试直接读日历，如果成功说明有权限
+      try {
+        let calMgr = calendarManager.getCalendarManager(context);
+        await calMgr.getAllCalendars();
+        this.permissionGranted = true;
+        this.log.info(TAG, 'Calendar access works (fallback check)');
+      } catch { /* no permission */ }
     }
 
+    this.log.info(TAG, `Init complete: permission=${this.permissionGranted}`);
     if (this.permissionGranted) {
       await this.refresh();
+      this.log.info(TAG, `After refresh: ${this.cachedFlights.length} flights, ${this.cachedTrains.length} trains`);
     }
   }
 
@@ -280,6 +301,7 @@ export class TravelInfoService {
               checkGate: this.extractCheckGate(combined),
               status: 'scheduled',
               calendarEventId: parsed.eventId,
+              calendarEndTime: parsed.endTime,
             };
             trains.push(ti);
           }

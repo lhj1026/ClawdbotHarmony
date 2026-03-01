@@ -1401,11 +1401,25 @@ export class ContextAwarenessService {
   private async injectTravelData(): Promise<void> {
     try {
       let flights = await this.travelInfoSvc.getTodayFlights();
+      let trains = await this.travelInfoSvc.getTodayTrains();
+      this.log.info(TAG, `[Travel] flights=${flights.length}, trains=${trains.length}`);
       if (flights.length > 0) {
-        let next = flights[0]; // 最近出发的航班
+        let next = flights[0];
         let countdownMin = Math.floor((next.departureTime - Date.now()) / 60000);
+        this.log.info(TAG, `[Travel] next flight: ${next.flightNumber} ${next.departure}→${next.arrival} countdown=${countdownMin}min`);
         this.tray.put('flightCountdownMin', countdownMin.toString(), 1.0, 'travel');
         this.tray.put('flightNumber', next.flightNumber, 1.0, 'travel');
+        this.tray.put('hasUpcomingFlight', 'true', 1.0, 'travel');
+        if (next.calendarEndTime !== undefined) {
+          let arrivalMin = Math.floor((next.calendarEndTime - Date.now()) / 60000);
+          this.tray.put('flightArrivalMin', arrivalMin.toString(), 1.0, 'travel');
+        }
+      } else if (trains.length > 0) {
+        let next = trains[0];
+        let countdownMin = Math.floor((next.departureTime - Date.now()) / 60000);
+        this.log.info(TAG, `[Travel] next train: ${next.trainNumber} ${next.departure}→${next.arrival} countdown=${countdownMin}min`);
+        this.tray.put('flightCountdownMin', countdownMin.toString(), 1.0, 'travel');
+        this.tray.put('flightNumber', next.trainNumber, 1.0, 'travel');
         this.tray.put('hasUpcomingFlight', 'true', 1.0, 'travel');
         if (next.calendarEndTime !== undefined) {
           let arrivalMin = Math.floor((next.calendarEndTime - Date.now()) / 60000);
@@ -1415,7 +1429,7 @@ export class ContextAwarenessService {
         this.tray.put('hasUpcomingFlight', 'false', 1.0, 'travel');
       }
     } catch (err) {
-      this.log.debug(TAG, `injectTravelData failed: ${(err as Error).message}`);
+      this.log.warn(TAG, `injectTravelData failed: ${(err as Error).message}`);
     }
   }
 
