@@ -39,6 +39,7 @@ export interface FlightInfo {
   terminal?: string;        // terminal e.g. "T3"
   status: FlightStatus;
   calendarEventId?: string;
+  calendarEndTime?: number;   // calendar event end time (Unix ms), used as estimated arrival
 }
 
 /** 火车票信息 */
@@ -261,6 +262,7 @@ export class TravelInfoService {
               terminal: this.extractTerminal(combined),
               status: 'scheduled',
               calendarEventId: parsed.eventId,
+              calendarEndTime: parsed.endTime,
             };
             flights.push(fi);
           }

@@ -482,8 +482,17 @@ export class NodeRuntime {
             actionType: alt.action.type ?? 'suggestion'
           });
           // 也缓存备选推荐（从引擎结果构造）
+          // C++ engine type → ActionType 映射
+          let altRawType = alt.action.type ?? 'suggestion';
+          let altTypeMap: Record<string, string> = {
+            'suggestion': 'show_notification', 'notification': 'show_notification',
+            'alert': 'show_notification', 'mode_change': 'set_mode',
+            'show_info': 'show_info', 'show_notification': 'show_notification',
+            'open_app': 'open_app', 'show_qrcode': 'show_qrcode',
+            'set_mode': 'set_mode', 'quick_action': 'quick_action',
+          };
           let altAction: UserAction = {
-            type: (alt.action.type ?? 'suggestion') as ActionType,
+            type: (altTypeMap[altRawType] ?? 'show_notification') as ActionType,
             target: alt.action.payload ?? ''
           };
           let altRec: ContextRecommendation = {
@@ -1472,7 +1481,7 @@ export class NodeRuntime {
     if (!this._actionExecutor) return;
 
     this._actionExecutor.execute(action).then((result: ActionResult) => {
-      if (result.success && result.message.length > 0) {
+      if (result.message.length > 0) {
         let event: GatewayChatEvent = {
           runId: `ctx-action-${Date.now()}`,
           sessionKey: '',

@@ -1381,6 +1381,9 @@ export class ContextAwarenessService {
     // Refresh tray with latest sensor data, then read snapshot from tray
     await this.refreshTray();
 
+    // Inject travel data (flight countdown, arrival, etc.)
+    await this.injectTravelData();
+
     // Evaluate sensor tier escalation/de-escalation
     this.evaluateTierEscalation();
 
@@ -1392,6 +1395,28 @@ export class ContextAwarenessService {
 
     // Periodically save connection records (every evaluation cycle)
     this.saveConnectionRecords();
+  }
+
+  /** 注入航班数据到 DataTray */
+  private async injectTravelData(): Promise<void> {
+    try {
+      let flights = await this.travelInfoSvc.getTodayFlights();
+      if (flights.length > 0) {
+        let next = flights[0]; // 最近出发的航班
+        let countdownMin = Math.floor((next.departureTime - Date.now()) / 60000);
+        this.tray.put('flightCountdownMin', countdownMin.toString(), 1.0, 'travel');
+        this.tray.put('flightNumber', next.flightNumber, 1.0, 'travel');
+        this.tray.put('hasUpcomingFlight', 'true', 1.0, 'travel');
+        if (next.calendarEndTime !== undefined) {
+          let arrivalMin = Math.floor((next.calendarEndTime - Date.now()) / 60000);
+          this.tray.put('flightArrivalMin', arrivalMin.toString(), 1.0, 'travel');
+        }
+      } else {
+        this.tray.put('hasUpcomingFlight', 'false', 1.0, 'travel');
+      }
+    } catch (err) {
+      this.log.debug(TAG, `injectTravelData failed: ${(err as Error).message}`);
+    }
   }
 
 
@@ -2851,9 +2876,24 @@ export class ContextAwarenessService {
   /** 计算状态指纹：核心维度 + WiFi/BT 设备 + 小时段 */
   /** 将 C++ ContextAction 转换为 UserAction */
   private contextActionToUserAction(action: EngineAction): UserAction {
-    let type = (action.type ?? 'suggestion') as ActionType;
+    // C++ engine types → ArkTS ActionType 映射
+    let typeMap: Record<string, string> = {
+      'suggestion': 'show_notification',
+      'notification': 'show_notification',
+      'alert': 'show_notification',
+      'show_info': 'show_info',
+      'show_notification': 'show_notification',
+      'open_app': 'open_app',
+      'show_qrcode': 'show_qrcode',
+      'set_mode': 'set_mode',
+      'mode_change': 'set_mode',
+      'quick_action': 'quick_action',
+      'dismiss': 'dismiss',
+    };
+    let rawType = action.type ?? 'suggestion';
+    let mappedType = (typeMap[rawType] ?? 'show_notification') as ActionType;
     return {
-      type: type,
+      type: mappedType,
       target: action.payload ?? '',
     };
   }

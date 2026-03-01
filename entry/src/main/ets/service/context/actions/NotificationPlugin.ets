@@ -16,11 +16,11 @@ export class NotificationPlugin implements ActionPlugin {
   }
 
   async execute(action: UserAction): Promise<ActionResult> {
-    let message = action.params?.['info'] ?? action.target ?? '通知已发送';
-    let emoji = action.type === 'show_notification' ? '🔔' : action.type === 'show_info' ? 'ℹ️' : '⚡';
+    // target 包含规则的 payload 文字（如 "到家了 🏠 今天辛苦了，放松一下吧"）
+    let message = action.target ?? action.params?.['info'] ?? '通知已发送';
     return {
       success: true,
-      message: `${emoji} ${message}`,
+      message: message,
       actionType: action.type
     };
   }
