@@ -66,6 +66,13 @@ export interface ActivityCandidate {
   confidence: number;
 }
 
+/** NodeRuntime 接口（用于类型安全访问 globalThis） */
+interface GlobalWithRuntime {
+  nodeRuntime?: {
+    dispatchA2UI?: (action: string, jsonl: string) => void;
+  };
+}
+
 /** 围栏置信度排序辅助 */
 interface GeofenceConfEntry {
   gf: Geofence;
@@ -1097,9 +1104,9 @@ export class ContextAwarenessService {
       ']}';
 
     // 使用 NodeRuntime 发送 A2UI 卡片
-    let runtime = (globalThis as any)['nodeRuntime'];
-    if (runtime && typeof runtime.dispatchA2UI === 'function') {
-      runtime.dispatchA2UI('push', a2uiJsonl);
+    let global = globalThis as GlobalWithRuntime;
+    if (global.nodeRuntime?.dispatchA2UI) {
+      global.nodeRuntime.dispatchA2UI('push', a2uiJsonl);
       this.log.info(TAG, 'Early wakeup card sent');
     } else {
       this.log.warn(TAG, 'NodeRuntime not available for early wakeup card');
@@ -1156,9 +1163,9 @@ export class ContextAwarenessService {
       ']}';
 
     // 使用 NodeRuntime 发送 A2UI 卡片
-    let runtime = (globalThis as any)['nodeRuntime'];
-    if (runtime && typeof runtime.dispatchA2UI === 'function') {
-      runtime.dispatchA2UI('push', a2uiJsonl);
+    let global = globalThis as GlobalWithRuntime;
+    if (global.nodeRuntime?.dispatchA2UI) {
+      global.nodeRuntime.dispatchA2UI('push', a2uiJsonl);
       this.log.info(TAG, `Sedentary reminder card sent (${durationMinutes} min)`);
     } else {
       this.log.warn(TAG, 'NodeRuntime not available for sedentary reminder card');
