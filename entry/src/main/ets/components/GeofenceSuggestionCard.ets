@@ -101,8 +101,7 @@ export struct GeofenceSuggestionCard {
         Column({ space: 10 }) {
           Divider().color('#F0F0F0').margin({ top: 12 })
 
-          TextInput({ text: this.editName, placeholder: '围栏名称' })
-            .onChange((val: string) => { this.editName = val; })
+          TextInput({ text: $$this.editName, placeholder: '围栏名称' })
             .width('100%')
             .height(40)
 
@@ -112,16 +111,16 @@ export struct GeofenceSuggestionCard {
             .width('100%')
 
           Flex({ wrap: FlexWrap.Wrap }) {
-            ForEach(this.catLabels, (label: string) => {
+            ForEach(this.catLabels, (label: string, index: number) => {
               Text(label)
                 .fontSize(12)
-                .fontColor(this.selectedCatIndex === this.catLabels.indexOf(label) ? Color.White : '#1A1A1A')
-                .backgroundColor(this.selectedCatIndex === this.catLabels.indexOf(label) ? '#007AFF' : '#F0F0F0')
+                .fontColor(this.selectedCatIndex === index ? Color.White : '#1A1A1A')
+                .backgroundColor(this.selectedCatIndex === index ? '#007AFF' : '#F0F0F0')
                 .padding({ left: 10, right: 10, top: 5, bottom: 5 })
                 .borderRadius(14)
                 .margin(3)
-                .onClick(() => { this.selectedCatIndex = this.catLabels.indexOf(label); })
-            }, (label: string) => label)
+                .onClick(() => { this.selectedCatIndex = index; })
+            }, (label: string, index: number) => index.toString())
           }
           .width('100%')
 

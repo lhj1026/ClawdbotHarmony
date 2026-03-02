@@ -71,7 +71,7 @@ import { sensor } from '@kit.SensorServiceKit';
 import { AccessibilityService, ScreenNode, WindowInfo } from '../accessibility/AccessibilityService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.59.3';
+const APP_VERSION = '2.59.4';
 
 interface PendingStateRec {
   ruleId: string;

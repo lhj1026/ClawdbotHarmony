@@ -8,9 +8,19 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.59.3';
+export const APP_VERSION: string = '2.59.4';
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '2.59.4',
+    date: '2026-03-02',
+    features: [
+      '姿势检测功能验证: 确认加速度计姿势检测系统已完整实现(躺/坐判断, 早醒提示, 久坐提醒智能跳过)',
+    ],
+    fixes: [
+      '修复新地点确认界面Bug: 自定义名称输入框使用双向绑定($$), 类别选择使用正确索引, 确认按钮响应正常',
+    ],
+  },
   {
     version: '2.59.1',
     date: '2026-03-01',
@@ -641,4 +651,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.59.1';
+export const LATEST_VERSION: string = '2.59.4';
