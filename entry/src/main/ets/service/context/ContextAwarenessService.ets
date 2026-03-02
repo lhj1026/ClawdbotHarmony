@@ -168,6 +168,7 @@ export class ContextAwarenessService {
   // 拿起手机检测
   private accelHistory: AccelSample[] = [];
   private static readonly ACCEL_HISTORY_SIZE = 30;
+  private isHoldingPhone: boolean = false;  // 手握手机状态
   private pickupStartTime: number = 0;
   private isPickupState: boolean = false;
   private lastStableGravityAngle: number = 90;  // 90° = held in hand; avoid false pickup at startup (0° = flat would trigger immediately)
@@ -175,9 +176,6 @@ export class ContextAwarenessService {
   private stateBeforePickup: MotionState = 'stationary';
   private postPickupCooldownUntil: number = 0;
   private static readonly POST_PICKUP_COOLDOWN_MS = 8000;  // 拿起后8秒冷却，防止手持抖动误判walking
-  private static readonly PICKUP_PULSE_THRESHOLD = 10.5;
-  private static readonly PICKUP_ANGLE_CHANGE_THRESHOLD = 20;
-  private static readonly PICKUP_MAX_DURATION_MS = 3000;
   private static readonly MOTION_MIN_DURATION_MS = 10000;
   private motionStartTime: number = 0;
   private motionStepCountStart: number = 0;
@@ -448,14 +446,18 @@ export class ContextAwarenessService {
 
   /**
    * 更新用户姿势状态（来自NodeRuntime的传感器检测）
+   * 注意: tiltAngle由本类的加速度计独家负责，NodeRuntime只更新isLyingDown
    */
   updatePostureState(isLyingDown: boolean): void {
-    if (this.isLyingDown !== isLyingDown) {
-      this.isLyingDown = isLyingDown;
-      this.log.info(TAG, `姿势状态更新: ${isLyingDown ? '躺下' : '坐/站'}`);
+    let wasLyingDown = this.isLyingDown;
+    this.isLyingDown = isLyingDown;
 
-      // 将姿势信息放入 tray
-      this.tray.put('isLyingDown', this.isLyingDown ? 'true' : 'false', 0.9, 'accelerometer');
+    // 只更新躺卧状态，不更新tiltAngle (避免与本类加速度计冲突)
+    this.tray.put('isLyingDown', this.isLyingDown ? 'true' : 'false', 0.9, 'accelerometer');
+
+    // 仅在姿势变化时记录日志
+    if (wasLyingDown !== isLyingDown) {
+      this.log.info(TAG, `姿势状态更新: ${isLyingDown ? '躺下' : '坐/站'}`);
     }
   }
   
@@ -768,6 +770,7 @@ export class ContextAwarenessService {
     // 计算手机倾斜角 (用于姿势检测)
     this.lastTiltAngle = Math.atan2(z, Math.sqrt(x * x + y * y)) * 180 / Math.PI;
     this.updatePosture();
+    this.updateHoldingState();  // 更新手握状态
 
     this.accelHistory.push({
       magnitude: magnitude,
@@ -779,59 +782,56 @@ export class ContextAwarenessService {
       this.accelHistory.shift();
     }
   }
-  
-  private detectPickup(): boolean {
-    if (this.accelHistory.length < 3) return false;
 
-    let now = Date.now();
+  /**
+   * 检测用户是否正在手握手机
+   * 简化判断: 手机非平放 = 手握
+   */
+  private updateHoldingState(): void {
+    let x = this.accelerometerData.x;
+    let y = this.accelerometerData.y;
+    let z = this.accelerometerData.z;
+
+    // 判断手机是否平放在桌面
+    // 平放: |z| 接近 9.8 m/s² (重力加速度)，允许 ±2 误差
+    // 手握/倾斜: |z| 偏离 9.8 较多
+    let isFlat = Math.abs(Math.abs(z) - 9.8) < 2.0;
+
+    let wasHolding = this.isHoldingPhone;
+
+    // 手握判断: 只要不是平放就算手握
+    this.isHoldingPhone = !isFlat;
+
+    // 更新数据托盘
+    this.tray.put('isHolding', this.isHoldingPhone ? 'true' : 'false', 0.9, 'accelerometer');
+
+    // 始终记录日志用于调试
+    this.log.info(TAG, `Holding: ${this.isHoldingPhone ? 'YES' : 'NO'} (z=${z.toFixed(2)}, |z|=${Math.abs(z).toFixed(2)}, flat=${isFlat})`);
+  }
+
+  /**
+   * 检测加速度计的微小波动 (手持抖动)
+   */
+  private detectMicroMovements(): boolean {
+    if (this.accelHistory.length < 5) return false;
+
     let recent = this.accelHistory.slice(-5);
-    let current = recent[recent.length - 1];
-    let prev = recent.length > 1 ? recent[recent.length - 2] : current;
+    let magnitudes = recent.map(s => s.magnitude);
 
-    let hasPulse = current.magnitude > ContextAwarenessService.PICKUP_PULSE_THRESHOLD;
-    let angleChange = Math.abs(current.gravityAngle - this.lastStableGravityAngle);
-    let hasAngleChange = angleChange > ContextAwarenessService.PICKUP_ANGLE_CHANGE_THRESHOLD;
+    // 计算方差
+    let avg = magnitudes.reduce((a, b) => a + b) / magnitudes.length;
+    let variance = magnitudes.reduce((sum, m) => sum + Math.pow(m - avg, 2), 0) / magnitudes.length;
 
-    // 只在手机之前是平放状态时才触发 pickup（区分拿起 vs 放下）
-    // 平放: gravityAngle < 25°(正面朝上) 或 > 155°(正面朝下)
-    let wasFlat = this.lastStableGravityAngle < 25 || this.lastStableGravityAngle > 155;
-
-    if (hasPulse && hasAngleChange && wasFlat && !this.isPickupState) {
-      this.pickupStartTime = now;
-      this.isPickupState = true;
-      this.pickupConfirmed = false;
-      this.log.debug(TAG, `Pickup detected: mag=${current.magnitude.toFixed(1)}, angle=${angleChange.toFixed(1)}, stableAngle=${this.lastStableGravityAngle.toFixed(1)}`);
-    }
-    
-    if (this.isPickupState) {
-      let pickupDuration = now - this.pickupStartTime;
-      
-      let stillMoving = current.magnitude > 10.5;
-      let stepsIncreased = this.stepCount > this.motionStepCountStart + 5;
-      let gpsMoving = (this.lastLocation?.speed ?? 0) > 0.5;
-      
-      if (pickupDuration > ContextAwarenessService.MOTION_MIN_DURATION_MS && (stillMoving || stepsIncreased || gpsMoving)) {
-        this.log.info(TAG, `Pickup -> Motion: duration=${pickupDuration}ms, steps=+${this.stepCount - this.motionStepCountStart}`);
-        this.isPickupState = false;
-        this.pickupConfirmed = false;
-        return false;
-      }
-      
-      if (pickupDuration < ContextAwarenessService.PICKUP_MAX_DURATION_MS) {
-        return true;
-      }
-      
-      if (!stillMoving && pickupDuration >= ContextAwarenessService.PICKUP_MAX_DURATION_MS) {
-        this.log.info(TAG, `Pickup confirmed: brief glance, duration=${pickupDuration}ms`);
-        this.pickupConfirmed = true;
-        this.isPickupState = false;
-        return true;
-      }
-      
-      this.isPickupState = false;
-      return false;
-    }
-    
+    // 小方差表示微小抖动 (不是完全静止，也不是大幅运动)
+    return variance > 0.05 && variance < 3.0;
+  }
+  
+  /**
+   * 旧的拿起检测方法 - 已禁用，改用 isHolding (手握状态) 替代
+   * 保留此方法以避免破坏 updateMotionState 的调用
+   */
+  private detectPickup(): boolean {
+    // 禁用拿起检测，改用 isHolding
     return false;
   }
   
@@ -1024,14 +1024,42 @@ export class ContextAwarenessService {
   }
 
   /**
-   * 更新用户姿势 (基于手机倾斜角检测用户是否躺着)
+   * 更新用户姿势 (基于手机方向和倾斜角检测用户是否躺着)
    */
   private updatePosture(): void {
-    // 根据倾斜角判断用户姿势
-    // tiltAngle > 45° 表示手机接近平躺，用户可能在躺着
-    // tiltAngle < 45° 表示手机竖直或倾斜，用户可能在坐着或站着
+    // 获取加速度计数据判断手机朝向
+    let x = this.accelerometerData.x;
+    let y = this.accelerometerData.y;
+    let z = this.accelerometerData.z;
+
+    // 判断手机屏幕朝向 (基于 z 轴加速度)
+    // z > 6: 屏幕朝上 (桌面或手持，重力向下拉屏幕)
+    // z < -6: 屏幕朝下 (趴床上或面朝下放置)
+    // |z| < 3: 手机水平侧放 (左侧或右侧)
+    let isFaceUp = z > 6;
+    let isFaceDown = z < -6;
+    let isHorizontal = Math.abs(z) < 3;  // 手机接近水平 (侧放)
+
     let wasLyingDown = this.isLyingDown;
-    this.isLyingDown = Math.abs(this.lastTiltAngle) > 45;
+
+    // 躺卧判断逻辑 (基于手机朝向，而非仅倾斜角):
+    // 1. 面朝上 → 桌上或手持 → NOT 躺卧
+    // 2. 水平侧放 (z ≈ 0) → 用户侧躺 → 躺卧
+    // 3. 面朝下且接近平放 → 床上看手机 → 躺卧
+    // 4. 其他角度 → 坐/站
+    if (isFaceUp) {
+      // 面朝上：无论角度，都不算躺卧 (桌上或正常手持)
+      this.isLyingDown = false;
+    } else if (isHorizontal) {
+      // 手机水平侧放 (z ≈ 0)：用户侧躺
+      this.isLyingDown = true;
+    } else if (isFaceDown && Math.abs(this.lastTiltAngle) > 60) {
+      // 面朝下且接近平放 (高倾斜角)：床上看手机
+      this.isLyingDown = true;
+    } else {
+      // 其他情况：坐/站
+      this.isLyingDown = false;
+    }
 
     // 始终更新数据托盘（确保及时反映当前状态）
     this.tray.put('isLyingDown', this.isLyingDown ? 'true' : 'false', 0.8, 'accelerometer');
@@ -1039,7 +1067,8 @@ export class ContextAwarenessService {
 
     // 仅在姿势变化时记录日志和触发提醒
     if (wasLyingDown !== this.isLyingDown) {
-      this.log.info(TAG, `Posture: ${wasLyingDown ? 'lying' : 'upright'} -> ${this.isLyingDown ? 'lying' : 'upright'} (tilt: ${this.lastTiltAngle.toFixed(1)}°)`);
+      let orientation = isFaceUp ? '面朝上' : isFaceDown ? '面朝下' : isHorizontal ? '侧放' : '倾斜';
+      this.log.info(TAG, `Posture: ${wasLyingDown ? 'lying' : 'upright'} -> ${this.isLyingDown ? 'lying' : 'upright'} (tilt: ${this.lastTiltAngle.toFixed(1)}°, ${orientation})`);
 
       // 如果从躺着变为坐立，可能需要检查是否触发早醒提示
       if (wasLyingDown && !this.isLyingDown) {
@@ -1752,8 +1781,7 @@ export class ContextAwarenessService {
     if (this.lastMotionState !== 'unknown') {
       this.tray.put('motionState', this.lastMotionState, 0.9, 'accelerometer');
     }
-    // 拿起手机状态（基于当前运动状态判断，不依赖瞬时检测器）
-    this.tray.put('isPickup', this.lastMotionState === 'pickup' ? 'true' : 'false', 0.9, 'accelerometer');
+    // 手握状态由 updateHoldingState() 更新，不在此处重复写入
 
     // Sensor tier
     this.tray.put('sensorTier', this.currentTier.toString(), 1.0, 'system');

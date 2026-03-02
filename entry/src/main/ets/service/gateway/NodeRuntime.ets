@@ -71,7 +71,7 @@ import { sensor } from '@kit.SensorServiceKit';
 import { AccessibilityService, ScreenNode, WindowInfo } from '../accessibility/AccessibilityService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.59.5';
+const APP_VERSION = '2.59.6';
 
 interface PendingStateRec {
   ruleId: string;
@@ -489,7 +489,7 @@ export class NodeRuntime {
       this.log.info(TAG, `姿势状态变化: ${this._isLyingDown ? '躺下' : '坐/站'} (角度=${screenAngle.toFixed(1)}°, 静止=${isStationary})`);
     }
 
-    // 将姿势状态传递给ContextAwarenessService
+    // 将姿势状态传递给ContextAwarenessService (不传递角度，由CAS的加速度计独家负责tiltAngle)
     let cas = ContextAwarenessService.getInstance();
     if (cas.isActive()) {
       cas.updatePostureState(this._isLyingDown);

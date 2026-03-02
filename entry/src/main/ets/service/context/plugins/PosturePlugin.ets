@@ -74,10 +74,16 @@ export class PosturePlugin implements DigitalPlugin {
         this.posture = 'face_down';    // near + some light = face down on surface
       }
     } else {
-      // Screen exposed
-      if (this.ambientLux < 3) {
-        this.posture = 'in_pocket';    // far but very dark = deep pocket or covered
-      } else if (this.ambientLux < 30) {
+      // Screen exposed (no proximity)
+      if (this.ambientLux < 10) {
+        // 暗环境：可能在口袋或桌上
+        // 桌上通常有微弱光线(1-10 lux)，完全黑暗(<1)更可能是口袋
+        if (this.ambientLux < 1) {
+          this.posture = 'in_pocket';  // 完全黑暗 = 口袋
+        } else {
+          this.posture = 'on_desk';    // 微光 = 桌上(暗室)
+        }
+      } else if (this.ambientLux < 50) {
         this.posture = 'on_desk';      // dim environment, phone idle
       } else {
         this.posture = 'in_use';       // bright, screen facing up/user

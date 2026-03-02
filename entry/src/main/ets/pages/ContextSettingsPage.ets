@@ -118,7 +118,7 @@ struct ContextSettingsPage {
   private static PHONE_KEYS: string[] = [
     'batteryLevel', 'isCharging', 'networkType', 'sensorTier',
     'screen_on', 'screen_locked', 'user_active',
-    'phone_posture', 'ambient_brightness', 'proximity'
+    'phone_posture', 'isHolding', 'isLyingDown', 'tiltAngle', 'ambient_brightness', 'proximity'
   ];
   // 🌍 环境: 时间、WiFi、GPS、蓝牙、围栏、环境音 (from system, wifi, bluetooth, gps, audio)
   // Everything else with non-digital source → environment
@@ -135,7 +135,7 @@ struct ContextSettingsPage {
     'batteryLevel', 'isCharging',                 // 电量
     'networkType', 'sensorTier',                  // 网络
     'screen_on', 'screen_locked', 'user_active',  // 屏幕
-    'phone_posture', 'ambient_brightness', 'proximity'  // 姿态
+    'phone_posture', 'isHolding', 'isLyingDown', 'tiltAngle', 'ambient_brightness', 'proximity'  // 姿态
   ];
   private static ENV_ORDER: string[] = [
     'hour', 'timeOfDay', 'dayOfWeek', 'isWeekend',           // 时间
@@ -170,13 +170,13 @@ struct ContextSettingsPage {
         'wifiLost': 'WiFi Lost', 'wifiLostCategory': 'WiFi Lost Type', 'wifiLostWork': 'Left Work WiFi',
         'latitude': 'Latitude', 'longitude': 'Longitude', 'geofence': 'Geofence',
         'stepCount': 'Steps (total)', 'step_count_today': 'Steps Today', 'motionState': 'Motion',
-        'isPickup': 'Picked Up', 'gpsSpeed': 'GPS Speed', 'locationAccuracy': 'GPS Accuracy(m)', 'cellId': 'Cell ID',
+        'isHolding': 'Holding Phone', 'gpsSpeed': 'GPS Speed', 'locationAccuracy': 'GPS Accuracy(m)', 'cellId': 'Cell ID',
         'bt_enabled': 'BT Enabled', 'bt_connected_count': 'BT Connections', 'bt_audio_connected': 'BT Audio', 'bt_device_names': 'BT Devices',
         'heart_rate': 'Heart Rate', 'heart_rate_status': 'HR Status', 'heart_rate_age_sec': 'HR Age(s)', 'wearing_state': 'Wearing',
         'audio_scene': 'Audio Scene', 'audio_device': 'Audio Device', 'audio_inCall': 'In Call', 'audio_ringing': 'Ringing',
         'audio_headphones': 'Headphones', 'noise_level': 'Noise Level', 'sound_scene': 'Sound Scene',
         'has_voice': 'Voice Detected', 'volume_db': 'Volume(dB)',
-        'phone_posture': 'Phone Posture', 'ambient_brightness': 'Brightness(lux)', 'proximity': 'Proximity',
+        'phone_posture': 'Phone Posture', 'isLyingDown': 'Lying Down', 'tiltAngle': 'Tilt Angle(°)', 'ambient_brightness': 'Brightness(lux)', 'proximity': 'Proximity',
         'cal_eventCount': 'Calendar Events', 'cal_hasUpcoming': 'Has Upcoming', 'cal_nextTitle': 'Next Event',
         'cal_nextMinutes': 'Next Event(min)', 'cal_nextLocation': 'Event Location', 'cal_inMeeting': 'In Meeting',
         'cal_currentTitle': 'Current Meeting', 'cal_todayCount': 'Today Events',
@@ -188,6 +188,7 @@ struct ContextSettingsPage {
         'wifiGeofence': 'WiFi Geofence', 'btFingerprint': 'BT Fingerprint',
         'bt_in_vehicle': 'In Vehicle(BT)', 'bt_fixed_devices': 'BT Fixed Devices',
         'bt_portable_devices': 'BT Portable', 'bt_vehicle_devices': 'BT Vehicle',
+        'hasUpcomingFlight': 'Has Upcoming Flight',
       };
       return en[key] ?? key;
     }
@@ -197,13 +198,13 @@ struct ContextSettingsPage {
       'wifiLost': 'WiFi丢失', 'wifiLostCategory': 'WiFi丢失分类', 'wifiLostWork': '离开公司WiFi',
       'latitude': '纬度', 'longitude': '经度', 'geofence': '围栏',
       'stepCount': '步数(累计)', 'step_count_today': '今日步数', 'motionState': '运动状态',
-      'isPickup': '拿起手机', 'gpsSpeed': 'GPS速度', 'locationAccuracy': '定位精度(m)', 'cellId': '基站ID',
+      'isHolding': '手握手机', 'gpsSpeed': 'GPS速度', 'locationAccuracy': '定位精度(m)', 'cellId': '基站ID',
       'bt_enabled': '蓝牙开启', 'bt_connected_count': '蓝牙连接数', 'bt_audio_connected': '蓝牙音频', 'bt_device_names': '蓝牙设备',
       'heart_rate': '心率', 'heart_rate_status': '心率状态', 'heart_rate_age_sec': '心率数据龄(秒)', 'wearing_state': '佩戴状态',
       'audio_scene': '音频场景', 'audio_device': '音频设备', 'audio_inCall': '通话中', 'audio_ringing': '响铃中',
       'audio_headphones': '耳机连接', 'noise_level': '噪音等级', 'sound_scene': '声音场景',
       'has_voice': '检测到人声', 'volume_db': '音量(dB)',
-      'phone_posture': '手机姿态', 'ambient_brightness': '环境亮度(lux)', 'proximity': '近距离感应',
+      'phone_posture': '手机姿态', 'isLyingDown': '躺卧状态', 'tiltAngle': '倾斜角度(°)', 'ambient_brightness': '环境亮度(lux)', 'proximity': '近距离感应',
       'cal_eventCount': '日历事件数', 'cal_hasUpcoming': '有待办事件', 'cal_nextTitle': '下个日程',
       'cal_nextMinutes': '下个日程(分钟)', 'cal_nextLocation': '日程地点', 'cal_inMeeting': '会议中',
       'cal_currentTitle': '当前会议', 'cal_todayCount': '今日日程数',
@@ -215,6 +216,7 @@ struct ContextSettingsPage {
       'wifiGeofence': 'WiFi围栏', 'btFingerprint': '蓝牙指纹',
       'bt_in_vehicle': '车载蓝牙', 'bt_fixed_devices': '固定蓝牙设备',
       'bt_portable_devices': '便携蓝牙', 'bt_vehicle_devices': '车载蓝牙设备',
+      'hasUpcomingFlight': '即将起飞',
     };
     return zh[key] ?? key;
   }

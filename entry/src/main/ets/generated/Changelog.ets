@@ -8,9 +8,23 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.59.5';
+export const APP_VERSION: string = '2.59.6';
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '2.59.6',
+    date: '2026-03-02',
+    features: [
+      '手握手机检测: 新增isHolding状态替代isPickup, 基于手机姿态(非平放=手握)实时判断, 更稳定可靠',
+      '数据托盘优化: 姿势相关字段(isHolding/isLyingDown/tiltAngle)归类到手机分类, 支持中英文显示',
+      '多语言支持: 新增hasUpcomingFlight等字段的中英文标签',
+    ],
+    fixes: [
+      '躺卧检测修复: 结合屏幕朝向判断(面朝上/面朝下/侧放), 解决桌上平放误判为躺卧的问题',
+      '手机姿态修复: 优化PosturePlugin光线阈值, 解决暗室桌面误判为in_pocket的问题',
+      '倾斜角度冲突: NodeRuntime不再覆盖ContextAwarenessService的tiltAngle数据, 避免数据冲突',
+    ],
+  },
   {
     version: '2.59.5',
     date: '2026-03-02',
@@ -661,4 +675,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.59.5';
+export const LATEST_VERSION: string = '2.59.6';
