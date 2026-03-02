@@ -67,10 +67,12 @@ export interface ActivityCandidate {
 }
 
 /** NodeRuntime 接口（用于类型安全访问 globalThis） */
+interface NodeRuntimeInterface {
+  dispatchA2UI?: (action: string, jsonl: string) => void;
+}
+
 interface GlobalWithRuntime {
-  nodeRuntime?: {
-    dispatchA2UI?: (action: string, jsonl: string) => void;
-  };
+  nodeRuntime?: NodeRuntimeInterface;
 }
 
 /** 围栏置信度排序辅助 */
