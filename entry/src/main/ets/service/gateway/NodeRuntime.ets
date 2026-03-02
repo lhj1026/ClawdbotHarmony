@@ -67,10 +67,11 @@ import { ActionType, Geofence, GeofenceCategory, LearnedPlaceSignals, UserAction
 import { FederatedSync } from '../context/FederatedSync';
 import { PushCapability } from './PushCapability';
 import { TravelInfoService, FlightInfo, TrainInfo } from '../context/TravelInfoService';
+import { sensor } from '@kit.SensorServiceKit';
 import { AccessibilityService, ScreenNode, WindowInfo } from '../accessibility/AccessibilityService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.59.2';
+const APP_VERSION = '2.59.3';
 
 interface PendingStateRec {
   ruleId: string;
@@ -146,6 +147,11 @@ export class NodeRuntime {
   private _agentProcessedSeqs: Set<string> = new Set<string>();
   private _agentActiveRunId: string = '';
   private _harmonyRunIds: Set<string> = new Set();
+
+  // Posture detection (accelerometer-based)
+  private _accelerometerSubscribed: boolean = false;
+  private _recentMagnitudes: number[] = [];  // Store recent 5 magnitude values
+  private _isLyingDown: boolean = false;
 
   // Pending doc viewer content (set by canvas.navigate .md handler, consumed by ChatPage A2UI listener)
   _pendingDocTitle: string = '';
@@ -410,6 +416,8 @@ export class NodeRuntime {
         this.log.info(TAG, '情景智能已启动');
         Monitor.startModule('ContextAwareness');
         this.registerContextListeners(cas);
+        // 启动传感器进行姿势检测
+        this.startAccelerometerDetection();
       } else {
         // start() returned false — CAS may have been started by EntryAbility
         // Check again and register if already active
@@ -430,6 +438,91 @@ export class NodeRuntime {
         this.registerContextListeners(cas);
       }
     });
+  }
+
+  /**
+   * 启动加速度计传感器进行姿势检测
+   */
+  private startAccelerometerDetection(): void {
+    if (this._accelerometerSubscribed) {
+      this.log.info(TAG, '加速度计传感器已订阅，跳过');
+      return;
+    }
+
+    try {
+      sensor.on(sensor.SensorId.ACCELEROMETER, (data: sensor.AccelerometerResponse) => {
+        this.onAccelerometerData(data.x, data.y, data.z);
+      }, { interval: 1000000000 }); // 1秒间隔 (纳秒)
+
+      this._accelerometerSubscribed = true;
+      this.log.info(TAG, '加速度计传感器订阅成功');
+    } catch (err) {
+      this.log.warn(TAG, `加速度计传感器订阅失败: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * 处理加速度计数据并计算姿势状态
+   */
+  private onAccelerometerData(x: number, y: number, z: number): void {
+    // 计算重力加速度的大小
+    let magnitude = Math.sqrt(x * x + y * y + z * z);
+
+    // 保存最近5个magnitude值用于静止度判断
+    this._recentMagnitudes.push(magnitude);
+    if (this._recentMagnitudes.length > 5) {
+      this._recentMagnitudes.shift();
+    }
+
+    // 计算屏幕法线（Z轴）与重力方向的夹角
+    let screenAngle = Math.acos(Math.abs(z) / magnitude) * 180 / Math.PI;
+
+    // 判断静止度（计算最近5次magnitude的方差）
+    let isStationary = this.isDeviceStationary();
+
+    // 姿势判断：屏幕角度 < 50° 且静止 → 躺着
+    let wasLyingDown = this._isLyingDown;
+    this._isLyingDown = screenAngle < 50 && isStationary;
+
+    // 状态变化时记录日志
+    if (wasLyingDown !== this._isLyingDown) {
+      this.log.info(TAG, `姿势状态变化: ${this._isLyingDown ? '躺下' : '坐/站'} (角度=${screenAngle.toFixed(1)}°, 静止=${isStationary})`);
+    }
+
+    // 将姿势状态传递给ContextAwarenessService
+    let cas = ContextAwarenessService.getInstance();
+    if (cas.isActive()) {
+      cas.updatePostureState(this._isLyingDown);
+    }
+  }
+
+  /**
+   * 判断设备是否静止（基于最近5次magnitude值的方差）
+   */
+  private isDeviceStationary(): boolean {
+    if (this._recentMagnitudes.length < 5) {
+      return false;
+    }
+
+    // 计算平均值
+    let sum = this._recentMagnitudes.reduce((a, b) => a + b, 0);
+    let mean = sum / this._recentMagnitudes.length;
+
+    // 计算方差
+    let variance = this._recentMagnitudes.reduce((acc, val) => {
+      let diff = val - mean;
+      return acc + (diff * diff);
+    }, 0) / this._recentMagnitudes.length;
+
+    // 方差 < 0.5 认为静止
+    return variance < 0.5;
+  }
+
+  /**
+   * 获取当前姿势状态（供外部调用）
+   */
+  getPostureState(): boolean {
+    return this._isLyingDown;
   }
 
   private registerContextListeners(cas: ContextAwarenessService): void {
@@ -1488,16 +1581,37 @@ export class NodeRuntime {
           this.log.info(TAG, 'Place confirm skipped');
         } else {
           // 获取用户选择的名称和分类
-          let chosenName = (ctx['choice_place_name'] ?? '') as string;
-          let chosenCat = (ctx['choice_place_cat'] ?? '') as string;
+          let chosenName = (ctx['place_name'] ?? '') as string;
+          let chosenCat = (ctx['place_cat'] ?? '') as string;
+          let customName = (ctx['place_name_custom'] ?? '') as string;
+          let customCat = (ctx['place_cat_custom'] ?? '') as string;
+
           // 去 emoji 前缀
           let catMap: Record<string, string> = {
             '🏠 家': 'home', '🏢 公司': 'work', '💪 健身房': 'gym',
             '🍜 餐饮': 'restaurant', '🛒 购物': 'shopping', '🚇 交通': 'transit',
-            '🏨 酒店': 'custom', '📍 其他': 'custom'
+            '🏨 酒店': 'custom', '📍 其他': 'custom', '✏️ 自定义...': 'custom'
           };
-          let category = catMap[chosenCat] ?? 'custom';
-          let finalName = chosenName === '自定义...' ? placeId : chosenName;
+
+          // 处理自定义名称
+          let finalName: string;
+          if (chosenName === '自定义...' && customName.trim().length > 0) {
+            finalName = customName.trim();
+          } else if (chosenName === '自定义...') {
+            finalName = 'WiFi地点'; // 如果选择了自定义但没输入内容，使用默认名称
+          } else {
+            finalName = chosenName;
+          }
+
+          // 处理自定义分类
+          let category: string;
+          if (chosenCat === '✏️ 自定义...' && customCat.trim().length > 0) {
+            category = 'custom';
+            // 可以在这里保存自定义分类名称用于显示
+            chosenCat = customCat.trim();
+          } else {
+            category = catMap[chosenCat] ?? 'custom';
+          }
           // 去 emoji
           finalName = finalName.replace(/^[^\u4e00-\u9fa5a-zA-Z0-9]*/, '').trim();
           if (finalName.length === 0) finalName = 'WiFi地点';

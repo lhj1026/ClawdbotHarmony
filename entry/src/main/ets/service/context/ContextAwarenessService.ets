@@ -145,6 +145,10 @@ export class ContextAwarenessService {
   private activityState: string = 'unknown';      // 当前活动状态
   private activityStateTimestamp: number = 0;     // 状态开始时间
   private activityStateDuration: number = 0;      // 持续时间(ms)
+
+  // 用户姿势检测 (基于手机倾斜角)
+  private isLyingDown: boolean = false;           // 用户是否躺着
+  private lastTiltAngle: number = 0;              // 最近的手机倾斜角度
   
   // 传感器数据
   private accelerometerData: AccelerometerData = { x: 0, y: 0, z: 0, timestamp: 0 } as AccelerometerData;
@@ -421,7 +425,7 @@ export class ContextAwarenessService {
   
   stop(): void {
     if (!this.isRunning) return;
-    
+
     this.stopSmartLocationTimer();
     this.stopWifiTimer();
     this.stopMotionSensors();
@@ -431,6 +435,19 @@ export class ContextAwarenessService {
 
     this.isRunning = false;
     this.log.info(TAG, 'Context Awareness Service stopped');
+  }
+
+  /**
+   * 更新用户姿势状态（来自NodeRuntime的传感器检测）
+   */
+  updatePostureState(isLyingDown: boolean): void {
+    if (this.isLyingDown !== isLyingDown) {
+      this.isLyingDown = isLyingDown;
+      this.log.info(TAG, `姿势状态更新: ${isLyingDown ? '躺下' : '坐/站'}`);
+
+      // 将姿势信息放入 tray
+      this.tray.put('isLyingDown', this.isLyingDown ? 'true' : 'false', 0.9, 'accelerometer');
+    }
   }
   
   
@@ -738,13 +755,17 @@ export class ContextAwarenessService {
     let z = this.accelerometerData.z;
     let magnitude = Math.sqrt(x * x + y * y + z * z);
     let gravityAngle = Math.acos(z / magnitude) * 180 / Math.PI;
-    
+
+    // 计算手机倾斜角 (用于姿势检测)
+    this.lastTiltAngle = Math.atan2(z, Math.sqrt(x * x + y * y)) * 180 / Math.PI;
+    this.updatePosture();
+
     this.accelHistory.push({
       magnitude: magnitude,
       gravityAngle: gravityAngle,
       timestamp: this.accelerometerData.timestamp
     });
-    
+
     if (this.accelHistory.length > ContextAwarenessService.ACCEL_HISTORY_SIZE) {
       this.accelHistory.shift();
     }
@@ -988,8 +1009,36 @@ export class ContextAwarenessService {
       this.activityState = newActivityState;
       this.activityStateTimestamp = now;
     }
+
+    // 检查久坐提醒 (无论是否状态变化都要检查)
+    this.checkSedentaryReminder();
   }
-  
+
+  /**
+   * 更新用户姿势 (基于手机倾斜角检测用户是否躺着)
+   */
+  private updatePosture(): void {
+    // 根据倾斜角判断用户姿势
+    // tiltAngle > 45° 表示手机接近平躺，用户可能在躺着
+    // tiltAngle < 45° 表示手机竖直或倾斜，用户可能在坐着或站着
+    let wasLyingDown = this.isLyingDown;
+    this.isLyingDown = Math.abs(this.lastTiltAngle) > 45;
+
+    // 记录姿势变化
+    if (wasLyingDown !== this.isLyingDown) {
+      this.log.info(TAG, `Posture: ${wasLyingDown ? 'lying' : 'upright'} -> ${this.isLyingDown ? 'lying' : 'upright'} (tilt: ${this.lastTiltAngle.toFixed(1)}°)`);
+
+      // 将姿势信息放入 tray
+      this.tray.put('isLyingDown', this.isLyingDown ? 'true' : 'false', 0.8, 'accelerometer');
+      this.tray.put('tiltAngle', this.lastTiltAngle.toFixed(1), 0.8, 'accelerometer');
+
+      // 如果从躺着变为坐立，可能需要检查是否触发早醒提示
+      if (wasLyingDown && !this.isLyingDown) {
+        this.checkEarlyWakeupReminder();
+      }
+    }
+  }
+
   /**
    * 从穿戴设备获取心率
    */
@@ -1017,6 +1066,103 @@ export class ContextAwarenessService {
       return 'true';
     }
     return 'false';
+  }
+
+  /**
+   * 检查是否需要显示早醒提示卡片
+   */
+  private checkEarlyWakeupReminder(): void {
+    let now = new Date();
+    let hour = now.getHours();
+    let geofence = this.tray.get('geofence')?.value;
+
+    // 早醒时段：6-9点，在家，且从躺着状态变为坐立
+    if (hour >= 6 && hour <= 9 && geofence === 'home') {
+      this.log.info(TAG, `Early wakeup detected at ${hour}:${now.getMinutes().toString().padStart(2, '0')}`);
+      this.showEarlyWakeupCard();
+    }
+  }
+
+  /**
+   * 显示早醒提示卡片
+   */
+  private showEarlyWakeupCard(): void {
+    let now = new Date();
+    let timeStr = `${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
+
+    let a2uiJsonl = '{"type":"card","id":"early_wakeup_' + Date.now() + '","children":[' +
+      '{"type":"text","text":"😴 早起了？","style":{"fontSize":18,"fontWeight":"bold"}},' +
+      '{"type":"text","text":"现在是 ' + timeStr + '，还可以再睡一会儿","style":{"fontSize":14,"color":"#888"}},' +
+      '{"type":"button","text":"好的","variant":"borderless","action":{"event":{"name":"early_wakeup_dismiss"}}}' +
+      ']}';
+
+    // 使用 NodeRuntime 发送 A2UI 卡片
+    let runtime = (globalThis as any)['nodeRuntime'];
+    if (runtime && typeof runtime.dispatchA2UI === 'function') {
+      runtime.dispatchA2UI('push', a2uiJsonl);
+      this.log.info(TAG, 'Early wakeup card sent');
+    } else {
+      this.log.warn(TAG, 'NodeRuntime not available for early wakeup card');
+    }
+  }
+
+  /**
+   * 检查久坐提醒逻辑 (集成姿势检测)
+   */
+  private checkSedentaryReminder(): void {
+    // 只在坐着状态时检查久坐提醒
+    if (this.activityState !== 'sitting') {
+      return;
+    }
+
+    let now = Date.now();
+    let activityDuration = this.activityStateTimestamp > 0 ? now - this.activityStateTimestamp : 0;
+    let durationMinutes = Math.floor(activityDuration / (1000 * 60));
+
+    // 30分钟久坐提醒阈值
+    if (durationMinutes < 30) {
+      return;
+    }
+
+    let hour = new Date().getHours();
+
+    // 如果用户躺着，根据时间决定处理方式
+    if (this.isLyingDown) {
+      if (hour >= 6 && hour <= 9) {
+        // 早上躺着 → 已经在 checkEarlyWakeupReminder 处理
+        return;
+      } else {
+        // 白天躺着 → 视为午休或休息，不触发久坐提醒
+        this.log.info(TAG, `User lying down at ${hour}:xx, treating as nap/rest - skip sedentary reminder`);
+        return;
+      }
+    }
+
+    // 用户坐着/站着，触发久坐提醒
+    this.log.info(TAG, `Sedentary reminder triggered: sitting for ${durationMinutes} minutes`);
+    this.showSedentaryReminderCard(durationMinutes);
+  }
+
+  /**
+   * 显示久坐提醒卡片
+   */
+  private showSedentaryReminderCard(durationMinutes: number): void {
+    let a2uiJsonl = '{"type":"card","id":"sedentary_reminder_' + Date.now() + '","children":[' +
+      '{"type":"text","text":"🧘 起来活动一下","style":{"fontSize":18,"fontWeight":"bold"}},' +
+      '{"type":"text","text":"已经坐了 ' + durationMinutes + ' 分钟","style":{"fontSize":14,"color":"#888"}},' +
+      '{"type":"text","text":"站起来走动5分钟，做做伸展","style":{"fontSize":13,"color":"#666"}},' +
+      '{"type":"button","text":"好的","variant":"primary","action":{"event":{"name":"sedentary_reminder_ok"}}},' +
+      '{"type":"button","text":"稍后提醒","variant":"borderless","action":{"event":{"name":"sedentary_reminder_snooze"}}}' +
+      ']}';
+
+    // 使用 NodeRuntime 发送 A2UI 卡片
+    let runtime = (globalThis as any)['nodeRuntime'];
+    if (runtime && typeof runtime.dispatchA2UI === 'function') {
+      runtime.dispatchA2UI('push', a2uiJsonl);
+      this.log.info(TAG, `Sedentary reminder card sent (${durationMinutes} min)`);
+    } else {
+      this.log.warn(TAG, 'NodeRuntime not available for sedentary reminder card');
+    }
   }
 
   /**
@@ -3487,7 +3633,7 @@ export class ContextAwarenessService {
         let safeName = placeName.replace(/"/g, "'");
         let safeSsid = ssid.replace(/"/g, "'");
         let placeId = newPlace.id;
-        let catOptions = JSON.stringify(['🏠 家', '🏢 公司', '💪 健身房', '🍜 餐饮', '🛒 购物', '🚇 交通', '🏨 酒店', '📍 其他']);
+        let catOptions = JSON.stringify(['🏠 家', '🏢 公司', '💪 健身房', '🍜 餐饮', '🛒 购物', '🚇 交通', '🏨 酒店', '📍 其他', '✏️ 自定义...']);
         let nameOptions = JSON.stringify([safeName, safeSsid, '自定义...']);
         let a2uiJsonl = '{"type":"form","id":"place_name_' + placeId + '","children":[' +
           '{"type":"text","text":"📍 发现新地点","style":{"fontSize":16,"fontWeight":"bold"}},' +
@@ -3495,8 +3641,10 @@ export class ContextAwarenessService {
           (gpsAccurate ? '{"type":"text","text":"📌 ' + lat.toFixed(4) + ', ' + lng.toFixed(4) + '","style":{"fontSize":11,"color":"#999"}},' : '') +
           '{"type":"text","text":"这是什么地方？","style":{"fontSize":14}},' +
           '{"type":"choice","id":"place_name","options":' + nameOptions + '},' +
+          '{"type":"input","id":"place_name_custom","placeholder":"自定义名称（选择自定义时填写）","style":{"fontSize":13},"conditional":{"field":"place_name","value":"自定义..."}},' +
           '{"type":"text","text":"分类","style":{"fontSize":14}},' +
           '{"type":"choice","id":"place_cat","options":' + catOptions + '},' +
+          '{"type":"input","id":"place_cat_custom","placeholder":"自定义分类（选择自定义时填写）","style":{"fontSize":13},"conditional":{"field":"place_cat","value":"✏️ 自定义..."}},' +
           '{"type":"button","text":"✅ 确认","variant":"primary","action":{"event":{"name":"place_confirm","context":{"placeId":"' + placeId + '"}}}},' +
           '{"type":"button","text":"跳过","variant":"borderless","action":{"event":{"name":"place_confirm","context":{"placeId":"skip"}}}}' +
           ']}'

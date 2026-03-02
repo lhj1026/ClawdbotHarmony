@@ -360,6 +360,30 @@
           "op": "eq",
           "value": "true"
         }
+      ],
+      [
+        {
+          "key": "isLyingDown",
+          "op": "eq",
+          "value": "true"
+        },
+        {
+          "key": "hour",
+          "op": "gte",
+          "value": "9"
+        }
+      ],
+      [
+        {
+          "key": "isLyingDown",
+          "op": "eq",
+          "value": "true"
+        },
+        {
+          "key": "hour",
+          "op": "lt",
+          "value": "22"
+        }
       ]
     ],
     "action": {
@@ -369,6 +393,51 @@
     },
     "priority": 2.5,
     "cooldownMs": 2400000,
+    "enabled": true
+  },
+  {
+    "id": "t2_early_morning_lying_reminder",
+    "name": "早醒提示",
+    "tier": 2,
+    "category": "person",
+    "conditions": [
+      {
+        "key": "isLyingDown",
+        "op": "eq",
+        "value": "true"
+      },
+      {
+        "key": "hour",
+        "op": "gte",
+        "value": "6"
+      },
+      {
+        "key": "hour",
+        "op": "lt",
+        "value": "9"
+      },
+      {
+        "key": "activityDuration",
+        "op": "gte",
+        "value": "1800"
+      }
+    ],
+    "excludeConditions": [
+      [
+        {
+          "key": "isSleeping",
+          "op": "eq",
+          "value": "true"
+        }
+      ]
+    ],
+    "action": {
+      "id": "early_morning_lying_suggestion",
+      "type": "suggestion",
+      "payload": "😴 早起了？还可以再睡一会儿"
+    },
+    "priority": 1.5,
+    "cooldownMs": 3600000,
     "enabled": true
   },
   {

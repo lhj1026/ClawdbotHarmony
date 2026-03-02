@@ -316,7 +316,7 @@ body{font-family:-apple-system,HarmonyOS Sans,sans-serif;background:#0F0F1A;colo
               var evtCtx = {};
               var origCtx = c.action.event.context || {};
               for (var k in origCtx) { if (origCtx.hasOwnProperty(k)) evtCtx[k] = origCtx[k]; }
-              // Collect selected choices from parent form
+              // Collect selected choices and input values from parent form
               var formEl = el.closest('[data-a2ui-id]');
               if (formEl) {
                 var root = formEl.parentElement;
@@ -325,8 +325,15 @@ body{font-family:-apple-system,HarmonyOS Sans,sans-serif;background:#0F0F1A;colo
                   pickers.forEach(function(picker) {
                     var pickerId = picker.getAttribute('data-a2ui-id');
                     if (pickerId) {
+                      // Collect choice values
                       var sel = picker.querySelector('.a2ui-chip.selected');
                       if (sel) evtCtx['choice_' + pickerId] = sel.textContent;
+
+                      // Collect input/textarea values
+                      var inp = picker.querySelector('input, textarea');
+                      if (inp && inp.value.trim().length > 0) {
+                        evtCtx[pickerId] = inp.value.trim();
+                      }
                     }
                   });
                 }
