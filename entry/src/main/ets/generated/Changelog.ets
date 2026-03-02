@@ -8,9 +8,19 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.59.4';
+export const APP_VERSION: string = '2.59.5';
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '2.59.5',
+    date: '2026-03-02',
+    features: [
+      '姿势检测灵敏度优化: 加速度计采样间隔从1秒缩短至200毫秒, 数据托盘实时更新倾斜角度和躺卧状态(而非仅在姿势变化时更新)',
+    ],
+    fixes: [
+
+    ],
+  },
   {
     version: '2.59.4',
     date: '2026-03-02',
@@ -651,4 +661,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.59.4';
+export const LATEST_VERSION: string = '2.59.5';

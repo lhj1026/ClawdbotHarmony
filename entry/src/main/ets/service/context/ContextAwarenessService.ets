@@ -728,7 +728,7 @@ export class ContextAwarenessService {
         this.accelerometerData = { x: data.x, y: data.y, z: data.z, timestamp: Date.now() };
         this.recordAccelSample();
         this.updateMotionState();
-      }, { interval: 1000000000 });
+      }, { interval: 200000000 }); // 200ms 采样间隔，提高姿势检测灵敏度
       
       sensor.on(sensor.SensorId.PEDOMETER, (data: sensor.PedometerResponse) => {
         this.stepCount = data.steps;
@@ -1033,13 +1033,13 @@ export class ContextAwarenessService {
     let wasLyingDown = this.isLyingDown;
     this.isLyingDown = Math.abs(this.lastTiltAngle) > 45;
 
-    // 记录姿势变化
+    // 始终更新数据托盘（确保及时反映当前状态）
+    this.tray.put('isLyingDown', this.isLyingDown ? 'true' : 'false', 0.8, 'accelerometer');
+    this.tray.put('tiltAngle', this.lastTiltAngle.toFixed(1), 0.8, 'accelerometer');
+
+    // 仅在姿势变化时记录日志和触发提醒
     if (wasLyingDown !== this.isLyingDown) {
       this.log.info(TAG, `Posture: ${wasLyingDown ? 'lying' : 'upright'} -> ${this.isLyingDown ? 'lying' : 'upright'} (tilt: ${this.lastTiltAngle.toFixed(1)}°)`);
-
-      // 将姿势信息放入 tray
-      this.tray.put('isLyingDown', this.isLyingDown ? 'true' : 'false', 0.8, 'accelerometer');
-      this.tray.put('tiltAngle', this.lastTiltAngle.toFixed(1), 0.8, 'accelerometer');
 
       // 如果从躺着变为坐立，可能需要检查是否触发早醒提示
       if (wasLyingDown && !this.isLyingDown) {
