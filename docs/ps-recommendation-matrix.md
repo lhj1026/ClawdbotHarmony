@@ -354,6 +354,56 @@
 | PS-190 | 节假日高铁候车 | afternoon | train_station | stationary | in_use | holiday | 检查行程/车票(88%) | 导航景点(70%) | 听音乐(65%) | 节假日出游 |
 
 
+---
+
+### ☕ cafe（咖啡馆）
+
+| ID | Title | 时间 | 位置 | 运动 | 手机 | 日期 | 推荐1（置信度%） | 推荐2（置信度%） | 推荐3（置信度%） | 备注 |
+|----|-------|------|------|------|------|------|-----------------|-----------------|-----------------|------|
+| PS-191 | 工作日咖啡工作 | morning | cafe | stationary | on_desk | workday | 查看今日日程(88%) | 久坐提醒(72%) | 补水提醒(65%) | 咖啡馆办公，久坐提醒重要 |
+| PS-192 | 工作日咖啡刷机 | morning | cafe | stationary | in_use | workday | 查看今日日程(82%) | 点餐建议(70%) | 查看新闻(58%) | 早晨咖啡时间 |
+| PS-193 | 上午咖啡馆办公 | forenoon | cafe | stationary | on_desk | workday | 久坐提醒(90%) | 补水提醒(80%) | 查看日程(68%) | 居家/出差咖啡馆办公 |
+| PS-194 | 上午咖啡休闲 | forenoon | cafe | stationary | in_use | weekend | 查看天气(75%) | 查看新闻摘要(68%) | 播放音乐(58%) | 周末咖啡休闲 |
+| PS-195 | 午间咖啡馆 | lunch | cafe | stationary | in_use | workday | 点餐建议(86%) | 查看下午日程(68%) | 补水提醒(55%) | 午餐咖啡 |
+| PS-196 | 下午咖啡办公 | afternoon | cafe | stationary | on_desk | workday | 久坐提醒(88%) | 补水提醒(78%) | 查看日程(65%) | 下午咖啡馆工作 |
+| PS-197 | 周末下午咖啡 | afternoon | cafe | stationary | in_use | weekend | 查看天气(72%) | 播放音乐(65%) | 联系人提醒(55%) | 周末社交咖啡 |
+| PS-198 | 傍晚咖啡约会 | evening | cafe | stationary | in_use | weekend | 联系人提醒(78%) | 点餐建议(72%) | 导航回家(55%) | 周末社交聚会 |
+| PS-199 | 节假日咖啡馆 | afternoon | cafe | stationary | in_use | holiday | 播放音乐(70%) | 查看天气(65%) | 查看新闻(58%) | 节假日放松 |
+
+---
+
+### 🎬 cinema（电影院）
+
+| ID | Title | 时间 | 位置 | 运动 | 手机 | 日期 | 推荐1（置信度%） | 推荐2（置信度%） | 推荐3（置信度%） | 备注 |
+|----|-------|------|------|------|------|------|-----------------|-----------------|-----------------|------|
+| PS-200 | 工作日电影前 | afternoon | cinema | stationary | in_use | workday | 查看场次/座位(92%) | 联系人提醒(68%) | 导航到影厅(62%) | 观影前查票 |
+| PS-201 | 工作日观影中 | afternoon | cinema | stationary | face_down | workday | 关闭通知提醒(88%) | 设置散场提醒(75%) | 静音确认(70%) | 观影中手机朝下 |
+| PS-202 | 工作日观影入袋 | afternoon | cinema | stationary | in_pocket | workday | 关闭通知提醒(85%) | 设置散场提醒(72%) | 静音确认(68%) | 拥挤影院手机入袋 |
+| PS-203 | 周末电影前 | afternoon | cinema | stationary | in_use | weekend | 查看场次/座位(94%) | 点餐建议(74%) | 联系人提醒(65%) | 周末观影，可能买爆米花 |
+| PS-204 | 周末观影中 | afternoon | cinema | stationary | face_down | weekend | 关闭通知提醒(90%) | 设置散场提醒(78%) | 静音确认(72%) | 观影礼仪 |
+| PS-205 | 晚间电影前 | evening | cinema | stationary | in_use | weekend | 查看场次/座位(92%) | 联系人提醒(72%) | 导航回家(55%) | 晚场电影 |
+| PS-206 | 晚间观影中 | evening | cinema | stationary | face_down | weekend | 关闭通知提醒(88%) | 设置散场提醒(75%) | 导航回家(60%) | 晚场观影结束提前准备回家 |
+| PS-207 | 节假日电影前 | afternoon | cinema | walking | in_use | holiday | 查看场次/座位(92%) | 点餐建议(76%) | 查看步数(48%) | 节假日热门场，提前到 |
+| PS-208 | 节假日观影中 | afternoon | cinema | stationary | in_pocket | holiday | 关闭通知提醒(90%) | 设置散场提醒(78%) | 静音确认(72%) | 节假日影院拥挤 |
+
+---
+
+### 🌳 park（公园）
+
+| ID | Title | 时间 | 位置 | 运动 | 手机 | 日期 | 推荐1（置信度%） | 推荐2（置信度%） | 推荐3（置信度%） | 备注 |
+|----|-------|------|------|------|------|------|-----------------|-----------------|-----------------|------|
+| PS-209 | 工作日晨练公园 | dawn | park | running | in_pocket | workday | 查看步数(90%) | 补水提醒(82%) | 播放音乐(74%) | 早晨公园跑步 |
+| PS-210 | 工作日公园散步 | morning | park | walking | in_pocket | workday | 查看步数(86%) | 查看天气(72%) | 播放音乐(68%) | 上班前公园晨走 |
+| PS-211 | 午间公园休息 | lunch | park | stationary | in_use | workday | 查看下午日程(78%) | 补水提醒(70%) | 拉伸提醒(60%) | 午休公园 |
+| PS-212 | 下午公园跑步 | afternoon | park | running | in_pocket | workday | 查看步数(92%) | 补水提醒(88%) | 播放音乐(78%) | 下班前跑步 |
+| PS-213 | 工作日傍晚公园 | evening | park | walking | in_pocket | workday | 查看步数(84%) | 播放音乐(72%) | 查看天气(60%) | 下班后散步 |
+| PS-214 | 周末公园晨跑 | morning | park | running | in_pocket | weekend | 查看步数(94%) | 补水提醒(88%) | 播放音乐(80%) | 周末晨跑 |
+| PS-215 | 周末公园漫步 | morning | park | walking | in_use | weekend | 查看步数(84%) | 查看天气(72%) | 查看新闻摘要(62%) | 周末公园散步刷机 |
+| PS-216 | 周末公园野餐 | afternoon | park | stationary | in_use | weekend | 查看天气(80%) | 联系人提醒(70%) | 查看步数(58%) | 周末公园休闲 |
+| PS-217 | 节假日公园游览 | afternoon | park | walking | in_pocket | holiday | 查看步数(86%) | 导航景点(74%) | 查看天气(68%) | 节假日公园 |
+| PS-218 | 节假日公园跑步 | morning | park | running | in_pocket | holiday | 查看步数(92%) | 补水提醒(86%) | 播放音乐(76%) | 节假日晨跑 |
+
+
 ## 光线/声音修饰符表
 
 ### 光线修饰符（light）
