@@ -6,9 +6,6 @@
  *   addRule(ruleJson: string): boolean
  *   removeRule(ruleId: string): boolean
  *   evaluate(contextJson: string, maxResults?: number): string  // returns JSON
- *   updateReward(actionId: string, reward: number): void
- *   getStats(): string  // MAB stats as JSON
- *   loadStats(statsJson: string): void
  *   getRuleCount(): number
  *   exportRules(): string
  *   pushEvent(eventJson: string): void      // push event to buffer
@@ -16,7 +13,6 @@
  */
 #include <napi/native_api.h>
 #include "context_engine.h"
-#include "stream_mlp.h"
 #include "state_transition.h"
 #include <string>
 #include <memory>
@@ -317,61 +313,6 @@ static napi_value Evaluate(napi_env env, napi_callback_info info) {
     return napiString(env, ss.str());
 }
 
-static napi_value UpdateReward(napi_env env, napi_callback_info info) {
-    size_t argc = 3;
-    napi_value args[3];
-    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-    if (argc < 2) {
-        napi_throw_error(env, nullptr, "updateReward requires actionId and reward");
-        return nullptr;
-    }
-    auto actionId = napiGetString(env, args[0]);
-    double reward;
-    napi_get_value_double(env, args[1], &reward);
-
-    // Always update MAB (backward compat)
-    g_engine.mab().update(actionId, reward);
-
-    // If context provided, also update LinUCB
-    if (argc >= 3) {
-        auto contextJson = napiGetString(env, args[2]);
-        auto ctx = parseContextMap(contextJson);
-        g_engine.linucb().update(actionId, reward, ctx);
-    }
-
-    return nullptr;
-}
-
-static napi_value GetStats(napi_env env, napi_callback_info info) {
-    auto stats = g_engine.mab().getStats();
-    std::ostringstream ss;
-    ss << "{";
-    bool first = true;
-    for (const auto& [id, arm] : stats) {
-        if (!first) ss << ",";
-        first = false;
-        ss << "\"" << id << "\":{\"pulls\":" << arm.pulls
-           << ",\"totalReward\":" << arm.totalReward
-           << ",\"avgReward\":" << arm.avgReward() << "}";
-    }
-    ss << "}";
-    return napiString(env, ss.str());
-}
-
-static napi_value LoadStats(napi_env env, napi_callback_info info) {
-    size_t argc = 1;
-    napi_value args[1];
-    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-    if (argc < 1) return nullptr;
-
-    auto json = napiGetString(env, args[0]);
-    // Minimal parse of stats JSON
-    std::unordered_map<std::string, context_engine::ArmStats> stats;
-    // TODO: proper parsing for loadStats
-    g_engine.mab().loadStats(stats);
-    return nullptr;
-}
-
 static napi_value GetRuleCount(napi_env env, napi_callback_info info) {
     napi_value val;
     napi_create_int32(env, static_cast<int>(g_engine.ruleCount()), &val);
@@ -380,63 +321,6 @@ static napi_value GetRuleCount(napi_env env, napi_callback_info info) {
 
 static napi_value ExportRules(napi_env env, napi_callback_info info) {
     return napiString(env, g_engine.exportRulesJson());
-}
-
-// Parse simple JSON array of strings: ["id1","id2",...]
-static std::vector<std::string> parseStringArray(const std::string& json) {
-    std::vector<std::string> result;
-    size_t pos = 0;
-    while (pos < json.size()) {
-        auto qs = json.find('"', pos);
-        if (qs == std::string::npos) break;
-        auto qe = json.find('"', qs + 1);
-        if (qe == std::string::npos) break;
-        result.push_back(json.substr(qs + 1, qe - qs - 1));
-        pos = qe + 1;
-    }
-    return result;
-}
-
-static napi_value SelectAction(napi_env env, napi_callback_info info) {
-    size_t argc = 2;
-    napi_value args[2];
-    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-    if (argc < 1) {
-        napi_throw_error(env, nullptr, "selectAction requires JSON array of action IDs");
-        return nullptr;
-    }
-
-    auto actionIdsJson = napiGetString(env, args[0]);
-    auto actionIds = parseStringArray(actionIdsJson);
-
-    int idx;
-    if (argc >= 2) {
-        // Context provided → use LinUCB
-        auto contextJson = napiGetString(env, args[1]);
-        auto ctx = parseContextMap(contextJson);
-        idx = g_engine.linucb().select(actionIds, ctx);
-    } else {
-        // No context → fallback to epsilon-greedy MAB
-        idx = g_engine.mab().select(actionIds);
-    }
-
-    napi_value val;
-    napi_create_int32(env, idx, &val);
-    return val;
-}
-
-static napi_value ExportLinUCB(napi_env env, napi_callback_info info) {
-    return napiString(env, g_engine.linucb().exportJson());
-}
-
-static napi_value ImportLinUCB(napi_env env, napi_callback_info info) {
-    size_t argc = 1;
-    napi_value args[1];
-    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-    if (argc < 1) return nullptr;
-    auto json = napiGetString(env, args[0]);
-    g_engine.linucb().importJson(json);
-    return nullptr;
 }
 
 static napi_value PushEvent(napi_env env, napi_callback_info info) {
@@ -500,66 +384,6 @@ static napi_value SetLimits(napi_env env, napi_callback_info info) {
 }
 
 // ============================================================
-// Stream RL NAPI functions
-// ============================================================
-
-static napi_value TrainStreamRL(napi_env env, napi_callback_info info) {
-    size_t argc = 3;
-    napi_value args[3];
-    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-    if (argc < 3) {
-        napi_throw_error(env, nullptr, "trainStreamRL requires actionId, reward, contextJson");
-        return nullptr;
-    }
-
-    auto actionId = napiGetString(env, args[0]);
-    double reward;
-    napi_get_value_double(env, args[1], &reward);
-    auto contextJson = napiGetString(env, args[2]);
-
-    auto ctx = parseContextMap(contextJson);
-    double features[context_engine::STREAM_FEAT_DIM];
-    context_engine::StreamRLEngine::buildFeatures(ctx, features);
-    g_engine.streamRL().trainArm(actionId, features, reward);
-
-    return nullptr;
-}
-
-static napi_value ExportStreamRL(napi_env env, napi_callback_info info) {
-    return napiString(env, g_engine.streamRL().exportJson());
-}
-
-static napi_value ImportStreamRL(napi_env env, napi_callback_info info) {
-    size_t argc = 1;
-    napi_value args[1];
-    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-    if (argc < 1) return nullptr;
-    auto json = napiGetString(env, args[0]);
-    g_engine.streamRL().importJson(json);
-    return nullptr;
-}
-
-static napi_value GetStreamRLStats(napi_env env, napi_callback_info info) {
-    return napiString(env, g_engine.streamRL().getSummaryJson());
-}
-
-static napi_value GetStreamRLArmSamples(napi_env env, napi_callback_info info) {
-    size_t argc = 1;
-    napi_value args[1];
-    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-    if (argc < 1) {
-        napi_value val;
-        napi_create_int32(env, 0, &val);
-        return val;
-    }
-    auto actionId = napiGetString(env, args[0]);
-    int samples = g_engine.streamRL().getArmSamples(actionId);
-    napi_value val;
-    napi_create_int32(env, samples, &val);
-    return val;
-}
-
-// ============================================================
 // State Transition NAPI functions
 // ============================================================
 
@@ -590,21 +414,10 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"addRule",      nullptr, AddRule,      nullptr, nullptr, nullptr, napi_default, nullptr},
         {"removeRule",   nullptr, RemoveRule,   nullptr, nullptr, nullptr, napi_default, nullptr},
         {"evaluate",     nullptr, Evaluate,     nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"updateReward", nullptr, UpdateReward, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"selectAction", nullptr, SelectAction, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"getStats",     nullptr, GetStats,     nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"loadStats",    nullptr, LoadStats,    nullptr, nullptr, nullptr, napi_default, nullptr},
         {"getRuleCount", nullptr, GetRuleCount, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"exportRules",  nullptr, ExportRules,  nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"exportLinUCB", nullptr, ExportLinUCB, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"importLinUCB", nullptr, ImportLinUCB, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"pushEvent",       nullptr, PushEvent,       nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setLimits",       nullptr, SetLimits,       nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"trainStreamRL",        nullptr, TrainStreamRL,        nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"exportStreamRL",       nullptr, ExportStreamRL,       nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"importStreamRL",       nullptr, ImportStreamRL,       nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"getStreamRLStats",     nullptr, GetStreamRLStats,     nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"getStreamRLArmSamples", nullptr, GetStreamRLArmSamples, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"getTransitionInfo",      nullptr, GetTransitionInfo,      nullptr, nullptr, nullptr, napi_default, nullptr},
         {"exportTransitionState",  nullptr, ExportTransitionState,  nullptr, nullptr, nullptr, napi_default, nullptr},
         {"importTransitionState",  nullptr, ImportTransitionState,  nullptr, nullptr, nullptr, napi_default, nullptr},

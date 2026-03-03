@@ -7,7 +7,6 @@
  *   - Enhanced cooldown: per-rule, per-category, global rate limit
  */
 #include "context_engine.h"
-#include "stream_mlp.h"
 #include "state_transition.h"
 #include <algorithm>
 #include <chrono>
@@ -92,8 +91,7 @@ void EventBuffer::expireOld() {
 // ============================================================
 
 RuleEngine::RuleEngine()
-    : mab_(0.1), eventBuffer_(100),
-      streamRL_(std::make_unique<StreamRLEngine>()),
+    : eventBuffer_(100),
       transitionTracker_(std::make_unique<StateTransitionTracker>()) {}
 RuleEngine::~RuleEngine() = default;
 
@@ -284,39 +282,15 @@ std::vector<MatchResult> RuleEngine::evaluate(const ContextMap& ctx, int maxResu
     ContextMap enrichedCtx = ctx;
     transitionTracker_->injectFeatures(enrichedCtx);
 
-    // Build Stream RL features once for hybrid scoring (using enriched context)
-    double rlFeats[STREAM_FEAT_DIM];
-    StreamRLEngine::buildFeatures(enrichedCtx, rlFeats);
-
-    // Hybrid scoring: rule confidence × priority, boosted by Stream RL prediction
-    auto hybridScore = [&](const MatchResult& r) -> double {
+    // Scoring: confidence × priority
+    auto score = [&](const MatchResult& r) -> double {
         double pa = priorityMap.count(r.ruleId) ? priorityMap[r.ruleId] : 1.0;
-        double ruleScore = r.confidence * pa;
-
-        int samples = streamRL_->getArmSamples(r.action.id);
-
-        if (samples < STREAM_MIN_SAMPLES) {
-            // Cold start: pure rule score (LinUCB has no per-arm scoring API)
-            return ruleScore;
-        }
-
-        double mlpScore = streamRL_->scoreArm(r.action.id, rlFeats);
-        double normalizedMlp = std::tanh(mlpScore);  // bound to [-1, 1]
-
-        double rlWeight;
-        if (samples >= STREAM_RAMP_SAMPLES) {
-            rlWeight = 0.3;  // full RL influence
-        } else {
-            rlWeight = static_cast<double>(samples - STREAM_MIN_SAMPLES)
-                     / (STREAM_RAMP_SAMPLES - STREAM_MIN_SAMPLES) * 0.3;
-        }
-
-        return ruleScore * (1.0 + rlWeight * normalizedMlp);
+        return r.confidence * pa;
     };
 
     auto sortByScore = [&](std::vector<MatchResult>& results) {
         std::sort(results.begin(), results.end(), [&](const MatchResult& a, const MatchResult& b) {
-            return hybridScore(a) > hybridScore(b);
+            return score(a) > score(b);
         });
     };
 

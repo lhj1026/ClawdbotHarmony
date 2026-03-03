@@ -1907,11 +1907,6 @@ Respond ONLY with the JSON array.`;
         text += '(无规则)\n';
       }
 
-      let stats = engine.getStats();
-      if (stats.length > 2) {
-        text += '📊 MAB 统计: ' + stats;
-      }
-
       let msg = new ChatMessage('assistant', text);
       this.messages.push(msg);
       this.scrollToEnd();

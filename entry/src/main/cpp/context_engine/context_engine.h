@@ -4,7 +4,6 @@
  * MVP scope:
  *   - Flat rules → compiled decision tree
  *   - Soft matching (0~1 confidence per condition)
- *   - Multi-Armed Bandit (epsilon-greedy) for action selection
  *   - Event buffer for temporal/sequence conditions
  *   - Enhanced cooldown (per-rule, per-category, global rate limit)
  */
@@ -12,7 +11,6 @@
 
 #include <string>
 #include <vector>
-#include <array>
 #include <unordered_map>
 #include <optional>
 #include <cstdint>
@@ -22,8 +20,6 @@
 #include <cerrno>
 #include <cstdlib>
 
-// Forward declare StreamRLEngine (defined in stream_mlp.h)
-namespace context_engine { class StreamRLEngine; }
 // Forward declare StateTransitionTracker (defined in state_transition.h)
 namespace context_engine { class StateTransitionTracker; }
 
@@ -148,82 +144,6 @@ struct TreeNode {
 };
 
 // ============================================================
-// Multi-Armed Bandit (epsilon-greedy)
-// ============================================================
-
-struct ArmStats {
-    int pulls;
-    double totalReward;
-    double avgReward() const { return pulls > 0 ? totalReward / pulls : 0.0; }
-};
-
-class MAB {
-public:
-    explicit MAB(double epsilon = 0.1);
-
-    /** Select an action from candidates. Returns index into candidates. */
-    int select(const std::vector<std::string>& actionIds);
-
-    /** Update reward for an action */
-    void update(const std::string& actionId, double reward);
-
-    /** Get stats for serialization */
-    std::unordered_map<std::string, ArmStats> getStats() const;
-
-    /** Load stats from serialized data */
-    void loadStats(const std::unordered_map<std::string, ArmStats>& stats);
-
-private:
-    double epsilon_;
-    std::unordered_map<std::string, ArmStats> arms_;
-    mutable std::mutex mu_;
-};
-
-// ============================================================
-// LinUCB Contextual Bandit
-// ============================================================
-
-constexpr int LINUCB_DIM = 14;  // feature dimension (v2: 7-tuple encoded)
-
-/** Per-arm state for LinUCB: A matrix and b vector */
-struct LinUCBArm {
-    std::array<std::array<double, LINUCB_DIM>, LINUCB_DIM> A;  // d×d matrix
-    std::array<double, LINUCB_DIM> b;                           // d-vector
-};
-
-class LinUCB {
-public:
-    explicit LinUCB(double alpha = 1.0);
-
-    /**
-     * Build feature vector from context map (d=14).
-     * Features: [hour_sin, hour_cos, battery/100, isCharging,
-     *            dayType_weekend, dayType_holiday,
-     *            motion_stationary, motion_walking, motion_running,
-     *            motion_cycling, motion_vehicle,
-     *            light_ordinal, sound_ordinal, has_scenario]
-     */
-    std::array<double, LINUCB_DIM> buildFeatureVec(const ContextMap& ctx) const;
-
-    /** Select best arm using UCB scores. Returns index into actionIds. */
-    int select(const std::vector<std::string>& actionIds, const ContextMap& ctx);
-
-    /** Update arm with observed reward and the context that was active. */
-    void update(const std::string& actionId, double reward, const ContextMap& ctx);
-
-    /** Export all arm state as JSON (for persistence). */
-    std::string exportJson() const;
-
-    /** Import arm state from JSON. */
-    void importJson(const std::string& json);
-
-private:
-    double alpha_;
-    std::unordered_map<std::string, LinUCBArm> arms_;
-    mutable std::mutex mu_;
-};
-
-// ============================================================
 // Soft matching
 // ============================================================
 
@@ -257,15 +177,6 @@ public:
     /** Configure rate limits (category cooldown, global rate limit) */
     void setLimits(const RateLimits& limits);
 
-    /** Get the MAB for external reward updates */
-    MAB& mab() { return mab_; }
-
-    /** Get the LinUCB bandit for contextual action selection */
-    LinUCB& linucb() { return linucb_; }
-
-    /** Get the Stream RL engine for online learning */
-    StreamRLEngine& streamRL() { return *streamRL_; }
-
     /** Get the state transition tracker */
     StateTransitionTracker& transitionTracker() { return *transitionTracker_; }
 
@@ -291,9 +202,6 @@ private:
 
     std::vector<Rule> rules_;
     std::vector<TreeNode> tree_;
-    MAB mab_;
-    LinUCB linucb_;
-    std::unique_ptr<StreamRLEngine> streamRL_;
     std::unique_ptr<StateTransitionTracker> transitionTracker_;
     std::unordered_map<std::string, int64_t> lastFired_;  // ruleId → timestamp
     EventBuffer eventBuffer_;

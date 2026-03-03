@@ -1,5 +1,16 @@
 [
   {
+    "version": "2.66.1",
+    "date": "2026-03-03",
+    "features": [
+      "架构清理: 移除C++规则引擎内Stream RL(stream_mlp)、MAB(mab)、LinUCB 14维(linucb)三套学习模块(已由ActionRecommender 185维MLP+LinUCB替代)",
+      "移除LocationDiscoveryService(GPS聚类自动发现, 功能由GeofenceManager覆盖)",
+      "规则引擎评分回退为confidence×priority(移除Stream RL hybrid boost)",
+      "ContextSettingsPage移除Stream Deep RL/MAB/位置发现三个UI区块"
+    ],
+    "fixes": []
+  },
+  {
     "version": "2.66.0",
     "date": "2026-03-02",
     "features": [],

@@ -3,7 +3,8 @@
  *
  * 职责：
  *   - 收集显式反馈（👍/👎）和隐式反馈（执行动作/忽略/超时）
- *   - 调用 ContextEngine.feedback() 传递 MAB reward
+ *   - 调用 ContextEngine.feedback() 持久化状态
+ *   - 通过 ActionRecommender 传递 reward 用于在线学习
  *   - 记录反馈到 BehaviorLogger
  *   - 管理卡片的超时定时器（dismiss 5min / ignore 10min）
  *   - 提供反馈统计数据供 ContextSettingsPage 使用
@@ -332,7 +333,7 @@ export class FeedbackService {
   }
 
   private async recordFeedback(ruleId: string, feedbackType: FeedbackType, reward: number): Promise<void> {
-    // 发送到 C++ 引擎（含 Stream RL 训练）
+    // 发送到引擎（持久化转移状态）
     try {
       let card = this.activeCards.get(ruleId);
       let snapshot = card?.rec?.snapshot;

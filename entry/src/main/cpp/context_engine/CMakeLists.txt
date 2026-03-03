@@ -1,5 +1,5 @@
 # CMakeLists.txt for context_engine (情景智能规则引擎)
-# C++ NAPI module: decision tree + soft matching + MAB
+# C++ NAPI module: decision tree + soft matching
 cmake_minimum_required(VERSION 3.5.0)
 project(context_engine)
 
@@ -8,9 +8,6 @@ add_library(context_engine SHARED
     rule_engine.cpp
     decision_tree.cpp
     soft_match.cpp
-    mab.cpp
-    linucb.cpp
-    stream_mlp.cpp
     state_transition.cpp
 )
 

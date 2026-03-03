@@ -4156,15 +4156,11 @@ export class NodeRuntime {
     let dismissText = I18n.t('context.feedback.dismiss');
     let detailsText = I18n.t('context.feedback.viewDetails');
 
-    // Stream RL learning label
-    let rlLabel = this.getStreamRLLabel(ruleId);
-    let rlBadge = rlLabel.length > 0 ? `  |  🧠 ${rlLabel}` : '';
-
     // Use simplified A2UI format: {"type":"form","children":[...]}
     let jsonl = `{"type":"form","id":"ctx_rec_${Date.now()}","children":[` +
       `{"type":"text","text":"💡 ${titleText}","style":{"fontSize":20,"fontWeight":"bold"}},` +
       `{"type":"text","text":"${safeReason}","style":{"fontSize":15}},` +
-      `{"type":"text","text":"📋 ${safeRuleName}  |  ${confidenceText}: ${confidence}%${rlBadge}","style":{"fontSize":12,"color":"#888"}},` +
+      `{"type":"text","text":"📋 ${safeRuleName}  |  ${confidenceText}: ${confidence}%","style":{"fontSize":12,"color":"#888"}},` +
       `{"type":"button","text":"✅ ${usefulText}","variant":"primary","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"accept"}}}},` +
       `{"type":"button","text":"❌ ${inaccurateText}","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"reject"}}}},` +
       `{"type":"button","text":"🙈 ${dismissText}","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"dismiss"}}}},` +
@@ -4371,10 +4367,6 @@ export class NodeRuntime {
     let detailsText = I18n.t('context.feedback.viewDetails');
     let confidenceText = I18n.t('context.confidence');
 
-    // Stream RL learning label
-    let rlLabel = this.getStreamRLLabel(ruleId);
-    let rlBadge = rlLabel.length > 0 ? `  |  🧠 ${rlLabel}` : '';
-
     // 转移路径条
     let transPathItems = '';
     try {
@@ -4417,30 +4409,13 @@ export class NodeRuntime {
     let recCard = `{"type":"form","id":"ctx_rec_${ts}","children":[` +
       `{"type":"text","text":"💡 建议","style":{"fontSize":18,"fontWeight":"bold"}},` +
       `{"type":"text","text":"${safeReason}","style":{"fontSize":15}},` +
-      `{"type":"text","text":"📋 ${safeRuleName}  |  ${confidenceText}: ${confidence}%${rlBadge}","style":{"fontSize":12,"color":"#888"}},` +
+      `{"type":"text","text":"📋 ${safeRuleName}  |  ${confidenceText}: ${confidence}%","style":{"fontSize":12,"color":"#888"}},` +
       `{"type":"button","text":"✅ ${usefulText}","variant":"primary","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"accept"}}}},` +
       `{"type":"button","text":"❌ ${inaccurateText}","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"reject"}}}},` +
       `{"type":"button","text":"🙈 ${dismissText}","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"dismiss"}}}}` +
       `]}`;
 
     return statusCard + '\n' + recCard;
-  }
-
-  /** Get RL learning label for a rule/arm: 探索中 / 学习中 / 已学习 */
-  private getStreamRLLabel(ruleId: string): string {
-    try {
-      let engine = ContextEngineService.getInstance();
-      let armSamples = engine.getStreamRLArmSamples(ruleId);
-      if (armSamples < 5) {
-        return '探索中';
-      } else if (armSamples < 20) {
-        return `学习中 (${armSamples}次)`;
-      } else {
-        return `已学习 (${armSamples}次)`;
-      }
-    } catch {
-      return '';
-    }
   }
 
   /**

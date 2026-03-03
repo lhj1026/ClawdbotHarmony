@@ -15,7 +15,7 @@ import { I18n } from '../../common/I18n';
 import { GeofenceManager, GeofenceEvent } from './GeofenceManager';
 import { BehaviorLogger } from './BehaviorLogger';
 import { ContextEngineService, ContextSnapshot, ContextRule as EngineRule, ContextCondition as EngineCondition, ContextAction as EngineAction, MatchResult, GeofenceBinding } from './ContextEngine';
-import { LocationDiscoveryService, GeofenceSuggestion, DiscoveryStatsInfo } from './LocationDiscoveryService';
+import { GeofenceSuggestion, DiscoveryStatsInfo } from './LocationDiscoveryService';
 import { FeedbackService } from './FeedbackService';
 import { LocationFusionService, LearnedSignalsSummary } from './LocationFusionService';
 import { DigitalWorldService } from './DigitalWorldService';
@@ -234,10 +234,8 @@ export class ContextAwarenessService {
   private lastExploreStateDisplayTime: number = 0;
   private lastExploreWifiSsid: string = '';  // 上次探索时的 WiFi
   
-  // 位置自动发现
-  private locationDiscovery: LocationDiscoveryService = LocationDiscoveryService.getInstance();
+  // 位置自动发现 (已迁移到 GeofenceManager)
   private discoveryTimer: number = -1;
-  private static readonly DISCOVERY_INTERVAL_MS = 60 * 60 * 1000;  // 1小时发现一次
 
   // LLM 兜底服务
   private llmFallback: LLMFallbackService = LLMFallbackService.getInstance();
@@ -373,8 +371,6 @@ export class ContextAwarenessService {
     // 初始化多源位置融合
     await this.locationFusion.init(context);
 
-    // 初始化位置发现服务
-    await this.locationDiscovery.init(context);
     await this.feedbackSvc.init(context);
     // Register callback so FeedbackService can notify us of LLM feedback (avoids circular import)
     this.feedbackSvc.setLlmFeedbackCallback((ruleId: string) => {
@@ -469,7 +465,6 @@ export class ContextAwarenessService {
       // 启动智能位置获取（多级采集）
       if (locationGranted) {
         this.startSmartLocationTimer();
-        this.startLocationDiscovery();
       } else {
         this.log.warn(TAG, 'Location permission denied, location features disabled');
       }
@@ -501,7 +496,6 @@ export class ContextAwarenessService {
     this.stopWifiTimer();
     this.stopMotionSensors();
     this.stopPeriodicEvaluation();
-    this.stopLocationDiscovery();
     this.digitalWorld.stop();
 
     this.isRunning = false;
@@ -1907,64 +1901,14 @@ export class ContextAwarenessService {
   }
 
 
-  private startLocationDiscovery(): void {
-    if (this.discoveryTimer !== -1) return;
-
-    // 监听位置变化，记录到发现服务
-    this.geofenceMgr.addLocationListener((location) => {
-      this.log.info(TAG, `Location update: (${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)})`);
-      this.locationDiscovery.recordLocation(location);
-      // 检测新地点
-      let ssid = this.lastWifiSsid ?? '';
-      this.checkForNewPlace(location.latitude, location.longitude, ssid);
-    });
-
-    // 定时运行聚类发现
-    this.discoveryTimer = setInterval(() => {
-      this.runLocationDiscovery();
-    }, ContextAwarenessService.DISCOVERY_INTERVAL_MS);
-
-    this.log.info(TAG, 'Started location discovery');
-  }
-
-  private stopLocationDiscovery(): void {
-    if (this.discoveryTimer !== -1) {
-      clearInterval(this.discoveryTimer);
-      this.discoveryTimer = -1;
-      this.log.info(TAG, 'Stopped location discovery');
-    }
-  }
-
-  private async runLocationDiscovery(): Promise<void> {
-    if (!this.isRunning) return;
-    let allSuggestions = await this.locationDiscovery.runDiscovery();
-    if (allSuggestions.length === 0) return;
-
-    let filtered = this.filterSuggestions(allSuggestions);
-    if (filtered.length === 0) {
-      this.log.info(TAG, `Discovery found ${allSuggestions.length} raw, all filtered out`);
-      return;
-    }
-
-    // Mark as shown today
-    let now = Date.now();
-    for (let i = 0; i < filtered.length; i++) {
-      this.suggestionState.lastShown[filtered[i].id] = now;
-    }
-    this.saveSuggestionState();
-
-    this.log.info(TAG, `Emitting ${filtered.length} geofence suggestions`);
-    this.notifySuggestionListeners(filtered);
-  }
-
-  /** 获取位置发现建议 */
+  /** 获取位置发现建议 (stub — LocationDiscovery removed) */
   getLocationSuggestions(): GeofenceSuggestion[] {
-    return this.locationDiscovery.getSuggestions();
+    return [];
   }
 
-  /** 获取位置发现统计 */
+  /** 获取位置发现统计 (stub — LocationDiscovery removed) */
   getLocationDiscoveryStats(): DiscoveryStatsInfo {
-    return this.locationDiscovery.getStats();
+    return { historyCount: 0, clusterCount: 0, lastDiscovery: '' };
   }
 
   
@@ -3554,19 +3498,6 @@ export class ContextAwarenessService {
       lines.push(`📊 传感器层级: T${snapshot.sensorTier}`);
     }
 
-    // Stream RL 学习阶段
-    try {
-      let engine = ContextEngineService.getInstance();
-      let rlStatsJson = engine.getStreamRLStats();
-      let rlStats: Record<string, Object> = JSON.parse(rlStatsJson) as Record<string, Object>;
-      let totalSamples = (rlStats['totalSamples'] as number) ?? 0;
-      let totalArms = (rlStats['totalArms'] as number) ?? 0;
-      if (totalArms > 0) {
-        let rlPhase = totalSamples < 10 ? '冷启动' : totalSamples < 50 ? '学习中' : '已收敛';
-        lines.push(`🧠 RL: ${rlPhase} (${totalArms}模型, ${totalSamples}样本)`);
-      }
-    } catch { /* RL stats not available */ }
-
     return lines.join('\n');
   }
 
@@ -4483,8 +4414,7 @@ export class ContextAwarenessService {
    * Get currently actionable suggestions (filtered).
    */
   getFilteredSuggestions(): GeofenceSuggestion[] {
-    let raw = this.locationDiscovery.getSuggestions();
-    return this.filterSuggestions(raw);
+    return [];
   }
 
 

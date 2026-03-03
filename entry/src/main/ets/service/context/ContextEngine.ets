@@ -5,7 +5,7 @@
  *   - 管理规则的加载/持久化
  *   - 从 ContextAwarenessService 获取传感器数据，转为 ContextMap
  *   - 调用 C++ evaluate，返回推荐结果
- *   - 处理用户反馈 (MAB reward)
+ *   - 管理状态转移追踪器持久化
  */
 import contextEngine from 'libcontext_engine.so';
 import { preferences } from '@kit.ArkData';
@@ -29,44 +29,11 @@ function nativeRemoveRule(id: string): boolean {
 function nativeEvaluate(json: string, max: number): string {
   return contextEngine.evaluate(json, max) as string;
 }
-function nativeUpdateReward(id: string, reward: number): void {
-  contextEngine.updateReward(id, reward);
-}
-function nativeSelectAction(json: string): number {
-  return contextEngine.selectAction(json) as number;
-}
-function nativeGetStats(): string {
-  return contextEngine.getStats() as string;
-}
-function nativeLoadStats(json: string): void {
-  contextEngine.loadStats(json);
-}
 function nativeGetRuleCount(): number {
   return contextEngine.getRuleCount() as number;
 }
 function nativeExportRules(): string {
   return contextEngine.exportRules() as string;
-}
-function nativeExportLinUCB(): string {
-  return contextEngine.exportLinUCB() as string;
-}
-function nativeImportLinUCB(json: string): void {
-  contextEngine.importLinUCB(json);
-}
-function nativeTrainStreamRL(actionId: string, reward: number, contextJson: string): void {
-  contextEngine.trainStreamRL(actionId, reward, contextJson);
-}
-function nativeExportStreamRL(): string {
-  return contextEngine.exportStreamRL() as string;
-}
-function nativeImportStreamRL(json: string): void {
-  contextEngine.importStreamRL(json);
-}
-function nativeGetStreamRLStats(): string {
-  return contextEngine.getStreamRLStats() as string;
-}
-function nativeGetStreamRLArmSamples(actionId: string): number {
-  return contextEngine.getStreamRLArmSamples(actionId) as number;
 }
 function nativeGetTransitionInfo(): string {
   return contextEngine.getTransitionInfo() as string;
@@ -198,7 +165,7 @@ export class ContextEngineService {
   }
 
   /**
-   * Initialize engine: load rules from unified storage and MAB stats.
+   * Initialize engine: load rules from unified storage.
    *
    * Rule loading strategy:
    * 1. Try loading from preferences ('all_rules') — this is the single source of truth
@@ -238,24 +205,6 @@ export class ContextEngineService {
 
       // Parse function field from rules JSON for ArkTS-side routing
       this.parseRuleFunctions(allRulesJson);
-
-      // Load MAB stats
-      let statsJson: string = String(await this.prefsStore.get('mab_stats', '{}'));
-      nativeLoadStats(statsJson);
-
-      // Load LinUCB state
-      let linucbJson: string = String(await this.prefsStore.get('linucb_state', ''));
-      if (linucbJson.length > 0) {
-        nativeImportLinUCB(linucbJson);
-        log.info(TAG, 'LinUCB state restored');
-      }
-
-      // Load Stream RL state
-      let streamRLJson: string = String(await this.prefsStore.get('stream_rl_state', ''));
-      if (streamRLJson.length > 0) {
-        nativeImportStreamRL(streamRLJson);
-        log.info(TAG, 'Stream RL state restored');
-      }
 
       // Load transition state
       let transitionJson: string = String(await this.prefsStore.get('transition_state', ''));
@@ -663,49 +612,14 @@ export class ContextEngineService {
     }
   }
 
-  /** Record user feedback for MAB + LinUCB + Stream RL learning */
+  /** Record user feedback (persists transition state) */
   async feedback(actionId: string, reward: number, snapshot?: ContextSnapshot): Promise<void> {
-    if (snapshot) {
-      let ctxJson = JSON.stringify(snapshot);
-      contextEngine.updateReward(actionId, reward, ctxJson);
-      // Train Stream RL with the same context
-      nativeTrainStreamRL(actionId, reward, ctxJson);
-    } else {
-      nativeUpdateReward(actionId, reward);
-    }
-    await this.persistStats();
-    await this.persistLinUCB();
-    await this.persistStreamRL();
     await this.persistTransitionState();
-  }
-
-  /** Action selection from candidates. Uses LinUCB if context provided, MAB fallback otherwise. */
-  selectAction(actionIds: string[], snapshot?: ContextSnapshot): number {
-    let json = JSON.stringify(actionIds);
-    if (snapshot) {
-      return contextEngine.selectAction(json, JSON.stringify(snapshot)) as number;
-    }
-    return nativeSelectAction(json);
   }
 
   /** Get rule count */
   getRuleCount(): number {
     return nativeGetRuleCount();
-  }
-
-  /** Get MAB stats */
-  getStats(): string {
-    return nativeGetStats();
-  }
-
-  /** Get Stream RL summary stats as JSON */
-  getStreamRLStats(): string {
-    return nativeGetStreamRLStats();
-  }
-
-  /** Get Stream RL sample count for a specific arm */
-  getStreamRLArmSamples(actionId: string): number {
-    return nativeGetStreamRLArmSamples(actionId);
   }
 
   /** Get state transition info as JSON string (for UI path bar) */
@@ -843,27 +757,6 @@ export class ContextEngineService {
   /** @deprecated — kept for backward compatibility, now just calls persistRules */
   private async persistUserRules(): Promise<void> {
     await this.persistRules();
-  }
-
-  private async persistStats(): Promise<void> {
-    if (!this.prefsStore) return;
-    let json = nativeGetStats();
-    await this.prefsStore.put('mab_stats', json);
-    await this.prefsStore.flush();
-  }
-
-  private async persistLinUCB(): Promise<void> {
-    if (!this.prefsStore) return;
-    let json = nativeExportLinUCB();
-    await this.prefsStore.put('linucb_state', json);
-    await this.prefsStore.flush();
-  }
-
-  private async persistStreamRL(): Promise<void> {
-    if (!this.prefsStore) return;
-    let json = nativeExportStreamRL();
-    await this.prefsStore.put('stream_rl_state', json);
-    await this.prefsStore.flush();
   }
 
   private async persistTransitionState(): Promise<void> {

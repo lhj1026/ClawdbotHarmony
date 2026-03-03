@@ -198,36 +198,15 @@ export class FederatedSync {
 
       let engine = ContextEngineService.getInstance();
       let rulesJson = engine.exportRules();
-      let statsJson = engine.getStats();
-
-      // LinUCB state (exported from C++ context_engine)
+      let statsJson = '{}';
       let linucbJson = '';
-      try {
-        // exportLinUCB is exposed via the native module
-        linucbJson = (engine as Object as Record<string, Function>)['exportLinUCB']
-          ? '' : ''; // LinUCB 在 ContextEngine NAPI 层导出
-      } catch (e) {
-        // LinUCB export not critical
-      }
 
       // 导出行为模式
       let patterns = this.exportBehaviorPatterns();
       let patternsJson = JSON.stringify(patterns);
 
-      // 获取本地数据点数
-      let dataPoints = 0;
-      try {
-        let statsObj: Object = JSON.parse(statsJson);
-        let statsMap = statsObj as Record<string, Record<string, number>>;
-        for (let key of Object.keys(statsMap)) {
-          let arm = statsMap[key];
-          if (arm && arm['pulls']) {
-            dataPoints += arm['pulls'];
-          }
-        }
-      } catch (e) { /* stats parse fail is ok */ }
-
       // C++ 构建匿名化模型更新
+      let dataPoints = 0;
       let updateJson = nativeBuildModelUpdate(
         rulesJson, statsJson, linucbJson, patternsJson, dataPoints);
 

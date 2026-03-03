@@ -1,6 +1,6 @@
 /**
  * ContextSettingsPage — 情景智能管理页面
- * 功能：地理围栏管理 / 规则引擎状态 / MAB 统计
+ * 功能：地理围栏管理 / 规则引擎状态 / 反馈统计
  */
 import { router, promptAction } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
@@ -37,7 +37,6 @@ struct ContextSettingsPage {
   @State geofenceDetails: string[] = [];
   @State geofenceIds: string[] = [];
   @State ruleCount: number = 0;
-  @State mabStats: string = '';
   @State engineStatus: string = '';
   @State suggestions: GeofenceSuggestion[] = [];
   @State discoveryStats: string = '';
@@ -56,13 +55,6 @@ struct ContextSettingsPage {
   @State fbRatioText: string = '--';
   @State fbTopRuleNames: string[] = [];
   @State fbTopRuleScores: string[] = [];
-
-  // Stream RL 统计
-  @State rlTotalArms: number = 0;
-  @State rlTotalSamples: number = 0;
-  @State rlTopArmIds: string[] = [];
-  @State rlTopArmSamples: string[] = [];
-  @State rlTopArmRewards: string[] = [];
 
   // 积极探索模式
   @State exploreMode: boolean = false;
@@ -338,7 +330,6 @@ struct ContextSettingsPage {
       this.ruleCount = 0;
     }
     this.refreshFeedbackStats();
-    this.refreshStreamRLStats();
     this.refreshDiscoveredPlaces();
     this.refreshTimeline();
   }
@@ -410,36 +401,6 @@ struct ContextSettingsPage {
     } catch (err) {
       this.fbTotal = 0;
       this.fbRatioText = '--';
-    }
-  }
-
-  private refreshStreamRLStats(): void {
-    try {
-      let json = ContextEngineService.getInstance().getStreamRLStats();
-      let stats: Record<string, Object> = JSON.parse(json) as Record<string, Object>;
-      this.rlTotalArms = (stats['totalArms'] as number) ?? 0;
-      this.rlTotalSamples = (stats['totalSamples'] as number) ?? 0;
-
-      let arms: Array<Record<string, Object>> = (stats['arms'] as Array<Record<string, Object>>) ?? [];
-      // Sort by samples descending, take top 5
-      arms.sort((a: Record<string, Object>, b: Record<string, Object>): number =>
-        ((b['samples'] as number) ?? 0) - ((a['samples'] as number) ?? 0)
-      );
-      let top = arms.slice(0, 5);
-      let ids: string[] = [];
-      let samples: string[] = [];
-      let rewards: string[] = [];
-      for (let arm of top) {
-        ids.push((arm['id'] as string) ?? '');
-        samples.push(((arm['samples'] as number) ?? 0).toString());
-        rewards.push(((arm['avgReward'] as number) ?? 0).toFixed(2));
-      }
-      this.rlTopArmIds = ids;
-      this.rlTopArmSamples = samples;
-      this.rlTopArmRewards = rewards;
-    } catch {
-      this.rlTotalArms = 0;
-      this.rlTotalSamples = 0;
     }
   }
 
@@ -1493,190 +1454,6 @@ struct ContextSettingsPage {
             .backgroundColor(Color.White)
             .borderRadius(12)
 
-            // ===== Stream Deep RL =====
-            Column() {
-              Row() {
-                Text('Stream Deep RL')
-                  .fontSize(16)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor('#1A1A1A')
-                  .layoutWeight(1)
-                Text(I18n.t('ctx.tray.refresh'))
-                  .fontSize(14)
-                  .fontColor('#007AFF')
-                  .onClick(() => {
-                    this.refreshStreamRLStats();
-                    try { promptAction.showToast({ message: 'RL stats refreshed', duration: 1500 }); } catch {}
-                  })
-              }
-              .width('100%')
-              .margin({ bottom: 12 })
-
-              Row() {
-                Column() {
-                  Text(this.rlTotalArms.toString())
-                    .fontSize(22)
-                    .fontWeight(FontWeight.Bold)
-                    .fontColor('#1A1A1A')
-                  Text('活跃模型')
-                    .fontSize(11)
-                    .fontColor('#999999')
-                    .margin({ top: 2 })
-                }
-                .layoutWeight(1)
-                .alignItems(HorizontalAlign.Center)
-
-                Column() {
-                  Text(this.rlTotalSamples.toString())
-                    .fontSize(22)
-                    .fontWeight(FontWeight.Bold)
-                    .fontColor('#9C27B0')
-                  Text('训练样本')
-                    .fontSize(11)
-                    .fontColor('#999999')
-                    .margin({ top: 2 })
-                }
-                .layoutWeight(1)
-                .alignItems(HorizontalAlign.Center)
-
-                Column() {
-                  Text(this.rlTotalSamples < 10 ? '冷启动' : this.rlTotalSamples < 50 ? '学习中' : '已收敛')
-                    .fontSize(16)
-                    .fontWeight(FontWeight.Medium)
-                    .fontColor(this.rlTotalSamples < 10 ? '#FF9800' : this.rlTotalSamples < 50 ? '#2196F3' : '#4CAF50')
-                  Text('🧠 阶段')
-                    .fontSize(11)
-                    .fontColor('#999999')
-                    .margin({ top: 2 })
-                }
-                .layoutWeight(1)
-                .alignItems(HorizontalAlign.Center)
-              }
-              .width('100%')
-              .padding({ top: 4, bottom: 8 })
-
-              if (this.rlTopArmIds.length > 0) {
-                Divider().color('#F0F0F0').margin({ top: 8, bottom: 8 })
-                Text(`Top ${this.rlTopArmIds.length} 模型`)
-                  .fontSize(13)
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor('#666666')
-                  .width('100%')
-                  .margin({ bottom: 6 })
-                ForEach(this.rlTopArmIds, (armId: string, idx: number) => {
-                  Row() {
-                    Text((idx + 1).toString() + '.')
-                      .fontSize(13)
-                      .fontColor('#9C27B0')
-                      .fontWeight(FontWeight.Bold)
-                      .width(20)
-                    Text(armId)
-                      .fontSize(13)
-                      .fontColor('#1A1A1A')
-                      .layoutWeight(1)
-                      .maxLines(1)
-                      .textOverflow({ overflow: TextOverflow.Ellipsis })
-                    Text(idx < this.rlTopArmSamples.length
-                      ? `${this.rlTopArmSamples[idx]}次 / 奖励${this.rlTopArmRewards[idx]}`
-                      : '')
-                      .fontSize(12)
-                      .fontColor('#999999')
-                  }
-                  .width('100%')
-                  .padding({ top: 3, bottom: 3 })
-                }, (armId: string, idx: number) => armId + '_' + idx.toString())
-              }
-            }
-            .width('100%')
-            .padding(16)
-            .backgroundColor(Color.White)
-            .borderRadius(12)
-
-            // ===== MAB =====
-            Column() {
-              Row() {
-                Text(I18n.t('ctx.mab.title'))
-                  .fontSize(16)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor('#1A1A1A')
-                  .layoutWeight(1)
-                Text(I18n.t('ctx.tray.refresh'))
-                  .fontSize(14)
-                  .fontColor('#007AFF')
-                  .onClick(() => {
-                    try { this.mabStats = ContextEngineService.getInstance().getStats(); } catch (e) {}
-                  })
-              }
-              .width('100%')
-              .margin({ bottom: 8 })
-              Text(this.mabStats.length > 2 ? this.mabStats : I18n.t('ctx.mab.noData'))
-                .fontSize(12)
-                .fontColor('#999999')
-                .width('100%')
-            }
-            .width('100%')
-            .padding(16)
-            .backgroundColor(Color.White)
-            .borderRadius(12)
-
-            // ===== 位置自动发现 =====
-            Column() {
-              Row() {
-                Text('📍 ' + I18n.t('ctx.discovery.title'))
-                  .fontSize(16)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor('#1A1A1A')
-                  .layoutWeight(1)
-                Text(I18n.t('ctx.discovery.runNow'))
-                  .fontSize(14)
-                  .fontColor('#007AFF')
-                  .onClick(() => { this.triggerDiscovery(); })
-              }
-              .width('100%')
-              .margin({ bottom: 8 })
-
-              Text(this.discoveryStats.length > 0 ? this.discoveryStats : I18n.t('ctx.discovery.notStarted'))
-                .fontSize(12)
-                .fontColor('#999999')
-                .width('100%')
-                .margin({ bottom: 8 })
-
-              if (this.suggestions.length === 0) {
-                Text(I18n.t('ctx.discovery.empty'))
-                  .fontSize(13)
-                  .fontColor('#999999')
-                  .width('100%')
-                  .textAlign(TextAlign.Center)
-                  .padding(16)
-              } else {
-                ForEach(this.suggestions, (s: GeofenceSuggestion) => {
-                  GeofenceSuggestionCard({
-                    suggestionId: s.id,
-                    name: s.name,
-                    category: s.category,
-                    reason: s.reason,
-                    confidence: s.confidence,
-                    latitude: s.latitude,
-                    longitude: s.longitude,
-                    radiusMeters: s.radiusMeters,
-                    onAccept: (id: string, name: string, category: string) => {
-                      this.handleAcceptSuggestion(id, name, category);
-                    },
-                    onIgnore: (id: string) => {
-                      this.handleIgnoreSuggestion(id);
-                    },
-                    onDefer: (id: string) => {
-                      this.handleDeferSuggestion(id);
-                    },
-                  })
-                    .margin({ bottom: 8 })
-                }, (s: GeofenceSuggestion) => s.id)
-              }
-            }
-            .width('100%')
-            .padding(16)
-            .backgroundColor(Color.White)
-            .borderRadius(12)
           }
           .padding({ left: 16, right: 16, top: 12, bottom: 40 })
         }
