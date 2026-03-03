@@ -3203,3 +3203,219 @@ Added I18n labels for all dimension values in both Chinese and English:
 ---
 
 *End of document*
+
+---
+
+## 26. Action Recommendation System: ActionRecommender (MLP + LinUCB + State Chain)
+
+### 26.1 Design Goals
+
+Upgrade from rule engine "rule matched → fixed action" to:
+- **Prior knowledge**: Learn 218 physical state → 40 standard action mappings from the recommendation matrix
+- **Personalized online learning**: Continuously adjust recommendation distribution based on real user feedback (accept / ignore / dismiss)
+- **State sequence awareness**: Include "where you came from" in features to recognize transition phases (just arrived / settling / settled)
+
+### 26.2 Overall Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    ActionRecommender                        │
+│                                                             │
+│  PhysicalState (curr) ──┐                                   │
+│  PhysicalState (prev) ──┤ ActFeature::fromPair()           │
+│  time_in_state_norm   ──┘         │                         │
+│                                   ▼                         │
+│                       185-dim feature vector                │
+│                  [curr 92] | [prev 92] | [t 1]              │
+│                           │                                 │
+│              ┌────────────┴────────────┐                    │
+│              ▼                         ▼                    │
+│  ActionMLP (185→128→64)        LinUCB (40 arms, 185-dim)   │
+│  prior prob  (weight 0.6)      UCB score (weight 0.4)       │
+│              └────────────┬────────────┘                    │
+│                           ▼                                 │
+│         combined = 0.6×mlp + 0.4×tanh(ucb)                 │
+│                           │                                 │
+│                      Top-3 recommendations                  │
+│                           │                                 │
+│           accept(1.0) / timeout(0.15) / dismiss(0.0)       │
+│                           ▼                                 │
+│           UCBArm[i].update(feat, reward)                    │
+│           → debounced save: ucb_state.bin                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 26.3 State Pair Encoding (185-dim Feature)
+
+**Core insight:** "Where you came from" is the strongest recommendation signal.
+
+| Same state | Previous state | Duration | Top-1 Recommendation |
+|------------|----------------|----------|----------------------|
+| Workday morning, office | Commute | Just arrived (0.0) | B1 View today's schedule (54%) |
+| Workday morning, office | Office | Long sit (0.67) | G1 Sedentary reminder (46%) |
+| Workday evening, driving | Office | Just left (0.0) | E1 Navigate home (appears) |
+| Workday evening, driving | Unknown | — | D1 Play music (dominates) |
+
+**185-dim feature layout:**
+```
+x[0..91]   = current state 92-dim one-hot
+x[92..183] = previous state 92-dim one-hot   ← state chain core
+x[184]     = time_norm (time in current state normalized)
+  0.0 = just arrived  (<5min)
+  0.33 = settling      (5-30min)
+  0.67 = settled       (30min-2h)
+  1.0  = long stay     (>2h)
+```
+
+**Single-state 92-dim layout (used for both curr and prev):**
+
+| Dim | Offset | Slots | Used | Reserved |
+|-----|--------|-------|------|----------|
+| time | 0 | 12 | 9 | 3 |
+| location | 12 | 36 | 15 | 21 |
+| motion | 48 | 8 | 4 | 4 |
+| phone | 56 | 12 | 8 | 4 |
+| light | 68 | 8 | 5 | 3 |
+| sound | 76 | 8 | 5 | 3 |
+| dayType | 84 | 8 | 4 | 4 |
+| **Total** | | **92** | 50 | 42 |
+
+**Extension rules (never break existing offsets):**
+- Add new locations (G-Z): use reserved location slots (idx 24-34), zero code changes
+- Add new motion/phone types: use reserved slots in that dimension, zero changes
+- Add new actions: add to ACTIONS array + matrix row → retrain (30 seconds)
+
+### 26.4 StateHistory Ring Buffer (C++)
+
+```cpp
+struct StateHistory {
+    static const int MAX = 8;
+
+    void push(const PhysicalState& s);  // call on every state change
+    const PhysicalState* prev() const;  // previous state (nullptr if none)
+    float timeNorm() const;             // time in current state, normalized 0.0~1.0
+};
+
+// ActionRecommender maintains this automatically:
+// recommend(s) → history_.push(s) → fromPair(s, *prev, timeNorm)
+// reward(s, idx, r) → also uses state pair feature to update UCBArm
+```
+
+### 26.5 ActionMLP Network
+
+| Version | Input | Hidden | Output | Params |
+|---------|-------|--------|--------|--------|
+| v1 (single state) | 71 | 64 | 40 | ~7K |
+| v2 (reserved slots) | 92 | 80 | 64 | ~13K |
+| **v3 (state pair)** | **185** | **128** | **64** | **~32K** |
+
+Top-3 hit rate: 99.0% (4752 oversampled training samples)
+
+### 26.6 LinUCB (Contextual Multi-Armed Bandit)
+
+One UCB arm per action (40 defined):
+
+```
+UCBArm[i]:
+  A[185×185]  — feature covariance matrix (initialized to identity)
+  b[185]      — reward accumulator
+
+score(x) = θᵀx + α·√(xᵀA⁻¹x)
+  θ = A⁻¹b (diagonal approx: θ[i] ≈ b[i]/A[i][i])
+  α = 0.3 (exploration parameter)
+
+update(x, r): A += xxᵀ, b += r·x
+```
+
+**Cold start:** MLP provides prior (weight 0.6), LinUCB starts from scratch (weight 0.4).  
+After ~**50-100** meaningful interactions LinUCB starts outperforming pure MLP; ~**1000** interactions → fully personalized.
+
+### 26.7 Training Data Generation (Offline)
+
+**Source:** 218 recommendation matrix rows × synthesized transitions = ~1806 state pair samples
+
+**Transition synthesis rules (TRANSITION_PROBS):**
+
+| Current location | Probable previous locations |
+|------------------|-----------------------------|
+| home | commute(50%) / outdoor(20%) / restaurant(15%) / work(15%) |
+| work | commute(60%) / home(20%) / restaurant(10%) / outdoor(10%) |
+| commute | home(55%) / work(45%) |
+| airport | commute(50%) / home(30%) / work(20%) |
+| restaurant | work(40%) / outdoor(25%) / home(20%) / shopping(15%) |
+| subway/bus_stop | home(50%) / work(50%) |
+| cafe | work(50%) / outdoor(30%) / home(20%) |
+
+**Time bucket synthesis:**
+- Location change → generate `time=0.0/0.33/0.67` (just arrived / settling / settled)
+- Same location → generate `time=0.33/0.67/1.0` (no "just arrived")
+
+**High-confidence oversampling:** Samples with confidence ≥ 0.8 are extra-duplicated to prevent rare actions (e.g., airport itinerary check) from being drowned out.
+
+**Training commands:**
+```bash
+node scripts/generate_training_data.js    # → training_data.json (1806 samples)
+python3 scripts/train_action_mlp.py       # → action_weights.h  (W1: 128×185)
+node tests/context_ai/unit/test_action_recommender.js  # 8/8 pass
+```
+
+### 26.8 ActionCatalog (40 Standard Actions)
+
+64 slots (24 reserved), format `[CategoryLetter][N]`:
+
+| Category | Codes | Actions |
+|----------|-------|---------|
+| A - 🎫 QR Pass | A1~A4 | Metro / Bus / Payment / Ticket |
+| B - 📅 Schedule | B1~B9 | Today/tomorrow/afternoon schedule, alarm, departure reminder, check-in |
+| C - 🌤 Weather | C1 | Weather query |
+| D - 🎵 Media | D1~D4 | Music / White noise / Podcast / News |
+| E - 🗺 Navigation | E1~E8 | Home / Work / Restaurant / Shop / Hub / Attraction / Generic / Parking |
+| F - 🚌 Transit | F1~F4 | ETA / Stop reminder / Ferry schedule / Showtime |
+| G - 💪 Health | G1~G5 | Sedentary / Hydration / Stretch / Steps / Rest |
+| H - 🍽 Food | H1 | Food suggestion |
+| I - 👤 Social | I1 | Contact reminder |
+| J - 📱 System | J1~J3 | Mute notifications / Confirm silent / Safety alert |
+| K-Z | Reserved | Future expansion |
+
+### 26.9 UI Feedback Pipeline
+
+```
+A2UI card displayed
+  ↓
+RecommenderBridge.recordShown(stateCode, [{code:"B7",...}])
+  ↓ start 30s timeout
+
+User taps action button
+  → context_feedback { feedback:"accept", actionCode:"B7" }
+  → reward(state, "B7", 1.0)   ← strong positive
+
+User taps × to dismiss card
+  → context_feedback { feedback:"reject" }
+  → reward(state, all_shown, 0.0)   ← negative for all shown actions
+
+Card auto-dismissed after 30s inactivity
+  → checkPreviousTimeout()
+  → reward(state, *, 0.15)   ← weak negative (may not have seen it)
+
+App goes to background
+  → RecommenderBridge.flush()
+  → save: ucb_state.bin   ← persist UCB parameters
+```
+
+### 26.10 File Manifest
+
+| File | Description |
+|------|-------------|
+| `entry/src/main/cpp/context_engine/action_recommender.h` | C++ MLP inference + LinUCB + StateHistory |
+| `entry/src/main/cpp/context_engine/action_weights.h` | Pre-trained weights (auto-generated, do not edit) |
+| `entry/src/main/ets/service/context/RecommenderBridge.ets` | ArkTS bridge (predict / reward / flush) |
+| `scripts/generate_training_data.js` | State pair training data generator |
+| `scripts/train_action_mlp.py` | MLP training script (numpy, ~30 seconds) |
+| `scripts/training_data.json` | Training data (1806 samples) |
+| `docs/ps-recommendation-matrix.md` | Recommendation matrix (218 rows, StateCode primary key) |
+| `docs/action-catalog.json` | Standard action catalog (JSON) |
+| `tests/context_ai/unit/test_action_recommender.js` | 8-scenario inference tests |
+
+---
+
+*End of document*
