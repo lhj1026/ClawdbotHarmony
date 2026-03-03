@@ -601,6 +601,11 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"getTransitionInfo",      nullptr, GetTransitionInfo,      nullptr, nullptr, nullptr, napi_default, nullptr},
         {"exportTransitionState",  nullptr, ExportTransitionState,  nullptr, nullptr, nullptr, napi_default, nullptr},
         {"importTransitionState",  nullptr, ImportTransitionState,  nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"recommenderInit",    nullptr, RecommenderInit,    nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"recommenderPredict", nullptr, RecommenderPredict, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"recommenderReward",  nullptr, RecommenderReward,  nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"recommenderSave",    nullptr, RecommenderSave,    nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"recommenderStats",   nullptr, RecommenderStats,   nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     return exports;
@@ -619,4 +624,150 @@ static napi_module contextEngineModule = {
 
 extern "C" __attribute__((constructor)) void RegisterContextEngineModule(void) {
     napi_module_register(&contextEngineModule);
+}
+
+// ============================================================
+// ActionRecommender — MLP + LinUCB 推荐器 NAPI 桥接
+// ============================================================
+
+#define HAVE_ACTION_WEIGHTS
+#include "action_weights.h"
+#include "action_recommender.h"
+
+// 全局推荐器单例（懒初始化）
+static context_engine::ActionRecommender* g_recommender = nullptr;
+static std::mutex g_rec_mu;
+static int g_reward_count = 0;
+static const int SAVE_INTERVAL = 5;  // 每5次反馈自动保存
+static std::string g_save_path;      // ArkTS 初始化时设置
+
+static context_engine::ActionRecommender& getRecommender() {
+    if (!g_recommender) {
+        std::lock_guard<std::mutex> lk(g_rec_mu);
+        if (!g_recommender) g_recommender = new context_engine::ActionRecommender();
+    }
+    return *g_recommender;
+}
+
+/**
+ * recommenderInit(savePath: string): void
+ * 初始化推荐器，加载持久化 UCB 参数。App 启动时调用。
+ */
+static napi_value RecommenderInit(napi_env env, napi_callback_info info) {
+    size_t argc = 1; napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc >= 1) {
+        g_save_path = napiGetString(env, args[0]);
+        std::lock_guard<std::mutex> lk(g_rec_mu);
+        getRecommender().load(g_save_path);  // 如果文件不存在静默忽略
+    }
+    return nullptr;
+}
+
+/**
+ * recommenderPredict(stateCode: string, topK?: number): string
+ * 返回 JSON 数组: [{code:"B7", name:"检查行程/车票", score:0.85}, ...]
+ */
+static napi_value RecommenderPredict(napi_env env, napi_callback_info info) {
+    size_t argc = 2; napi_value args[2];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 1) return napiString(env, "[]");
+
+    std::string stateCode = napiGetString(env, args[0]);
+    int topK = 3;
+    if (argc >= 2) {
+        int32_t k; napi_get_value_int32(env, args[1], &k); topK = k;
+    }
+
+    // 解码 StateCode → PhysicalState
+    context_engine::PhysicalState state;
+    if (stateCode.size() >= 7) {
+        state.time     = stateCode[0];
+        state.location = stateCode[1];
+        state.motion   = stateCode[2];
+        state.phone    = stateCode[3];
+        state.light    = stateCode[4];
+        state.sound    = stateCode[5];
+        state.dayType  = stateCode[6];
+    }
+
+    auto recs = getRecommender().recommend(state, topK);
+
+    std::ostringstream oss;
+    oss << "[";
+    for (size_t i = 0; i < recs.size(); ++i) {
+        if (i > 0) oss << ",";
+        oss << "{\"code\":\"" << recs[i].code << "\""
+            << ",\"name\":\"" << recs[i].name << "\""
+            << ",\"score\":" << std::fixed << std::setprecision(4) << recs[i].score
+            << ",\"mlpProb\":" << std::fixed << std::setprecision(4) << recs[i].mlp_prob
+            << "}";
+    }
+    oss << "]";
+    return napiString(env, oss.str());
+}
+
+/**
+ * recommenderReward(stateCode: string, actionCode: string, reward: number): void
+ * reward: 1.0=接受, 0.5=中性, 0.0=拒绝
+ * 每 SAVE_INTERVAL 次自动保存到 savePath
+ */
+static napi_value RecommenderReward(napi_env env, napi_callback_info info) {
+    size_t argc = 3; napi_value args[3];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 3) return nullptr;
+
+    std::string stateCode   = napiGetString(env, args[0]);
+    std::string actionCode  = napiGetString(env, args[1]);
+    double rewardVal = 0.0;
+    napi_get_value_double(env, args[2], &rewardVal);
+
+    // 解码 PhysicalState
+    context_engine::PhysicalState state;
+    if (stateCode.size() >= 7) {
+        state.time = stateCode[0]; state.location = stateCode[1];
+        state.motion = stateCode[2]; state.phone = stateCode[3];
+        state.light = stateCode[4]; state.sound = stateCode[5];
+        state.dayType = stateCode[6];
+    }
+
+    int actIdx = context_engine::actionIndex(actionCode);
+    if (actIdx >= 0) {
+        getRecommender().reward(state, actIdx, static_cast<float>(rewardVal));
+        // 自动保存
+        std::lock_guard<std::mutex> lk(g_rec_mu);
+        ++g_reward_count;
+        if (!g_save_path.empty() && g_reward_count % SAVE_INTERVAL == 0) {
+            getRecommender().save(g_save_path);
+        }
+    }
+    return nullptr;
+}
+
+/**
+ * recommenderSave(path?: string): void
+ * 立即保存 UCB 参数（App 退到后台时调用）
+ */
+static napi_value RecommenderSave(napi_env env, napi_callback_info info) {
+    size_t argc = 1; napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    std::string path = (argc >= 1) ? napiGetString(env, args[0]) : g_save_path;
+    if (!path.empty()) getRecommender().save(path);
+    return nullptr;
+}
+
+/**
+ * recommenderStats(): string
+ * 返回 JSON: [{code:"B7", updates:5, avgReward:0.8}, ...]
+ */
+static napi_value RecommenderStats(napi_env env, napi_callback_info info) {
+    auto stats = getRecommender().stats();
+    std::ostringstream oss; oss << "[";
+    for (size_t i = 0; i < stats.size(); ++i) {
+        if (i > 0) oss << ",";
+        oss << "{\"code\":\"" << stats[i].code << "\""
+            << ",\"updates\":" << stats[i].updates
+            << ",\"avgReward\":" << std::fixed << std::setprecision(3) << stats[i].avgReward << "}";
+    }
+    oss << "]"; return napiString(env, oss.str());
 }

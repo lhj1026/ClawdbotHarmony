@@ -55,6 +55,7 @@ import { Monitor } from '../ModuleMonitor';
 import { ContextAwarenessService, ContextRecommendation, LocationCandidate, ActivityCandidate } from '../context/ContextAwarenessService';
 import { ContextEngineService, ContextSnapshot, ContextRule, ContextCondition, ContextAction, MatchResult, GeofenceBinding } from '../context/ContextEngine';
 import { FeedbackService } from '../context/FeedbackService';
+import { RecommenderBridge, FeedbackType } from '../context/RecommenderBridge';
 import { ActionExecutor, ActionResult } from '../context/ActionExecutor';
 import { SceneRouter, SceneEvaluation } from '../context/scenes/SceneRouter';
 import { SceneMatch, SceneAction } from '../context/scenes/ScenePlugin';
@@ -88,6 +89,13 @@ interface PendingAlternative {
   actionDesc: string;  // 显示文本
   actionType: string;
   actionFunction?: string;  // 执行功能（如 morning_briefing, calendar_summary）
+  actionCode?: string;      // ActionCatalog 动作代号（如 "B7"），供 LinUCB 反馈
+}
+
+// 记录当前 A2UI 卡片推荐时的状态码（用于 LinUCB 反馈）
+interface PendingRecContext {
+  stateCode: string;
+  actionCodes: string[];  // 展示的所有动作代号
 }
 
 export class NodeRuntime {
@@ -211,6 +219,7 @@ export class NodeRuntime {
   private _lastRecRuleId: string = '';
   // 等待状态确认后才弹出的推荐
   private _pendingStateRec: PendingStateRec | null = null;
+  private _pendingRecContext: PendingRecContext | null = null;  // LinUCB 反馈上下文
   // A2UI 状态卡片去重：记录上次显示的状态文本
   private _lastStateCardText: string = '';
   private _lastStateCardTime: number = 0;
@@ -691,6 +700,26 @@ export class NodeRuntime {
 
       // 按置信度降序排序
       alternatives.sort((a: PendingAlternative, b: PendingAlternative) => b.confidence - a.confidence);
+
+      // ── 记录 LinUCB 反馈上下文（状态码 + 所有展示的动作代号）────
+      try {
+        let currentStateCode = ContextEngineService.getInstance().getCurrentStateCode?.() ?? '';
+        if (currentStateCode.length >= 7) {
+          let actionCodes = alternatives
+            .map((alt: PendingAlternative) => alt.actionCode ?? '')
+            .filter((c: string) => c.length >= 2);
+          this._pendingRecContext = { stateCode: currentStateCode, actionCodes };
+          RecommenderBridge.getInstance().recordShown(currentStateCode,
+            alternatives.map((alt: PendingAlternative) => ({
+              code: alt.actionCode ?? '',
+              name: alt.actionDesc,
+              score: alt.confidence / 100.0,
+              mlpProb: 0
+            }))
+          );
+        }
+      } catch (_e) { /* getCurrentStateCode 可能未实现，静默跳过 */ }
+      // ────────────────────────────────────────────────────────────
 
       // 获取转移路径信息
       let transitionJson = '';
@@ -1363,6 +1392,16 @@ export class NodeRuntime {
         let delta = 0.2;
         this.adjustRulePriority(engine, ruleId, delta);
         fbService.onThumbsUp(ruleId);
+
+        // ── LinUCB 正反馈 ────────────────────────────────────────
+        let acceptedCode = ctx['actionCode'] as string ?? '';
+        if (acceptedCode && this._pendingRecContext) {
+          RecommenderBridge.getInstance().reward(
+            this._pendingRecContext.stateCode, acceptedCode, FeedbackType.ACCEPT);
+        }
+        this._pendingRecContext = null;
+        // ────────────────────────────────────────────────────────
+
         let displayName = ruleName.length > 0 ? ruleName : ruleId;
         let acceptMsg = `✅ ${I18n.t('ctx.fb.accepted')}\n\n` +
           `📋 ${I18n.t('ctx.fb.rule')}：${displayName}\n` +
@@ -1377,6 +1416,17 @@ export class NodeRuntime {
       } else if (feedback === 'reject') {
         // Negative: decrease priority
         this.dispatchA2UI('reset', '');
+
+        // ── LinUCB 负反馈（所有展示的动作） ──────────────────────
+        if (this._pendingRecContext) {
+          let rec = RecommenderBridge.getInstance();
+          for (const code of this._pendingRecContext.actionCodes) {
+            rec.reward(this._pendingRecContext.stateCode, code, FeedbackType.DISMISS);
+          }
+          this._pendingRecContext = null;
+        }
+        // ────────────────────────────────────────────────────────
+
         let delta = -0.3;
         fbService.onThumbsDown(ruleId);
         let displayName = ruleName.length > 0 ? ruleName : ruleId;
