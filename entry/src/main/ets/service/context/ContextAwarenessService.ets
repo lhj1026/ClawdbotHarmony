@@ -1272,18 +1272,16 @@ export class ContextAwarenessService {
     let z = this.accelerometerData.z;
     let tilt = this.lastTiltAngle;
 
-    // 三种躺卧场景：
+    // 躺卧判断：两种场景
     //
-    // 1. 仰卧（屏幕朝向脸部）：tiltAngle ∈ [-80°, -15°]
-    //    修复原先 -18°~-60° 的盲区
+    // 1. 仰卧（屏幕斜朝向脸部）：tiltAngle ∈ [-80°, -15°]
+    //    覆盖了原先 -18°~-60° 的盲区
     let isBackLying = (tilt >= -80 && tilt <= -15);
 
-    // 2. 侧卧（手机水平，重力主要走 X 轴）：
-    //    站立手持时 |y| 大（重力沿手机长轴），侧卧时 |x| 大（重力横向穿过手机）
-    //    同时 |z| < 4（手机接近水平）
-    let isSideLying = (Math.abs(z) < 4) && (Math.abs(x) > Math.abs(y) * 1.2);
-
-    // 3. 俯卧/面朝下平放（已由 PhysicalStateBuilder 处理为 face_down）
+    // 2. 侧卧 / 近水平握持（手机接近水平 + 手握）：
+    //    侧卧时手机 z 轴分量很小（手机几乎水平）；站立时极少水平握持
+    //    |z| < 4.5 ≈ tiltAngle 在 [-27°, +27°] 之内（足够宽松覆盖各种侧卧角度）
+    let isSideLying = (Math.abs(z) < 4.5) && this.isHoldingPhone;
 
     if (isBackLying || isSideLying) {
       this.isLyingDown = true;

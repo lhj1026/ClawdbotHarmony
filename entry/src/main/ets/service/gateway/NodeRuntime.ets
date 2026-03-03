@@ -71,7 +71,7 @@ import { sensor } from '@kit.SensorServiceKit';
 import { AccessibilityService, ScreenNode, WindowInfo } from '../accessibility/AccessibilityService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.65.5';
+const APP_VERSION = '2.65.6';
 
 interface PendingStateRec {
   ruleId: string;
@@ -480,11 +480,11 @@ export class NodeRuntime {
     // 判断静止度
     let isStationary = this.isDeviceStationary();
 
-    // 三种躺卧场景（需要静止）：
+    // 躺卧判断（需要静止）：
     // 1. 仰卧：tiltAngle ∈ [-80°, -15°]（屏幕斜朝向脸部）
     let isBackLying = (tiltAngle >= -80 && tiltAngle <= -15) && isStationary;
-    // 2. 侧卧：|z| < 4 且 |x| > |y| × 1.2（重力主要走 X 轴，而非 Y 轴）
-    let isSideLying = (Math.abs(z) < 4) && (Math.abs(x) > Math.abs(y) * 1.2) && isStationary;
+    // 2. 侧卧 / 近水平握持：|z| < 4.5（手机接近水平）+ 静止（排除行走时偶发水平握法）
+    let isSideLying = (Math.abs(z) < 4.5) && isStationary;
 
     let wasLyingDown = this._isLyingDown;
     this._isLyingDown = isBackLying || isSideLying;
