@@ -137,17 +137,28 @@ export class PhysicalStateBuilder {
     let isCharging = this.trayValue('isCharging');
     if (isCharging === 'true') return 'charging';
 
+    // 加速度计的躺卧/握持状态 (高可信度)
+    let isLyingDown = this.trayValue('isLyingDown') === 'true';
+    let isHolding = this.trayValue('isHolding') === 'true';
+
     // 方式 1: PosturePlugin 的 phone_posture 直接映射 (主要来源)
-    // PosturePlugin 已通过 proximity + ambient_brightness + 倾斜角度分类
     let posture = this.trayValue('phone_posture');
     if (posture.length > 0 && posture !== 'unknown') {
       switch (posture) {
-        case 'in_use': return 'in_use';
-        case 'on_desk': return 'on_desk';
+        case 'in_use':
+          // 手握 + 躺卧 → 组合状态
+          if (isLyingDown) return 'holding_lying';
+          return 'in_use';
+        case 'on_desk':
+        case 'flat':
+          return 'on_desk';
         case 'in_pocket': return 'in_pocket';
         case 'face_down': return 'face_down';
-        case 'flat': return 'on_desk';
-        case 'face_up': return 'on_desk';
+        case 'face_up':
+          // 暗室 + 手握 + 躺卧 → 手握躺卧（暗室看手机）
+          if (isLyingDown && isHolding) return 'holding_lying';
+          // 暗室 + 非手握 → 平放暗室（放床头/桌上）
+          return 'face_up';
         default: break;
       }
     }
@@ -159,7 +170,14 @@ export class PhysicalStateBuilder {
     // 口袋必须 proximity=near；仅凭黑暗不能判断为口袋（可能是暗室躺着看手机）
     if (proximity === 'near' && ambientLight >= 0 && ambientLight < 5) return 'in_pocket';
     if (proximity === 'near' && ambientLight > 5) return 'face_down';
-    if (ambientLight >= 0 && ambientLight < 10) return 'face_up'; // 暗室，屏幕朝上
+    if (ambientLight >= 0 && ambientLight < 10) {
+      // 暗室：区分手握躺卧 vs 平放
+      if (isLyingDown && isHolding) return 'holding_lying';
+      return 'face_up';
+    }
+
+    // 加速度计兜底：即使 PosturePlugin 未知，若能确定躺卧+握持也给出状态
+    if (isLyingDown && isHolding) return 'holding_lying';
 
     return 'unknown';
   }

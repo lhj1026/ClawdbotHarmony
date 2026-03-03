@@ -916,8 +916,10 @@ function buildZh(): Map<string, string> {
   m.set('ps.motion.transit', '公共交通');
   m.set('ps.motion.unknown', '未知');
   // PhoneCategory
-  m.set('ps.phone.in_use', '使用中');
-  m.set('ps.phone.on_desk', '放桌上');
+  m.set('ps.phone.in_use', '手握使用');
+  m.set('ps.phone.holding_lying', '手握·躺卧');
+  m.set('ps.phone.on_desk', '平放桌上');
+  m.set('ps.phone.face_up', '平放暗室');
   m.set('ps.phone.in_pocket', '在口袋');
   m.set('ps.phone.face_down', '屏幕朝下');
   m.set('ps.phone.charging', '充电中');
@@ -1850,8 +1852,10 @@ function buildEn(): Map<string, string> {
   m.set('ps.motion.driving', 'Driving');
   m.set('ps.motion.transit', 'Transit');
   m.set('ps.motion.unknown', 'Unknown');
-  m.set('ps.phone.in_use', 'In Use');
+  m.set('ps.phone.in_use', 'Holding');
+  m.set('ps.phone.holding_lying', 'Lying+Holding');
   m.set('ps.phone.on_desk', 'On Desk');
+  m.set('ps.phone.face_up', 'Face Up (Dark)');
   m.set('ps.phone.in_pocket', 'In Pocket');
   m.set('ps.phone.face_down', 'Face Down');
   m.set('ps.phone.charging', 'Charging');

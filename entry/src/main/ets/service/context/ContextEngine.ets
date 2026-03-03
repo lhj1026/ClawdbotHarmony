@@ -162,7 +162,7 @@ export interface ContextSnapshot {
   ps_time?: string;             // TimeSlot: sleeping/dawn/morning/forenoon/lunch/afternoon/evening/night/late_night
   ps_location?: string;         // LocationCategory: home/work/commute/restaurant/gym/transit_hub/shopping/outdoor/cafe/unknown
   ps_motion?: string;           // MotionCategory: stationary/walking/running/cycling/driving/transit/unknown
-  ps_phone?: string;            // PhoneCategory: in_use/on_desk/in_pocket/face_down/charging/unknown
+  ps_phone?: string;            // PhoneCategory: in_use/holding_lying/on_desk/face_up/in_pocket/face_down/charging/unknown
   ps_light?: string;            // LightCategory: dark/dim/normal/bright
   ps_sound?: string;            // SoundCategory: silent/quiet/normal/noisy/unknown
   ps_dayType?: string;          // DayType: workday/weekend/holiday

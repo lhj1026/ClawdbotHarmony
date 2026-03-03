@@ -689,15 +689,16 @@ export type MotionCategory =
   | 'transit'     // 公共交通 (BT/GPS模式)
   | 'unknown';    // 数据不足
 
-/** 手机状态类别 (6 values) */
+/** 手机状态类别 (8 values) */
 export type PhoneCategory =
-  | 'in_use'      // 亮屏 + 距离传感器=远 + 环境光 > 50 lux
-  | 'on_desk'     // 平放 + 屏幕朝上 + 未充电
-  | 'in_pocket'   // 距离=近 + 环境光 < 5 lux
-  | 'face_down'   // 距离=近 + 环境光 > 5 lux
-  | 'face_up'     // 距离=远 + 暗室（躺床上看手机等场景）
-  | 'charging'    // 充电中 (覆盖其他姿态)
-  | 'unknown';    // 无传感器数据
+  | 'in_use'           // 亮屏 + 手握 + 正常坐/站
+  | 'holding_lying'    // 手握 + 躺卧（加速度计检测）
+  | 'on_desk'          // 平放 + 屏幕朝上 + 有环境光
+  | 'face_up'          // 屏幕朝上 + 暗室（放床头/桌上，非手握）
+  | 'in_pocket'        // 距离=近 + 环境光 < 5 lux
+  | 'face_down'        // 距离=近 + 环境光 > 5 lux
+  | 'charging'         // 充电中 (覆盖其他姿态)
+  | 'unknown';         // 无传感器数据
 
 /** 光线类别 (4 values) */
 export type LightCategory =
