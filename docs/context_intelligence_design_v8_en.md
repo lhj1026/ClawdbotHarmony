@@ -124,7 +124,7 @@
 - [24. State Transition Modeling and Feature Expansion](#24-state-transition-modeling-and-feature-expansion)
   - [24.1 7-Dimension State Model](#241-7-dimension-state-model)
   - [24.2 Scenario Enumeration (70 Scenarios)](#242-scenario-enumeration-70-scenarios)
-  - [24.3 Input Dimension Coverage Analysis](#243-input-dimension-coverage-analysis)
+  - [24.3 Input Dimension Coverage Analysis (Removed)](#243-input-dimension-coverage-analysis-removed)
   - [24.4 State Transition Features (9 Dimensions)](#244-state-transition-features-9-dimensions)
   - [24.5 StateTransitionTracker (C++)](#245-statetransitiontracker-c)
   - [24.6 Recommendation Card Transition Path Bar](#246-recommendation-card-transition-path-bar)
@@ -138,6 +138,17 @@
   - [25.6 Dual Pipeline Integration](#256-dual-pipeline-integration)
   - [25.7 UI Display](#257-ui-display)
   - [25.8 File Manifest](#258-file-manifest)
+- [26. Action Recommendation System: ActionRecommender](#26-action-recommendation-system-actionrecommender-mlp--linucb--state-chain)
+  - [26.1 Design Goals](#261-design-goals)
+  - [26.2 Overall Architecture](#262-overall-architecture)
+  - [26.3 State Pair Encoding (185-dim Feature)](#263-state-pair-encoding-185-dim-feature)
+  - [26.4 StateHistory Ring Buffer (C++)](#264-statehistory-ring-buffer-c)
+  - [26.5 ActionMLP Network](#265-actionmlp-network)
+  - [26.6 LinUCB (Contextual Multi-Armed Bandit)](#266-linucb-contextual-multi-armed-bandit)
+  - [26.7 Training Data Generation (Offline)](#267-training-data-generation-offline)
+  - [26.8 ActionCatalog (40 Standard Actions)](#268-actioncatalog-40-standard-actions)
+  - [26.9 UI Feedback Pipeline](#269-ui-feedback-pipeline)
+  - [26.10 File Manifest](#2610-file-manifest)
 - [Appendix: TODO Items](#appendix-todo-items)
 
 ---
@@ -917,8 +928,8 @@ class DecisionTracer {
 
 // Model checkpoint
 class ModelCheckpoint {
-  void save(RobustLinUCB& model);
-  void maybeRollback(RobustLinUCB& model, float currentAvgReward);
+  void save(/* ActionRecommender state */);
+  void maybeRollback(/* ActionRecommender state */, float currentAvgReward);
 };
 ```
 
@@ -1942,6 +1953,7 @@ After clicking "Adjust Time":
 
 *(All subsections 21.1 through 21.10 removed. See Section 26 for the replacement ActionRecommender design.)*
 
+---
 
 ## 22. Recommendation Action Execution System
 
@@ -2092,6 +2104,8 @@ This cache ensures that when the user taps "useful" on a card, the original reco
 ## 23. Stream Deep RL UI Display (Removed)
 
 > **Removed in v2.66.1.** The Stream Deep RL UI Display (RL learning phase badges, ContextSettingsPage stats panel, Explore mode RL info) has been removed along with the Stream RL engine. The ActionRecommender (Section 26) provides its own feedback pipeline via A2UI cards with accept/dismiss/timeout interactions.
+
+---
 
 ## 24. State Transition Modeling and Feature Expansion
 
@@ -2567,10 +2581,6 @@ Added I18n labels for all dimension values in both Chinese and English:
 |---|------|--------|
 | 9 | Architecture diagrams / data flow diagrams / API documentation | Covered in this document |
 | 10 | C++ module unit tests | 21-scenario remote testing completed |
-
----
-
-*End of document*
 
 ---
 
