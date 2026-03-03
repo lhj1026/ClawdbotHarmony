@@ -12,6 +12,16 @@ export const APP_VERSION: string = '2.66.0';
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '2.66.0',
+    date: '2026-03-02',
+    features: [
+
+    ],
+    fixes: [
+      '手机姿态逻辑优化: 近距离传感器=远时不可能为in_pocket, 暗室环境改判定为face_up, 避免误判',
+    ],
+  },
+  {
     version: '2.65.0',
     date: '2026-03-02',
     features: [
@@ -766,4 +776,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.65.0';
+export const LATEST_VERSION: string = '2.66.0';

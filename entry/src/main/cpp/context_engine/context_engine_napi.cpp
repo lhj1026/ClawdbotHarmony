@@ -233,6 +233,13 @@ context_engine::ContextMap parseContextMap(const std::string& json) {
 
 }  // namespace
 
+// ── NAPI 函数前向声明（供 napi_property_descriptor desc[] 引用）──────────
+static napi_value RecommenderInit   (napi_env env, napi_callback_info info);
+static napi_value RecommenderPredict(napi_env env, napi_callback_info info);
+static napi_value RecommenderReward (napi_env env, napi_callback_info info);
+static napi_value RecommenderSave   (napi_env env, napi_callback_info info);
+static napi_value RecommenderStats  (napi_env env, napi_callback_info info);
+
 // NAPI functions
 
 static napi_value LoadRules(napi_env env, napi_callback_info info) {
@@ -679,16 +686,16 @@ static napi_value RecommenderPredict(napi_env env, napi_callback_info info) {
         int32_t k; napi_get_value_int32(env, args[1], &k); topK = k;
     }
 
-    // 解码 StateCode → PhysicalState
+    // 解码 StateCode → PhysicalState（enum class : char，需要 static_cast）
     context_engine::PhysicalState state;
     if (stateCode.size() >= 7) {
-        state.time     = stateCode[0];
-        state.location = stateCode[1];
-        state.motion   = stateCode[2];
-        state.phone    = stateCode[3];
-        state.light    = stateCode[4];
-        state.sound    = stateCode[5];
-        state.dayType  = stateCode[6];
+        state.time     = static_cast<context_engine::TimeSlot> (stateCode[0]);
+        state.location = static_cast<context_engine::Location> (stateCode[1]);
+        state.motion   = static_cast<context_engine::Motion>   (stateCode[2]);
+        state.phone    = static_cast<context_engine::PhonePos>  (stateCode[3]);
+        state.light    = static_cast<context_engine::Light>    (stateCode[4]);
+        state.sound    = static_cast<context_engine::Sound>    (stateCode[5]);
+        state.dayType  = static_cast<context_engine::DayType>  (stateCode[6]);
     }
 
     auto recs = getRecommender().recommend(state, topK);
@@ -722,13 +729,16 @@ static napi_value RecommenderReward(napi_env env, napi_callback_info info) {
     double rewardVal = 0.0;
     napi_get_value_double(env, args[2], &rewardVal);
 
-    // 解码 PhysicalState
+    // 解码 PhysicalState（enum class : char，需要 static_cast）
     context_engine::PhysicalState state;
     if (stateCode.size() >= 7) {
-        state.time = stateCode[0]; state.location = stateCode[1];
-        state.motion = stateCode[2]; state.phone = stateCode[3];
-        state.light = stateCode[4]; state.sound = stateCode[5];
-        state.dayType = stateCode[6];
+        state.time     = static_cast<context_engine::TimeSlot> (stateCode[0]);
+        state.location = static_cast<context_engine::Location> (stateCode[1]);
+        state.motion   = static_cast<context_engine::Motion>   (stateCode[2]);
+        state.phone    = static_cast<context_engine::PhonePos>  (stateCode[3]);
+        state.light    = static_cast<context_engine::Light>    (stateCode[4]);
+        state.sound    = static_cast<context_engine::Sound>    (stateCode[5]);
+        state.dayType  = static_cast<context_engine::DayType>  (stateCode[6]);
     }
 
     int actIdx = context_engine::actionIndex(actionCode);

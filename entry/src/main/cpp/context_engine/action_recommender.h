@@ -481,10 +481,10 @@ public:
 private:
     ActionMLP              mlp_;
     std::array<UCBArm, ACT_COUNT> arms_;
-    StateHistory           history_;   // 状态历史（状态对特征的数据源）
+    StateHistory           history_;       // 状态历史（状态对特征的数据源）
     float                  mlpWeight_;
     float                  ucbAlpha_;
-    std::mutex             mu_;        // 注意：reward() 改为非 const，去掉 mutable
+    mutable std::mutex     mu_;            // mutable 保留：const 方法(save/stats)也需要加锁
 
     void loadPretrainedWeights() {
 #ifdef HAVE_ACTION_WEIGHTS

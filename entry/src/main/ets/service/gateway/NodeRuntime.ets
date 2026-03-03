@@ -55,7 +55,7 @@ import { Monitor } from '../ModuleMonitor';
 import { ContextAwarenessService, ContextRecommendation, LocationCandidate, ActivityCandidate } from '../context/ContextAwarenessService';
 import { ContextEngineService, ContextSnapshot, ContextRule, ContextCondition, ContextAction, MatchResult, GeofenceBinding } from '../context/ContextEngine';
 import { FeedbackService } from '../context/FeedbackService';
-import { RecommenderBridge, FeedbackType } from '../context/RecommenderBridge';
+import { RecommenderBridge, FeedbackType, RecommendItem } from '../context/RecommenderBridge';
 import { ActionExecutor, ActionResult } from '../context/ActionExecutor';
 import { SceneRouter, SceneEvaluation } from '../context/scenes/SceneRouter';
 import { SceneMatch, SceneAction } from '../context/scenes/ScenePlugin';
@@ -220,6 +220,7 @@ export class NodeRuntime {
   // 等待状态确认后才弹出的推荐
   private _pendingStateRec: PendingStateRec | null = null;
   private _pendingRecContext: PendingRecContext | null = null;  // LinUCB 反馈上下文
+  private _lastKnownStateCode: string = '';                     // 最近一次评估的7位状态码
   // A2UI 状态卡片去重：记录上次显示的状态文本
   private _lastStateCardText: string = '';
   private _lastStateCardTime: number = 0;
@@ -588,6 +589,11 @@ export class NodeRuntime {
         }
       } catch { /* use ruleId as fallback */ }
 
+      // 从 snapshot 提取 StateCode（用于 ActionRecommender 反馈）
+      if (rec.snapshot) {
+        this._lastKnownStateCode = this.buildStateCodeFromSnapshot(rec.snapshot);
+      }
+
       // Store last recommendation for "back" functionality
       this._lastRecRuleId = ruleId;
       this._lastRecRuleName = ruleName;
@@ -708,22 +714,28 @@ export class NodeRuntime {
 
       // ── 记录 LinUCB 反馈上下文（状态码 + 所有展示的动作代号）────
       try {
-        let currentStateCode = ContextEngineService.getInstance().getCurrentStateCode?.() ?? '';
+        // 从已排序的 alternatives 中提取 stateCode（每个 alternative 可能携带）
+        let currentStateCode: string = '';
+        // stateCode 可由 C++ 规则结果携带，也可来自最近一次 tray 快照
+        // 此处从 _lastKnownStateCode 获取（见下方赋值）
+        currentStateCode = this._lastKnownStateCode ?? '';
         if (currentStateCode.length >= 7) {
-          let actionCodes = alternatives
+          let actionCodes: string[] = alternatives
             .map((alt: PendingAlternative) => alt.actionCode ?? '')
             .filter((c: string) => c.length >= 2);
           this._pendingRecContext = { stateCode: currentStateCode, actionCodes };
-          RecommenderBridge.getInstance().recordShown(currentStateCode,
-            alternatives.map((alt: PendingAlternative) => ({
+          let shownItems: RecommendItem[] = alternatives.map((alt: PendingAlternative): RecommendItem => {
+            const item: RecommendItem = {
               code: alt.actionCode ?? '',
               name: alt.actionDesc,
               score: alt.confidence / 100.0,
               mlpProb: 0
-            }))
-          );
+            };
+            return item;
+          });
+          RecommenderBridge.getInstance().recordShown(currentStateCode, shownItems);
         }
-      } catch (_e) { /* getCurrentStateCode 可能未实现，静默跳过 */ }
+      } catch (_e) { /* 静默跳过 */ }
       // ────────────────────────────────────────────────────────────
 
       // 获取转移路径信息
@@ -5649,5 +5661,42 @@ export class NodeRuntime {
       for (let cb of this._experiencePushCallbacks) { cb(true); }
       this._experiencePushCallbacks = [];
     }
+  }
+
+  // ── StateCode 构建 ────────────────────────────────────────────────
+  /** 从 ContextSnapshot 的 ps_* 字段构建7位 StateCode
+   *  格式: [T][L][M][P][Li][S][D]
+   */
+  private buildStateCodeFromSnapshot(snap: ContextSnapshot): string {
+    const TIME_MAP: Record<string, string> = {
+      'sleeping': '1', 'dawn': '2', 'morning': '3', 'forenoon': '4',
+      'lunch': '5', 'afternoon': '6', 'evening': '7', 'night': '8', 'late_night': '9'
+    };
+    const LOC_MAP: Record<string, string> = {
+      'home': '1', 'work': '2', 'commute': '3', 'restaurant': '4',
+      'gym': '5', 'outdoor': '6', 'airport': '7', 'shopping': '8',
+      'subway': '9', 'bus_stop': 'A', 'ferry': 'B', 'train_station': 'C',
+      'cafe': 'D', 'cinema': 'E', 'park': 'F', 'transit_hub': '7'
+    };
+    const MOT_MAP: Record<string, string> = {
+      'stationary': '1', 'walking': '2', 'running': '3', 'driving': '4',
+      'cycling': '2', 'transit': '1'
+    };
+    const PHN_MAP: Record<string, string> = {
+      'in_use': '1', 'holding_lying': '2', 'on_desk': '3', 'face_up': '4',
+      'in_pocket': '5', 'face_down': '6', 'charging': '7'
+    };
+    const LIT_MAP: Record<string, string> = { 'dark': '1', 'dim': '2', 'normal': '3', 'bright': '4' };
+    const SND_MAP: Record<string, string> = { 'silent': '1', 'quiet': '2', 'normal': '3', 'noisy': '4' };
+    const DAY_MAP: Record<string, string> = { 'workday': '1', 'weekend': '2', 'holiday': '3' };
+
+    let t = TIME_MAP[snap.ps_time ?? ''] ?? '0';
+    let l = LOC_MAP[snap.ps_location ?? ''] ?? '0';
+    let m = MOT_MAP[snap.ps_motion ?? ''] ?? '0';
+    let p = PHN_MAP[snap.ps_phone ?? ''] ?? '0';
+    let li = LIT_MAP[snap.ps_light ?? ''] ?? '0';
+    let s = SND_MAP[snap.ps_sound ?? ''] ?? '0';
+    let d = DAY_MAP[snap.ps_dayType ?? ''] ?? '0';
+    return `${t}${l}${m}${p}${li}${s}${d}`;
   }
 }

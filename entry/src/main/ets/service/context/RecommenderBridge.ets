@@ -161,10 +161,11 @@ export class RecommenderBridge {
   // ── 内部辅助 ────────────────────────────────────────────────────
   private scheduleAutoSave(): void {
     if (this.saveTimer >= 0) return;
-    this.saveTimer = setTimeout(() => {
+    let timerId: number = setTimeout(() => {
       this.flush();
       this.saveTimer = -1;
-    }, 3000) as unknown as number;  // 3秒后 debounced 保存
+    }, 3000);
+    this.saveTimer = timerId;
   }
 
   private checkPreviousTimeout(): void {
