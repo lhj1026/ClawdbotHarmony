@@ -71,7 +71,7 @@ import { sensor } from '@kit.SensorServiceKit';
 import { AccessibilityService, ScreenNode, WindowInfo } from '../accessibility/AccessibilityService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.59.7';
+const APP_VERSION = '2.65.1';
 
 interface PendingStateRec {
   ruleId: string;
@@ -480,12 +480,9 @@ export class NodeRuntime {
     // 判断静止度（计算最近5次magnitude的方差）
     let isStationary = this.isDeviceStationary();
 
-    // 姿势判断：屏幕角度 < 65° 且静止 → 躺着（放宽阈值覆盖手机有倾斜角的场景）
+    // 姿势判断：屏幕角度 < 65° 且静止 → 躺着（覆盖手机有倾斜角的躺卧场景）
     let wasLyingDown = this._isLyingDown;
     this._isLyingDown = screenAngle < 65 && isStationary;
-
-    // 每次采样记录详细数据（调试用）
-    this.log.debug(TAG, `加速度计: x=${x.toFixed(2)} y=${y.toFixed(2)} z=${z.toFixed(2)} screenAngle=${screenAngle.toFixed(1)}° stationary=${isStationary}`);
 
     // 状态变化时记录日志
     if (wasLyingDown !== this._isLyingDown) {
@@ -517,7 +514,7 @@ export class NodeRuntime {
       return acc + (diff * diff);
     }, 0) / this._recentMagnitudes.length;
 
-    // 方差 < 1.5 认为静止（放宽阈值，躺着时手也会有轻微抖动）
+    // 方差 < 1.5 认为静止（躺着时手有轻微抖动，放宽判断）
     return variance < 1.5;
   }
 
@@ -687,12 +684,23 @@ export class NodeRuntime {
       }
       this._pendingStateRec = { ruleId, ruleName, reason: rec.reason, confidence, alternatives };
 
+      // 按置信度降序排序
+      alternatives.sort((a: PendingAlternative, b: PendingAlternative) => b.confidence - a.confidence);
+
+      // 获取转移路径信息
+      let transitionJson = '';
+      try {
+        transitionJson = ContextEngineService.getInstance().getTransitionInfo();
+      } catch (e) {
+        // Transition info not available — ignore
+      }
+
       // 一张合并卡片：状态 + 推荐选项
       let a2uiJsonl: string;
       if (stateInfo.length > 0 && alternatives.length > 0) {
-        a2uiJsonl = this.buildCombinedStateRecA2UI(stateInfo, alternatives);
+        a2uiJsonl = this.buildCombinedStateRecA2UI(stateInfo, alternatives, transitionJson);
       } else if (alternatives.length > 1) {
-        a2uiJsonl = this.buildRecommendationSelectionA2UI(alternatives);
+        a2uiJsonl = this.buildRecommendationSelectionA2UI(alternatives, transitionJson);
       } else {
         a2uiJsonl = this.buildContextRecommendationA2UI(ruleId, ruleName, rec.reason, confidence);
       }
@@ -4103,9 +4111,33 @@ export class NodeRuntime {
   /**
    * 构建合并卡片：状态信息 + 推荐选项，一张卡片完成
    */
-  private buildCombinedStateRecA2UI(stateInfo: string, alternatives: PendingAlternative[]): string {
+  private buildCombinedStateRecA2UI(stateInfo: string, alternatives: PendingAlternative[], transitionJson?: string): string {
     let children: string[] = [];
     let safeState = stateInfo.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+
+    // 转移路径条（如果有转移信息）
+    if (transitionJson !== undefined && transitionJson.length > 2) {
+      try {
+        let t: Record<string, Object> = JSON.parse(transitionJson) as Record<string, Object>;
+        let from = t['from'] as Record<string, string> | undefined;
+        let to = t['to'] as Record<string, string> | undefined;
+        if (from !== undefined && to !== undefined
+            && typeof from['label'] === 'string' && (from['label'] as string).length > 0
+            && typeof to['label'] === 'string' && (to['label'] as string).length > 0) {
+          let durMin = Math.round(Number(t['durationMin'] ?? 0));
+          let pathText = `${from['icon'] ?? ''} ${from['label']} ── ${durMin}min ──▶ ${to['icon'] ?? ''} ${to['label']}`;
+          let safePath = pathText.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          children.push(`{"type":"text","text":"${safePath}","style":{"fontSize":16,"fontWeight":"bold","color":"#4CAF50"}}`);
+          let patternLabel = String(t['patternLabel'] ?? '');
+          if (patternLabel.length > 0) {
+            let safeLabel = patternLabel.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+            children.push(`{"type":"text","text":"${safeLabel}","style":{"fontSize":12,"color":"#888"}}`);
+          }
+        }
+      } catch (e) {
+        // Invalid transition JSON — skip path bar
+      }
+    }
 
     // 状态信息区
     children.push(`{"type":"text","text":"🔍 检测到状态变化","style":{"fontSize":18,"fontWeight":"bold"}}`);
@@ -4139,8 +4171,33 @@ export class NodeRuntime {
   /**
    * 构建推荐选择卡片（无状态信息时使用）
    */
-  private buildRecommendationSelectionA2UI(alternatives: PendingAlternative[]): string {
+  private buildRecommendationSelectionA2UI(alternatives: PendingAlternative[], transitionJson?: string): string {
     let children: string[] = [];
+
+    // 转移路径条（如果有转移信息）
+    if (transitionJson !== undefined && transitionJson.length > 2) {
+      try {
+        let t: Record<string, Object> = JSON.parse(transitionJson) as Record<string, Object>;
+        let from = t['from'] as Record<string, string> | undefined;
+        let to = t['to'] as Record<string, string> | undefined;
+        if (from !== undefined && to !== undefined
+            && typeof from['label'] === 'string' && (from['label'] as string).length > 0
+            && typeof to['label'] === 'string' && (to['label'] as string).length > 0) {
+          let durMin = Math.round(Number(t['durationMin'] ?? 0));
+          let pathText = `${from['icon'] ?? ''} ${from['label']} ── ${durMin}min ──▶ ${to['icon'] ?? ''} ${to['label']}`;
+          let safePath = pathText.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          children.push(`{"type":"text","text":"${safePath}","style":{"fontSize":16,"fontWeight":"bold","color":"#4CAF50"}}`);
+          let patternLabel = String(t['patternLabel'] ?? '');
+          if (patternLabel.length > 0) {
+            let safeLabel = patternLabel.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+            children.push(`{"type":"text","text":"${safeLabel}","style":{"fontSize":12,"color":"#888"}}`);
+          }
+        }
+      } catch (e) {
+        // Invalid transition JSON — skip path bar
+      }
+    }
+
     children.push(`{"type":"text","text":"💡 推荐操作","style":{"fontSize":18,"fontWeight":"bold"}}`);
 
     for (let i = 0; i < alternatives.length; i++) {
@@ -4179,10 +4236,37 @@ export class NodeRuntime {
     let rlLabel = this.getStreamRLLabel(ruleId);
     let rlBadge = rlLabel.length > 0 ? `  |  🧠 ${rlLabel}` : '';
 
+    // 转移路径条
+    let transPathItems = '';
+    try {
+      let transJson = ContextEngineService.getInstance().getTransitionInfo();
+      if (transJson.length > 2) {
+        let t: Record<string, Object> = JSON.parse(transJson) as Record<string, Object>;
+        let from = t['from'] as Record<string, string> | undefined;
+        let to = t['to'] as Record<string, string> | undefined;
+        if (from !== undefined && to !== undefined
+            && typeof from['label'] === 'string' && (from['label'] as string).length > 0
+            && typeof to['label'] === 'string' && (to['label'] as string).length > 0) {
+          let durMin = Math.round(Number(t['durationMin'] ?? 0));
+          let pathText = `${from['icon'] ?? ''} ${from['label']} ── ${durMin}min ──▶ ${to['icon'] ?? ''} ${to['label']}`;
+          let safePath = pathText.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          transPathItems = `{"type":"text","text":"${safePath}","style":{"fontSize":16,"fontWeight":"bold","color":"#4CAF50"}},`;
+          let patternLabel = String(t['patternLabel'] ?? '');
+          if (patternLabel.length > 0) {
+            let safeLabel = patternLabel.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+            transPathItems += `{"type":"text","text":"${safeLabel}","style":{"fontSize":12,"color":"#888"}},`;
+          }
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+
     let ts = Date.now();
 
     // Card 1: 状态检测 (status only, with confirm button)
     let statusCard = `{"type":"form","id":"ctx_state_${ts}","children":[` +
+      transPathItems +
       `{"type":"text","text":"🔍 探索模式 — 状态检测","style":{"fontSize":18,"fontWeight":"bold"}},` +
       `{"type":"text","text":"${safeState}","style":{"fontSize":14}},` +
       `{"type":"button","text":"✅ 状态正确","variant":"primary","action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"state_correct"}}}},` +

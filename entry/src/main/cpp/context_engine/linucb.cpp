@@ -130,7 +130,7 @@ LinUCB::LinUCB(double alpha) : alpha_(alpha) {}
 Vec LinUCB::buildFeatureVec(const ContextMap& ctx) const {
     Vec x{};
 
-    // hour → sin/cos encoding (normalized to [-1, 1])
+    // [0-1] hour → sin/cos encoding
     double hour = 12.0;
     auto it = ctx.find("hour");
     if (it != ctx.end()) {
@@ -139,7 +139,7 @@ Vec LinUCB::buildFeatureVec(const ContextMap& ctx) const {
     x[0] = std::sin(2.0 * M_PI * hour / 24.0);
     x[1] = std::cos(2.0 * M_PI * hour / 24.0);
 
-    // battery / 100
+    // [2] battery / 100
     double battery = 50.0;
     it = ctx.find("batteryLevel");
     if (it != ctx.end()) {
@@ -147,23 +147,62 @@ Vec LinUCB::buildFeatureVec(const ContextMap& ctx) const {
     }
     x[2] = battery / 100.0;
 
-    // isCharging
+    // [3] isCharging
     it = ctx.find("isCharging");
     x[3] = (it != ctx.end() && it->second == "true") ? 1.0 : 0.0;
 
-    // isWeekend
-    it = ctx.find("isWeekend");
-    x[4] = (it != ctx.end() && it->second == "true") ? 1.0 : 0.0;
+    // [4-5] dayType one-hot: weekend, holiday (workday = both 0)
+    it = ctx.find("ps_dayType");
+    if (it != ctx.end()) {
+        x[4] = (it->second == "weekend") ? 1.0 : 0.0;
+        x[5] = (it->second == "holiday") ? 1.0 : 0.0;
+    } else {
+        // Fallback to isWeekend
+        it = ctx.find("isWeekend");
+        x[4] = (it != ctx.end() && it->second == "true") ? 1.0 : 0.0;
+        x[5] = 0.0;
+    }
 
-    // motionState → 3-dim encoding
-    // [stationary, walking/running, driving/transit]
+    // [6-10] motionState 5-dim one-hot (from ps_motion or motionState)
     std::string motion = "stationary";
-    it = ctx.find("motionState");
-    if (it != ctx.end()) motion = it->second;
+    it = ctx.find("ps_motion");
+    if (it != ctx.end() && !it->second.empty()) {
+        motion = it->second;
+    } else {
+        it = ctx.find("motionState");
+        if (it != ctx.end()) motion = it->second;
+    }
+    x[6]  = (motion == "stationary") ? 1.0 : 0.0;
+    x[7]  = (motion == "walking") ? 1.0 : 0.0;
+    x[8]  = (motion == "running") ? 1.0 : 0.0;
+    x[9]  = (motion == "cycling") ? 1.0 : 0.0;
+    x[10] = (motion == "driving" || motion == "transit") ? 1.0 : 0.0;
 
-    x[5] = (motion == "stationary") ? 1.0 : 0.0;
-    x[6] = (motion == "walking" || motion == "running") ? 1.0 : 0.0;
-    x[7] = (motion == "driving" || motion == "transit") ? 1.0 : 0.0;
+    // [11] light ordinal: dark=0, dim=0.33, normal=0.67, bright=1
+    it = ctx.find("ps_light");
+    if (it != ctx.end()) {
+        if (it->second == "dark") x[11] = 0.0;
+        else if (it->second == "dim") x[11] = 0.33;
+        else if (it->second == "normal") x[11] = 0.67;
+        else if (it->second == "bright") x[11] = 1.0;
+    } else {
+        x[11] = 0.5;
+    }
+
+    // [12] sound ordinal: silent=0, quiet=0.25, normal=0.5, noisy=1
+    it = ctx.find("ps_sound");
+    if (it != ctx.end()) {
+        if (it->second == "silent") x[12] = 0.0;
+        else if (it->second == "quiet") x[12] = 0.25;
+        else if (it->second == "normal") x[12] = 0.5;
+        else if (it->second == "noisy") x[12] = 1.0;
+    } else {
+        x[12] = 0.5;
+    }
+
+    // [13] has_scenario
+    it = ctx.find("ps_scenario");
+    x[13] = (it != ctx.end() && !it->second.empty()) ? 1.0 : 0.0;
 
     return x;
 }

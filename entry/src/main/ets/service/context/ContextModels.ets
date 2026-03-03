@@ -577,3 +577,228 @@ export interface DeviceConnectionRecord {
   sessionCount: number;
   currentSessionStart: number;
 }
+
+// ==================== 每日行程时间线 ====================
+
+/** 时间线条目 — 记录一段状态停留 */
+export interface TimelineEntry {
+  id: string;                    // 唯一ID (timestamp-based)
+  startTime: number;             // 进入此状态的时间戳
+  endTime: number;               // 离开此状态的时间戳 (0 = 当前/进行中)
+  geofenceId: string;            // 围栏ID (空 = 未知位置/途中)
+  geofenceLabel: string;         // 显示名称 (家、办公室、...)
+  geofenceIcon: string;          // emoji 图标 (🏠、🏢、...)
+  motionState: string;           // 运动状态 (stationary/walking/running/driving)
+  latitude: number;              // GPS 纬度 (0 = 未知)
+  longitude: number;             // GPS 经度 (0 = 未知)
+  geocodeLabel: string;          // 逆地理编码地名 (道路名/区域名)
+}
+
+// ==================== 传感器录制/回放 ====================
+
+/** 录制信息 */
+export interface RecordingInfo {
+  id: string;                    // "rec_{timestamp}"
+  label: string;                 // 用户标签 (如 "早通勤")
+  startTime: number;             // 录制开始时间戳
+  endTime: number;               // 录制结束时间戳 (0 = 进行中)
+  eventCount: number;            // 事件总数
+  durationMs: number;            // 录制时长 (ms)
+  filePath: string;              // NDJSON 文件路径
+  fileSize: number;              // 文件大小 (bytes)
+}
+
+/** NDJSON header 行 */
+export interface RecordingHeader {
+  type: 'header';
+  ver: number;                   // 格式版本
+  id: string;                    // 录制 ID
+  t0: number;                    // 起始时间戳
+  label: string;                 // 用户标签
+}
+
+/** NDJSON event 行 — 单次 tray.put 的镜像 */
+export interface RecordingEvent {
+  type: 'event';
+  t: number;                     // 时间戳
+  k: string;                     // key
+  v: string;                     // value
+  q: number;                     // quality 0~1
+  s: string;                     // source
+}
+
+/** NDJSON snap 行 — 完整 ContextSnapshot keyframe */
+export interface RecordingSnap {
+  type: 'snap';
+  t: number;                     // 时间戳
+  d: Record<string, string>;     // 完整快照数据
+}
+
+/** NDJSON footer 行 */
+export interface RecordingFooter {
+  type: 'footer';
+  t1: number;                    // 结束时间戳
+  n: number;                     // 总事件数
+  dur: number;                   // 总时长 (ms)
+}
+
+/** 回放进度 */
+export interface ReplayProgress {
+  state: 'idle' | 'playing' | 'paused' | 'finished';
+  progress: number;              // 0~1
+  eventsPlayed: number;
+  totalEvents: number;
+  speed: number;                 // 1x, 2x, 5x, 10x
+  currentTime: number;           // 当前回放时间戳
+}
+
+// ==================== 7-Tuple 物理状态模型 ====================
+
+/** 时间段 (9 values) */
+export type TimeSlot =
+  | 'sleeping'    // 0:00-5:00 深夜
+  | 'dawn'        // 5:00-7:00 清晨
+  | 'morning'     // 7:00-9:00 早上（通勤高峰）
+  | 'forenoon'    // 9:00-11:30 上午
+  | 'lunch'       // 11:30-13:30 午餐
+  | 'afternoon'   // 13:30-17:00 下午
+  | 'evening'     // 17:00-19:30 傍晚
+  | 'night'       // 19:30-22:00 夜晚
+  | 'late_night'; // 22:00-0:00 深夜前
+
+/** 位置类别 (10 values) */
+export type LocationCategory =
+  | 'home'        // WiFi geofence = home
+  | 'work'        // WiFi geofence = work
+  | 'commute'     // 无围栏 + 移动中 (driving/transit/walking)
+  | 'restaurant'  // WiFi geofence = restaurant
+  | 'gym'         // WiFi geofence = gym
+  | 'transit_hub' // WiFi geofence = transit (机场/火车站)
+  | 'shopping'    // WiFi geofence = shopping
+  | 'outdoor'     // 无 WiFi + GPS 可用 + 非驾车
+  | 'cafe'        // WiFi geofence = cafe
+  | 'unknown';    // 无信号匹配
+
+/** 运动类别 (7 values) */
+export type MotionCategory =
+  | 'stationary'  // 静止 (加速度 + GPS速度 < 0.5 m/s)
+  | 'walking'     // 步行 (加速度 + 步数增加)
+  | 'running'     // 跑步 (加速度幅值 > 12)
+  | 'cycling'     // 骑车 (GPS 3-8 m/s + 低步频)
+  | 'driving'     // 驾车 (GPS > 5 m/s 或驾车惯性)
+  | 'transit'     // 公共交通 (BT/GPS模式)
+  | 'unknown';    // 数据不足
+
+/** 手机状态类别 (6 values) */
+export type PhoneCategory =
+  | 'in_use'      // 亮屏 + 距离传感器=远 + 环境光 > 50 lux
+  | 'on_desk'     // 平放 + 屏幕朝上 + 未充电
+  | 'in_pocket'   // 环境光 < 1 lux 或 距离=近+暗
+  | 'face_down'   // 距离=近 + 环境光 > 5 lux
+  | 'charging'    // 充电中 (覆盖其他姿态)
+  | 'unknown';    // 无传感器数据
+
+/** 光线类别 (4 values) */
+export type LightCategory =
+  | 'dark'        // < 5 lux (夜晚, 口袋, 密闭房间)
+  | 'dim'         // 5-50 lux (卧室, 暗办公室)
+  | 'normal'      // 50-500 lux (室内, 阴天室外)
+  | 'bright';     // > 500 lux (晴天室外, 明亮办公室)
+
+/** 声音类别 (5 values) */
+export type SoundCategory =
+  | 'silent'      // < 25 dB (空房间, 深夜)
+  | 'quiet'       // 25-40 dB (家中, 图书馆)
+  | 'normal'      // 40-55 dB (办公室, 咖啡馆)
+  | 'noisy'       // > 55 dB (街道, 餐厅)
+  | 'unknown';    // 麦克风禁用 (默认)
+
+/** 日期类型 (3 values) */
+export type DayType =
+  | 'workday'     // 工作日 (周一-周五 且非法定假日)
+  | 'weekend'     // 周末 (周六/周日)
+  | 'holiday';    // 假日 (法定假日或用户标记)
+
+/** 7-Tuple 物理状态 */
+export interface PhysicalState {
+  time: TimeSlot;
+  location: LocationCategory;
+  motion: MotionCategory;
+  phone: PhoneCategory;
+  light: LightCategory;
+  sound: SoundCategory;
+  dayType: DayType;
+  timestamp: number;             // 构建时间戳
+}
+
+/** 场景步骤条件 — 用 * 表示任意值, A|B 表示多选 */
+export interface ScenarioStepCondition {
+  time?: string;        // TimeSlot 或 '*' 或 'A|B'
+  location?: string;    // LocationCategory 或 '*' 或 'A|B'
+  motion?: string;      // MotionCategory 或 '*' 或 'A|B'
+  phone?: string;       // PhoneCategory 或 '*' 或 'A|B'
+  light?: string;       // LightCategory 或 '*' 或 'A|B'
+  sound?: string;       // SoundCategory 或 '*' 或 'A|B'
+  dayType?: string;     // DayType 或 '*' 或 'A|B'
+}
+
+/** 场景推荐动作 */
+export interface ScenarioAction {
+  id: string;           // 动作 ID
+  type: string;         // suggestion, automation, notification
+  payload: string;      // 动作描述 JSON
+}
+
+/** 场景步骤 */
+export interface ScenarioStep {
+  condition: ScenarioStepCondition;
+  digitalConditions?: Record<string, string>;  // 数字条件 (key op value)
+  actions?: ScenarioAction[];                  // 该步骤推荐的动作
+}
+
+/** 场景定义 */
+export interface Scenario {
+  id: string;                    // "S01", "S02", ...
+  name: string;                  // "工作日早起"
+  nameEn: string;                // "Weekday morning wakeup"
+  category: ScenarioCategory;    // 场景类别
+  steps: ScenarioStep[];         // 状态链步骤
+  timeoutMs: number;             // 链超时 (ms)，默认 2 小时
+  priority: number;              // 优先级 1-10
+  enabled: boolean;
+}
+
+/** 场景类别 (12 categories) */
+export type ScenarioCategory =
+  | 'morning'     // 早晨起床
+  | 'commute'     // 通勤
+  | 'work'        // 工作
+  | 'home'        // 在家生活
+  | 'sleep'       // 睡眠
+  | 'exercise'    // 运动健身
+  | 'dining'      // 用餐
+  | 'shopping'    // 购物
+  | 'travel'      // 出行旅行
+  | 'social'      // 社交
+  | 'health'      // 健康提醒
+  | 'device';     // 设备/系统
+
+/** 活跃场景状态 — 跟踪一个正在进行的场景链 */
+export interface ScenarioState {
+  scenario: Scenario;            // 场景定义
+  currentStep: number;           // 当前步骤索引
+  startTime: number;             // 链开始时间
+  stepEntryTime: number;         // 进入当前步骤的时间
+  confidence: number;            // 匹配置信度 0-1
+}
+
+/** 场景匹配结果 */
+export interface ScenarioMatchResult {
+  scenarioId: string;
+  scenarioName: string;
+  category: ScenarioCategory;
+  currentStep: number;
+  totalSteps: number;
+  confidence: number;
+  actions: ScenarioAction[];     // 当前步骤的推荐动作
+}

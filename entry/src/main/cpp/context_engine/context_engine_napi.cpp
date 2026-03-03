@@ -17,6 +17,7 @@
 #include <napi/native_api.h>
 #include "context_engine.h"
 #include "stream_mlp.h"
+#include "state_transition.h"
 #include <string>
 #include <memory>
 #include <sstream>
@@ -551,6 +552,28 @@ static napi_value GetStreamRLArmSamples(napi_env env, napi_callback_info info) {
     return val;
 }
 
+// ============================================================
+// State Transition NAPI functions
+// ============================================================
+
+static napi_value GetTransitionInfo(napi_env env, napi_callback_info info) {
+    return napiString(env, g_engine.transitionTracker().getTransitionJson());
+}
+
+static napi_value ExportTransitionState(napi_env env, napi_callback_info info) {
+    return napiString(env, g_engine.transitionTracker().exportJson());
+}
+
+static napi_value ImportTransitionState(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 1) return nullptr;
+    auto json = napiGetString(env, args[0]);
+    g_engine.transitionTracker().importJson(json);
+    return nullptr;
+}
+
 // Module registration
 
 EXTERN_C_START
@@ -575,6 +598,9 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"importStreamRL",       nullptr, ImportStreamRL,       nullptr, nullptr, nullptr, napi_default, nullptr},
         {"getStreamRLStats",     nullptr, GetStreamRLStats,     nullptr, nullptr, nullptr, napi_default, nullptr},
         {"getStreamRLArmSamples", nullptr, GetStreamRLArmSamples, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"getTransitionInfo",      nullptr, GetTransitionInfo,      nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"exportTransitionState",  nullptr, ExportTransitionState,  nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"importTransitionState",  nullptr, ImportTransitionState,  nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     return exports;

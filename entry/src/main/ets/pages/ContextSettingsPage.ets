@@ -8,12 +8,15 @@ import { I18n } from '../common/I18n';
 import { ContextAwarenessService } from '../service/context/ContextAwarenessService';
 import { ContextEngineService } from '../service/context/ContextEngine';
 import { FeedbackService } from '../service/context/FeedbackService';
-import { Geofence, GeofenceCategory, FeedbackStats, FeedbackRuleStat, DiscoveredPlace } from '../service/context/ContextModels';
+import { Geofence, GeofenceCategory, FeedbackStats, FeedbackRuleStat, DiscoveredPlace, RecordingInfo, ReplayProgress, PhysicalState, ScenarioMatchResult } from '../service/context/ContextModels';
 import { LocationDiscoveryService, GeofenceSuggestion } from '../service/context/LocationDiscoveryService';
 import { LearnedSignalsSummary } from '../service/context/LocationFusionService';
 import { GeoCodingService } from '../service/context/GeoCodingService';
 import { GeofenceSuggestionCard } from '../components/GeofenceSuggestionCard';
 import { TrayStatus } from '../service/context/DataTray';
+import { DailyTimelineService } from '../service/context/DailyTimelineService';
+import { TimelineEntry } from '../service/context/ContextModels';
+import { PhysicalStateBuilder } from '../service/context/PhysicalStateBuilder';
 
 interface CategoryData {
   keys: string[];
@@ -155,12 +158,39 @@ struct ContextSettingsPage {
     'audio_scene', 'audio_device', 'audio_ringing', 'audio_headphones'  // 媒体
   ];
   private trayTimer: number = -1;
+  // 每日行程时间线
+  @State timelineExpanded: boolean = true;
+  @State timelineEntries: TimelineEntry[] = [];
   // 当前状态概览
   @State statusTime: string = '';
   @State statusLocation: string = '';
   @State statusMotion: string = '';
   @State statusBattery: string = '';
   @State statusWifi: string = '';
+  // 传感器录制/回放
+  @State isRecording: boolean = false;
+  @State recordingLabel: string = '';
+  @State recordingDuration: string = '00:00';
+  @State recordingEvents: number = 0;
+  @State recordings: RecordingInfo[] = [];
+  @State replayState: string = 'idle';  // idle/playing/paused/finished
+  @State replayProgress: number = 0;
+  @State replaySpeed: number = 1;
+  @State replayEventsPlayed: number = 0;
+  @State replayTotalEvents: number = 0;
+  @State replayCurrentTime: number = 0;
+  private recordingTimer: number = -1;
+  // 7-Tuple 物理状态
+  @State psTime: string = '';
+  @State psLocation: string = '';
+  @State psMotion: string = '';
+  @State psPhone: string = '';
+  @State psLight: string = '';
+  @State psSound: string = '';
+  @State psDayType: string = '';
+  @State psScenarioName: string = '';
+  @State psScenarioStep: string = '';
+  @State psScenarioCount: number = 0;
 
   private getKeyLabel(key: string): string {
     if (I18n.lang === 'en') {
@@ -263,7 +293,16 @@ struct ContextSettingsPage {
     return '📍';
   }
 
+  private refreshRecordings(): void {
+    try {
+      this.recordings = ContextAwarenessService.getInstance().listRecordings();
+    } catch (_e) {
+      this.recordings = [];
+    }
+  }
+
   private refresh(): void {
+    this.refreshRecordings();
     try {
       let cas = ContextAwarenessService.getInstance();
       let gfs = cas.getAllGeofences();
@@ -300,6 +339,7 @@ struct ContextSettingsPage {
     this.refreshFeedbackStats();
     this.refreshStreamRLStats();
     this.refreshDiscoveredPlaces();
+    this.refreshTimeline();
   }
 
   private async refreshDiscoveredPlaces(): Promise<void> {
@@ -466,6 +506,187 @@ struct ContextSettingsPage {
             })
             .borderRadius(12)
 
+            // ===== 7-Tuple 物理状态 =====
+            Column({ space: 8 }) {
+              Text(I18n.t('ps.title'))
+                .fontSize(16)
+                .fontWeight(FontWeight.Bold)
+                .fontColor('#1A1A1A')
+                .width('100%')
+              // 7-tuple grid: 2 columns
+              Flex({ wrap: FlexWrap.Wrap }) {
+                // Time
+                Row({ space: 4 }) {
+                  Text(I18n.t('ps.time'))
+                    .fontSize(11)
+                    .fontColor('#999999')
+                  Text(this.psTime)
+                    .fontSize(13)
+                    .fontColor('#1A1A1A')
+                    .fontWeight(FontWeight.Medium)
+                }
+                .width('50%')
+                .padding({ top: 4, bottom: 4 })
+                // Location
+                Row({ space: 4 }) {
+                  Text(I18n.t('ps.location'))
+                    .fontSize(11)
+                    .fontColor('#999999')
+                  Text(this.psLocation)
+                    .fontSize(13)
+                    .fontColor('#1A1A1A')
+                    .fontWeight(FontWeight.Medium)
+                }
+                .width('50%')
+                .padding({ top: 4, bottom: 4 })
+                // Motion
+                Row({ space: 4 }) {
+                  Text(I18n.t('ps.motion'))
+                    .fontSize(11)
+                    .fontColor('#999999')
+                  Text(this.psMotion)
+                    .fontSize(13)
+                    .fontColor('#1A1A1A')
+                    .fontWeight(FontWeight.Medium)
+                }
+                .width('50%')
+                .padding({ top: 4, bottom: 4 })
+                // Phone
+                Row({ space: 4 }) {
+                  Text(I18n.t('ps.phone'))
+                    .fontSize(11)
+                    .fontColor('#999999')
+                  Text(this.psPhone)
+                    .fontSize(13)
+                    .fontColor('#1A1A1A')
+                    .fontWeight(FontWeight.Medium)
+                }
+                .width('50%')
+                .padding({ top: 4, bottom: 4 })
+                // Light
+                Row({ space: 4 }) {
+                  Text(I18n.t('ps.light'))
+                    .fontSize(11)
+                    .fontColor('#999999')
+                  Text(this.psLight)
+                    .fontSize(13)
+                    .fontColor('#1A1A1A')
+                    .fontWeight(FontWeight.Medium)
+                }
+                .width('50%')
+                .padding({ top: 4, bottom: 4 })
+                // Sound
+                Row({ space: 4 }) {
+                  Text(I18n.t('ps.sound'))
+                    .fontSize(11)
+                    .fontColor('#999999')
+                  Text(this.psSound)
+                    .fontSize(13)
+                    .fontColor('#1A1A1A')
+                    .fontWeight(FontWeight.Medium)
+                }
+                .width('50%')
+                .padding({ top: 4, bottom: 4 })
+                // DayType
+                Row({ space: 4 }) {
+                  Text(I18n.t('ps.dayType'))
+                    .fontSize(11)
+                    .fontColor('#999999')
+                  Text(this.psDayType)
+                    .fontSize(13)
+                    .fontColor('#1A1A1A')
+                    .fontWeight(FontWeight.Medium)
+                }
+                .width('50%')
+                .padding({ top: 4, bottom: 4 })
+              }
+              .width('100%')
+              // Active scenario
+              if (this.psScenarioName.length > 0) {
+                Row({ space: 6 }) {
+                  Text(I18n.t('ps.scenario'))
+                    .fontSize(11)
+                    .fontColor('#999999')
+                  Text(this.psScenarioName)
+                    .fontSize(13)
+                    .fontColor('#007AFF')
+                    .fontWeight(FontWeight.Medium)
+                    .layoutWeight(1)
+                  Text(this.psScenarioStep)
+                    .fontSize(12)
+                    .fontColor('#666666')
+                }
+                .width('100%')
+                .padding({ top: 4 })
+              }
+              if (this.psScenarioCount > 0) {
+                Text(I18n.t('ps.scenario.active') + ': ' + this.psScenarioCount.toString())
+                  .fontSize(12)
+                  .fontColor('#666666')
+                  .width('100%')
+                  .margin({ top: 2 })
+              }
+            }
+            .width('100%')
+            .padding(16)
+            .backgroundColor(Color.White)
+            .borderRadius(12)
+
+            // ===== 今日行程时间线 =====
+            Column() {
+              Row() {
+                Text('\u{1F4C5} ' + I18n.t('ctx.timeline.title'))
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor('#1A1A1A')
+                  .layoutWeight(1)
+                Text(this.timelineEntries.length.toString() + I18n.t('ctx.timeline.count') + ' \u2192')
+                  .fontSize(13)
+                  .fontColor('#007AFF')
+              }
+              .width('100%')
+              .onClick(() => {
+                router.pushUrl({ url: 'pages/DailyTimelinePage' });
+              })
+
+              // Brief preview: last 3 entries
+              if (this.timelineEntries.length > 0) {
+                Column({ space: 4 }) {
+                  ForEach(this.timelineEntries.slice(-3), (entry: TimelineEntry) => {
+                    Row({ space: 8 }) {
+                      Text(this.formatTimelineTime(entry.startTime))
+                        .fontSize(12)
+                        .fontColor('#999999')
+                        .width(40)
+                      Text(entry.geofenceIcon.length > 0 ? entry.geofenceIcon : '\u{1F4CD}')
+                        .fontSize(14)
+                      Text(entry.geofenceLabel.length > 0 ? entry.geofenceLabel : I18n.t('ctx.timeline.transit'))
+                        .fontSize(13)
+                        .fontColor('#1A1A1A')
+                        .layoutWeight(1)
+                      Text(this.getMotionLabel(entry.motionState))
+                        .fontSize(11)
+                        .fontColor(this.getMotionColor(entry.motionState))
+                    }
+                    .width('100%')
+                  }, (entry: TimelineEntry) => entry.id)
+                }
+                .width('100%')
+                .margin({ top: 8 })
+              } else {
+                Text(I18n.t('ctx.timeline.empty'))
+                  .fontSize(13)
+                  .fontColor('#999999')
+                  .width('100%')
+                  .textAlign(TextAlign.Center)
+                  .padding({ top: 8 })
+              }
+            }
+            .width('100%')
+            .padding(16)
+            .backgroundColor(Color.White)
+            .borderRadius(12)
+
             // ===== 引擎状态 =====
             Column() {
               Text(I18n.t('ctx.engine.title'))
@@ -523,6 +744,285 @@ struct ContextSettingsPage {
             .padding(16)
             .backgroundColor(Color.White)
             .borderRadius(12)
+
+            // ===== 传感器录制 =====
+            Column() {
+              Text(I18n.t('ctx.recording.title'))
+                .fontSize(16)
+                .fontWeight(FontWeight.Bold)
+                .fontColor('#1A1A1A')
+                .width('100%')
+                .margin({ bottom: 8 })
+
+              // Recording controls
+              if (!this.isRecording) {
+                // Label input + start button
+                Row() {
+                  TextInput({ placeholder: I18n.t('ctx.recording.labelPlaceholder'), text: this.recordingLabel })
+                    .layoutWeight(1)
+                    .height(36)
+                    .fontSize(14)
+                    .onChange((val: string) => { this.recordingLabel = val; })
+
+                  Button(I18n.t('ctx.recording.start'))
+                    .fontSize(13)
+                    .height(36)
+                    .backgroundColor('#34C759')
+                    .fontColor(Color.White)
+                    .margin({ left: 8 })
+                    .onClick(() => {
+                      let label = this.recordingLabel.length > 0 ? this.recordingLabel : new Date().toLocaleString();
+                      let info = ContextAwarenessService.getInstance().startRecording(label);
+                      if (info) {
+                        this.isRecording = true;
+                        this.recordingEvents = 0;
+                        this.recordingDuration = '00:00';
+                        this.recordingTimer = setInterval(() => {
+                          let dur = ContextAwarenessService.getInstance().getRecordingDuration();
+                          let sec = Math.floor(dur / 1000);
+                          let min = Math.floor(sec / 60);
+                          this.recordingDuration = `${min.toString().padStart(2, '0')}:${(sec % 60).toString().padStart(2, '0')}`;
+                          this.recordingEvents = ContextAwarenessService.getInstance().getRecordingEventCount();
+                        }, 1000);
+                      }
+                    })
+                }
+                .width('100%')
+              } else {
+                // Recording in progress: show stats + stop button
+                Row() {
+                  Column() {
+                    Text(I18n.t('ctx.recording.recording'))
+                      .fontSize(14)
+                      .fontColor('#FF3B30')
+                      .fontWeight(FontWeight.Medium)
+                    Text(`${this.recordingDuration}  |  ${this.recordingEvents} ${I18n.t('ctx.recording.events')}`)
+                      .fontSize(13)
+                      .fontColor('#666666')
+                      .margin({ top: 4 })
+                  }
+                  .layoutWeight(1)
+                  .alignItems(HorizontalAlign.Start)
+
+                  Button(I18n.t('ctx.recording.stop'))
+                    .fontSize(13)
+                    .height(36)
+                    .backgroundColor('#FF3B30')
+                    .fontColor(Color.White)
+                    .onClick(() => {
+                      ContextAwarenessService.getInstance().stopRecording();
+                      this.isRecording = false;
+                      if (this.recordingTimer !== -1) {
+                        clearInterval(this.recordingTimer);
+                        this.recordingTimer = -1;
+                      }
+                      this.refreshRecordings();
+                    })
+                }
+                .width('100%')
+              }
+
+              // Replay controls (when replaying)
+              if (this.replayState !== 'idle') {
+                Column() {
+                  Row() {
+                    Text(`${I18n.t('ctx.recording.' + this.replayState)}`)
+                      .fontSize(13)
+                      .fontColor(this.replayState === 'playing' ? '#007AFF' : '#FF9500')
+                      .fontWeight(FontWeight.Medium)
+                    Blank()
+                    Text(`${this.replayEventsPlayed}/${this.replayTotalEvents}`)
+                      .fontSize(12)
+                      .fontColor('#999999')
+                    Text(`  ${this.replaySpeed}x`)
+                      .fontSize(12)
+                      .fontColor('#999999')
+                  }
+                  .width('100%')
+                  .margin({ top: 8 })
+
+                  // Progress slider (draggable)
+                  Slider({ value: Math.round(this.replayProgress * 100), min: 0, max: 100, step: 1 })
+                    .width('100%')
+                    .blockColor('#007AFF')
+                    .trackColor('#E5E5E5')
+                    .selectedColor('#007AFF')
+                    .trackThickness(4)
+                    .margin({ top: 4 })
+                    .onChange((value: number, mode: SliderChangeMode) => {
+                      if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+                        let cas = ContextAwarenessService.getInstance();
+                        let range = cas.getReplayTimeRange();
+                        let t0 = range[0];
+                        let tEnd = range[1];
+                        if (tEnd > t0) {
+                          let targetTime = t0 + (value / 100) * (tEnd - t0);
+                          cas.seekReplay(targetTime);
+                        }
+                      }
+                    })
+
+                  // Control buttons
+                  Row() {
+                    if (this.replayState === 'finished') {
+                      // 回放完成：显示「再次回放」+「关闭」
+                      Button(I18n.t('ctx.recording.replayAgain'))
+                        .fontSize(12)
+                        .height(32)
+                        .backgroundColor('#007AFF')
+                        .fontColor(Color.White)
+                        .onClick(() => {
+                          ContextAwarenessService.getInstance().stopReplay();
+                          ContextAwarenessService.getInstance().startReplay(this.replaySpeed);
+                        })
+
+                      Blank()
+
+                      Button(I18n.t('ctx.recording.close'))
+                        .fontSize(12)
+                        .height(32)
+                        .backgroundColor('#8E8E93')
+                        .fontColor(Color.White)
+                        .onClick(() => {
+                          ContextAwarenessService.getInstance().stopReplay();
+                          this.replayState = 'idle';
+                        })
+                    } else {
+                      // 回放中/暂停：显示暂停/继续 + 倍速 + 停止
+                      if (this.replayState === 'playing') {
+                        Button(I18n.t('ctx.recording.pause'))
+                          .fontSize(12)
+                          .height(32)
+                          .backgroundColor('#FF9500')
+                          .fontColor(Color.White)
+                          .onClick(() => {
+                            ContextAwarenessService.getInstance().pauseReplay();
+                          })
+                      } else if (this.replayState === 'paused') {
+                        Button(I18n.t('ctx.recording.resume'))
+                          .fontSize(12)
+                          .height(32)
+                          .backgroundColor('#34C759')
+                          .fontColor(Color.White)
+                          .onClick(() => {
+                            ContextAwarenessService.getInstance().resumeReplay();
+                          })
+                      }
+
+                      // Speed buttons
+                      ForEach([1, 2, 5, 10], (spd: number) => {
+                        Button(`${spd}x`)
+                          .fontSize(11)
+                          .height(28)
+                          .backgroundColor(this.replaySpeed === spd ? '#007AFF' : '#E5E5E5')
+                          .fontColor(this.replaySpeed === spd ? Color.White : '#333333')
+                          .margin({ left: 4 })
+                          .onClick(() => {
+                            this.replaySpeed = spd;
+                            // Restart with new speed
+                            ContextAwarenessService.getInstance().stopReplay();
+                            ContextAwarenessService.getInstance().startReplay(spd);
+                          })
+                      })
+
+                      Blank()
+
+                      Button(I18n.t('ctx.recording.stopReplay'))
+                        .fontSize(12)
+                        .height(32)
+                        .backgroundColor('#FF3B30')
+                        .fontColor(Color.White)
+                        .onClick(() => {
+                          ContextAwarenessService.getInstance().stopReplay();
+                          this.replayState = 'idle';
+                        })
+                    }
+                  }
+                  .width('100%')
+                  .margin({ top: 6 })
+                }
+              }
+
+              // Recording list
+              if (this.recordings.length > 0) {
+                Text(I18n.t('ctx.recording.list'))
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor('#1A1A1A')
+                  .width('100%')
+                  .margin({ top: 12, bottom: 4 })
+
+                ForEach(this.recordings, (rec: RecordingInfo) => {
+                  Row() {
+                    Column() {
+                      Text(rec.label)
+                        .fontSize(13)
+                        .fontColor('#333333')
+                        .maxLines(1)
+                        .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      Row() {
+                        Text(`${Math.floor(rec.durationMs / 60000)}:${(Math.floor(rec.durationMs / 1000) % 60).toString().padStart(2, '0')}`)
+                          .fontSize(11)
+                          .fontColor('#999999')
+                        Text(`  ${rec.eventCount} ${I18n.t('ctx.recording.events')}`)
+                          .fontSize(11)
+                          .fontColor('#999999')
+                      }
+                      .margin({ top: 2 })
+                    }
+                    .layoutWeight(1)
+                    .alignItems(HorizontalAlign.Start)
+
+                    Button(I18n.t('ctx.recording.replay'))
+                      .fontSize(11)
+                      .height(28)
+                      .backgroundColor('#007AFF')
+                      .fontColor(Color.White)
+                      .margin({ left: 4 })
+                      .onClick(() => {
+                        let cas = ContextAwarenessService.getInstance();
+                        if (cas.loadReplay(rec.id)) {
+                          this.replaySpeed = 1;
+                          cas.setReplayProgressListener((p: ReplayProgress) => {
+                            this.replayState = p.state;
+                            this.replayProgress = p.progress;
+                            this.replayEventsPlayed = p.eventsPlayed;
+                            this.replayTotalEvents = p.totalEvents;
+                            this.replayCurrentTime = p.currentTime;
+                          });
+                          cas.startReplay(1);
+                          this.replayState = 'playing';
+                        }
+                      })
+
+                    Button(I18n.t('ctx.recording.delete'))
+                      .fontSize(11)
+                      .height(28)
+                      .backgroundColor('#FF3B30')
+                      .fontColor(Color.White)
+                      .margin({ left: 4 })
+                      .onClick(() => {
+                        ContextAwarenessService.getInstance().deleteRecording(rec.id);
+                        this.refreshRecordings();
+                      })
+                  }
+                  .width('100%')
+                  .padding({ top: 6, bottom: 6 })
+                })
+              } else if (!this.isRecording) {
+                Text(I18n.t('ctx.recording.empty'))
+                  .fontSize(12)
+                  .fontColor('#CCCCCC')
+                  .width('100%')
+                  .textAlign(TextAlign.Center)
+                  .margin({ top: 8 })
+              }
+            }
+            .width('100%')
+            .padding(16)
+            .backgroundColor(Color.White)
+            .borderRadius(12)
+            .margin({ top: 12 })
 
             // ===== 数据托盘 =====
             Column() {
@@ -1464,6 +1964,85 @@ struct ContextSettingsPage {
     qualities.splice(0, qualities.length, ...sQ);
   }
 
+  private refreshTimeline(): void {
+    try {
+      this.timelineEntries = DailyTimelineService.getInstance().getMergedTimeline();
+    } catch {
+      this.timelineEntries = [];
+    }
+  }
+
+  private formatTimelineTime(ts: number): string {
+    let d = new Date(ts);
+    return d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+  }
+
+  private formatDuration(ms: number): string {
+    if (ms < 60000) return '<1min';
+    let totalMin = Math.floor(ms / 60000);
+    if (totalMin < 60) return totalMin.toString() + 'min';
+    let hours = Math.floor(totalMin / 60);
+    let mins = totalMin % 60;
+    if (mins === 0) return hours.toString() + 'h';
+    return hours.toString() + 'h' + mins.toString() + 'min';
+  }
+
+  private getMotionLabel(state: string): string {
+    if (state === 'stationary') return '\u{1F9D8} ' + I18n.t('ctx.motion.stationary');
+    if (state === 'walking') return '\u{1F6B6} ' + I18n.t('ctx.motion.walking');
+    if (state === 'running') return '\u{1F3C3} ' + I18n.t('ctx.motion.running');
+    if (state === 'driving') return '\u{1F697} ' + I18n.t('ctx.motion.driving');
+    if (state === 'transit') return '\u{1F68C} ' + I18n.t('ctx.motion.transit');
+    return state;
+  }
+
+  private getMotionColor(state: string): string {
+    if (state === 'stationary') return '#9E9E9E';
+    if (state === 'walking') return '#4CAF50';
+    if (state === 'running') return '#FF9800';
+    if (state === 'driving') return '#2196F3';
+    if (state === 'transit') return '#9C27B0';
+    return '#666666';
+  }
+
+  private refreshPhysicalState(): void {
+    try {
+      // 直接从 DataTray 实时构建 7-tuple (不依赖 periodicEvaluate 的缓存)
+      let ps = PhysicalStateBuilder.getInstance().build();
+      this.psTime = I18n.t('ps.time.' + ps.time);
+      this.psLocation = I18n.t('ps.location.' + ps.location);
+      this.psMotion = I18n.t('ps.motion.' + ps.motion);
+      this.psPhone = I18n.t('ps.phone.' + ps.phone);
+      this.psLight = I18n.t('ps.light.' + ps.light);
+      this.psSound = I18n.t('ps.sound.' + ps.sound);
+      this.psDayType = I18n.t('ps.dayType.' + ps.dayType);
+
+      // 场景信息仍从 CAS 缓存读取 (需要 ScenarioMatcher 状态)
+      let cas = ContextAwarenessService.getInstance();
+      let results = cas.getLastScenarioResults();
+      if (results.length > 0) {
+        let top: ScenarioMatchResult = results[0];
+        this.psScenarioName = top.scenarioName;
+        this.psScenarioStep = (top.currentStep + 1).toString() + '/' + top.totalSteps.toString();
+      } else {
+        this.psScenarioName = '';
+        this.psScenarioStep = '';
+      }
+      this.psScenarioCount = cas.getActiveScenarioCount();
+    } catch (_e) {
+      this.psTime = '--';
+      this.psLocation = '--';
+      this.psMotion = '--';
+      this.psPhone = '--';
+      this.psLight = '--';
+      this.psSound = '--';
+      this.psDayType = '--';
+      this.psScenarioName = '';
+      this.psScenarioStep = '';
+      this.psScenarioCount = 0;
+    }
+  }
+
   private refreshTrayStatus(): void {
     try {
       let cas = ContextAwarenessService.getInstance();
@@ -1552,6 +2131,8 @@ struct ContextSettingsPage {
 
       // 更新顶部状态概览
       this.updateStatusHeader(statuses);
+      // 更新 7-tuple 物理状态
+      this.refreshPhysicalState();
     } catch (err) {
       this.personKeys = [];
       this.phoneKeys = [];
@@ -1568,17 +2149,37 @@ struct ContextSettingsPage {
   }
 
   private updateStatusHeader(statuses: TrayStatus[]): void {
+    let isReplay = this.replayState === 'playing' || this.replayState === 'paused' || this.replayState === 'finished';
+
+    // 回放模式：只使用 replay 来源的 tray 数据，忽略真实传感器残留值
     let trayMap: Record<string, string> = {};
     for (let i = 0; i < statuses.length; i++) {
-      trayMap[statuses[i].key] = statuses[i].value;
+      if (isReplay) {
+        // 只接受 replay 来源的数据
+        if (statuses[i].source.endsWith(':replay') || statuses[i].source === 'snapshot:replay') {
+          trayMap[statuses[i].key] = statuses[i].value;
+        }
+      } else {
+        trayMap[statuses[i].key] = statuses[i].value;
+      }
     }
-    // 时间
-    let now = new Date();
-    let h = now.getHours().toString().padStart(2, '0');
-    let m = now.getMinutes().toString().padStart(2, '0');
-    let tod = trayMap['timeOfDay'] ?? '';
-    let todLabel = tod.length > 0 ? I18n.t('ctx.status.' + tod) : '';
-    this.statusTime = h + ':' + m + ' ' + todLabel;
+
+    // 时间：回放时使用录制时间
+    if (isReplay && this.replayCurrentTime > 0) {
+      let replayDate = new Date(this.replayCurrentTime);
+      let h = replayDate.getHours().toString().padStart(2, '0');
+      let m = replayDate.getMinutes().toString().padStart(2, '0');
+      let tod = trayMap['timeOfDay'] ?? '';
+      let todLabel = tod.length > 0 ? I18n.t('ctx.status.' + tod) : '';
+      this.statusTime = h + ':' + m + ' ' + todLabel;
+    } else {
+      let now = new Date();
+      let h = now.getHours().toString().padStart(2, '0');
+      let m = now.getMinutes().toString().padStart(2, '0');
+      let tod = trayMap['timeOfDay'] ?? '';
+      let todLabel = tod.length > 0 ? I18n.t('ctx.status.' + tod) : '';
+      this.statusTime = h + ':' + m + ' ' + todLabel;
+    }
 
     // 运动状态
     let motion = trayMap['motionState'] ?? '';

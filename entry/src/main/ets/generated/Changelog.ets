@@ -8,9 +8,100 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.59.7';
+export const APP_VERSION: string = '2.65.1';
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '2.65.0',
+    date: '2026-03-02',
+    features: [
+      '7-Tuple物理状态模型: PhysicalStateBuilder从传感器数据构建7维离散状态(time/location/motion/phone/light/sound/dayType), 226800种理论状态空间',
+      '场景链匹配器: ScenarioMatcher确定性模式匹配72个生活场景(12类别: 晨起/通勤/工作/居家/睡眠/运动/用餐/购物/旅行/社交/健康/设备), 支持多步状态链+数字条件+通配符',
+      'RL特征扩展: Stream MLP 25→34维(7-tuple编码+场景上下文), LinUCB 8→14维, 含dayType/cycling/cafe等新特征',
+      '双管线架构: 规则引擎(C++)和场景匹配器(ArkTS)并行评估, ps_*字段注入DataTray供两个管线共用',
+      '物理状态UI卡片: 情景智能设置页新增7-tuple状态显示(2列网格)+活跃场景信息, 中英文I18n标签',
+      '架构设计文档: 新增Section 25(英文)和v10中文版, 覆盖7-tuple模型/场景链/RL扩展/双管线/UI',
+    ],
+    fixes: [
+
+    ],
+  },
+  {
+    version: '2.64.0',
+    date: '2026-03-02',
+    features: [
+      '回放进度条拖动: Progress替换为Slider, 支持拖动/点击seek到任意时间点',
+      '回放状态栏显示录制数据: 时间显示录制时间, 只展示replay来源的tray数据, 无WiFi信号时不显示当前真实WiFi',
+      '回放期间冻结真实状态: 暂停真实传感器更新(运动/GPS/WiFi/围栏), 停止回放后自动恢复',
+    ],
+    fixes: [
+      '驾车惯性步数基线修复: drivingInertiaStepBase每次确认驾车速度时重置, 防止长时间驾车振动累积伪步数导致惯性失效',
+      '驾车惯性时间戳修复: 中速段(1.5-5m/s)维持driving时同步刷新lastHighSpeedTime, 防止低速行驶>90秒后惯性过期',
+    ],
+  },
+  {
+    version: '2.63.0',
+    date: '2026-03-02',
+    features: [
+      '驾车惯性保护: GPS速度降到0时90秒内维持驾车状态(红灯/短暂停车), 结合步数检测区分真正下车',
+      '驾车退出30秒dwell: driving→stationary/walking需持续30秒确认, 防止停车后加速度计波动误跳',
+      '围栏离开冷却: WiFi断开后3分钟内跳过GPS围栏重匹配, 防止旧坐标重新匹配到刚离开的围栏',
+      '回放完成UI: 回放结束后显示「再次回放」+「关闭」按钮, 隐藏暂停/倍速控制',
+    ],
+    fixes: [
+      '驾车途中无geocoding地名: 围栏冷却确保离开后geocoding正常触发',
+      '等红灯误判步行: 驾车惯性+中速段保持驾车状态',
+      '到家停车后长时间仍显示驾车: driving退出时强制GPS刷新获取最新速度',
+      '离开公司WiFi断开后围栏残留: 旧GPS坐标在refreshTray中重新匹配到公司围栏',
+    ],
+  },
+  {
+    version: '2.62.0',
+    date: '2026-03-02',
+    features: [
+      '传感器录制/回放: SensorRecorder NDJSON格式录制所有tray.put事件(缓冲写入+2分钟keyframe快照), SensorPlayer支持1x/2x/5x/10x倍速回放+暂停/seek',
+      '录制/回放UI: 情景智能设置页新增录制控制(开始/停止/实时统计)、录制列表(回放/删除)、回放控制栏(暂停/继续/速度/进度条)',
+      'WiFi断开触发围栏清除: CAS注册wifiConnectionChange实时监听, WiFi断开→清围栏+强制GPS+室外模式',
+      'GPS坐标+geocoding加入时间线: TimelineEntry新增latitude/longitude/geocodeLabel, 异步填充途中地名',
+      '每日行程时间线: DailyTimelineService + DailyTimelinePage地图模式',
+    ],
+    fixes: [
+      'motionState缺失匹配修复: soft_match.cpp关键字段(motionState/isCharging/isWeekend等)缺失返回0.0而非0.5, 修复静止时误显示\'开车中注意安全(50%)\'',
+      'JS测试镜像同步: _helpers.js evaluate()同步关键字段缺失→0.0逻辑',
+      '测试工具: _helpers.js新增loadRecording()+buildSnapshotAtTime()用于录制文件场景测试',
+    ],
+  },
+  {
+    version: '2.61.0',
+    date: '2026-03-02',
+    features: [
+      'IntentFallbackPlugin: 无function标签的suggestion推荐支持意图关键词匹配(餐厅/天气/音乐/日历/闹钟/运动/导航)自动启动App',
+      '运动状态平滑: 滑动窗口(7样本)多数投票+方差检测替代单次magnitude判断, walking→running需5/7票防摆臂误判',
+      'Dwell逻辑: 转静止需持续3秒, 转运动需0.8秒, 防止短暂波动引起状态跳变',
+    ],
+    fixes: [
+      '状态转移首次调用修复: 首次update()仅初始化current_不创建伪转移, 解决路径条显示\'0min\'空from的问题',
+      '路径条label校验: C++端和ArkTS端均增加label非空检查, 防止空字符串渲染',
+      '转移状态周期持久化: evaluate()中自动保存转移状态, 不必等用户反馈',
+      '场景测试全覆盖: 新增8个场景测试文件(105用例), 28条规则+3项新功能全部覆盖',
+    ],
+  },
+  {
+    version: '2.60.0',
+    date: '2026-03-02',
+    features: [
+      '状态转移建模: 新增 StateTransitionTracker (C++), 检测围栏/运动状态变化, 自动注入9维转移特征',
+      'MLP 维度扩展: 输入维度 16→25, 网络架构 25→128→64→1 (11,649参数), 支持状态转移上下文学习',
+      '推荐卡片转移路径条: 状态变化时显示 \'🏠 家 ── 45min ──▶ 🏢 办公室\' 路径条 + 常规路线标签',
+      '常规路线检测: 自动统计转移路径频率, 同路线3次以上标记为常规路线',
+      '转移方向分类: 休息→工作(+1)/工作→休息(-1)/同类型(0) 语义方向编码',
+      '转移状态持久化: 通过NAPI export/import 保存路线统计和状态快照, 支持跨会话学习',
+      '设计文档 v9.0: 新增 Section 24 (7维状态模型, 70场景枚举, 25维特征映射, 状态转移建模)',
+    ],
+    fixes: [
+
+    ],
+  },
   {
     version: '2.59.6',
     date: '2026-03-02',
@@ -675,4 +766,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.59.6';
+export const LATEST_VERSION: string = '2.65.0';

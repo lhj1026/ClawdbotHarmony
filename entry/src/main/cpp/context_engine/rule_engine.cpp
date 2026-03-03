@@ -8,6 +8,7 @@
  */
 #include "context_engine.h"
 #include "stream_mlp.h"
+#include "state_transition.h"
 #include <algorithm>
 #include <chrono>
 #include <sstream>
@@ -92,7 +93,8 @@ void EventBuffer::expireOld() {
 
 RuleEngine::RuleEngine()
     : mab_(0.1), eventBuffer_(100),
-      streamRL_(std::make_unique<StreamRLEngine>()) {}
+      streamRL_(std::make_unique<StreamRLEngine>()),
+      transitionTracker_(std::make_unique<StateTransitionTracker>()) {}
 RuleEngine::~RuleEngine() = default;
 
 bool RuleEngine::loadRules(const std::vector<Rule>& rules) {
@@ -277,9 +279,14 @@ std::vector<MatchResult> RuleEngine::evaluate(const ContextMap& ctx, int maxResu
         priorityMap[rule.id] = rule.priority;
     }
 
-    // Build Stream RL features once for hybrid scoring
+    // Update state transition tracker and enrich context with transition features
+    transitionTracker_->update(ctx);
+    ContextMap enrichedCtx = ctx;
+    transitionTracker_->injectFeatures(enrichedCtx);
+
+    // Build Stream RL features once for hybrid scoring (using enriched context)
     double rlFeats[STREAM_FEAT_DIM];
-    StreamRLEngine::buildFeatures(ctx, rlFeats);
+    StreamRLEngine::buildFeatures(enrichedCtx, rlFeats);
 
     // Hybrid scoring: rule confidence × priority, boosted by Stream RL prediction
     auto hybridScore = [&](const MatchResult& r) -> double {

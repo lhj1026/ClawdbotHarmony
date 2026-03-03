@@ -103,3 +103,12 @@ export const getStreamRLStats: () => string;
 
 /** Get Stream RL sample count for a specific arm */
 export const getStreamRLArmSamples: (actionId: string) => number;
+
+/** Get state transition info as JSON string (for UI path bar) */
+export const getTransitionInfo: () => string;
+
+/** Export state transition tracker state as JSON string (for persistence) */
+export const exportTransitionState: () => string;
+
+/** Import state transition tracker state from JSON string */
+export const importTransitionState: (json: string) => void;

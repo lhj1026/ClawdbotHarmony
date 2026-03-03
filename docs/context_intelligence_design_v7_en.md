@@ -14,6 +14,8 @@
 | 5.0 | 2026-02-22 | 刘洪杰 (Hongjie Liu) | LLM fallback rule feedback loop (pending -> promote/remove); rule deduplication mechanism; recommendation anti-duplication; active exploration mode design; FeedbackService card lifecycle; merged context_awareness_design.md (collection strategy, geofence learning, app learning, silent mode enhancement, wearable integration, data tray, training sync, feedback learning) |
 | 7.0 | 2026-02-27 | 刘洪杰 (Hongjie Liu) | Stream Deep RL online reinforcement learning engine: Per-Arm StreamMLP (16→64→32→1) online training; Sparse Init + LayerNorm + ObGD stable training; Welford observation/reward normalization; LinUCB cold-start fallback + linear transition; NAPI bridge + ArkTS persistence; hybrid scoring formula |
 | 8.0 | 2026-02-27 | 刘洪杰 (Hongjie Liu) | Action Execution System: ActionExecutor routes accepted recommendations to system capabilities (calendar, app launch, mode switch); CalendarPlugin extension (getUpcomingEvents, findConflicts, formatEventsMarkdown); Stream RL UI Display: recommendation cards show RL learning labels (探索中/学习中/已学习); ContextSettingsPage RL stats panel; NAPI getStreamRLStats/getStreamRLArmSamples; Explore mode RL phase info |
+| 9.0 | 2026-03-02 | 刘洪杰 (Hongjie Liu) | State Transition Modeling: 7-dimension state model, 70-scenario enumeration, INPUT_DIM expansion 16→25 with 9 transition features (StateTransitionTracker C++), network architecture 25→128→64→1, recommendation card transition path bar (P0), persistence via NAPI |
+| 10.0 | 2026-03-02 | 刘洪杰 (Hongjie Liu) | 7-Tuple Physical State & Scenario Intelligence: PhysicalState 7-tuple (time, location, motion, phone, light, sound, dayType) with 226,800 state space; PhysicalStateBuilder sensor→state classification; ScenarioMatcher deterministic chain matching (72 scenarios, 12 categories); Stream MLP 25→34 dim + LinUCB 8→14 dim feature expansion; ContextSettingsPage physical state card; dual pipeline architecture (rules + scenarios) |
 
 ---
 
@@ -133,6 +135,25 @@
   - [23.3 Recommendation Card RL Labels](#233-recommendation-card-rl-labels)
   - [23.4 ContextSettingsPage Stats Panel](#234-contextsettingspage-stats-panel)
   - [23.5 Explore Mode RL Info](#235-explore-mode-rl-info)
+- [24. State Transition Modeling and Feature Expansion](#24-state-transition-modeling-and-feature-expansion)
+  - [24.1 7-Dimension State Model](#241-7-dimension-state-model)
+  - [24.2 Scenario Enumeration (70 Scenarios)](#242-scenario-enumeration-70-scenarios)
+  - [24.3 Input Dimension Coverage Analysis](#243-input-dimension-coverage-analysis)
+  - [24.4 State Transition Features (9 Dimensions)](#244-state-transition-features-9-dimensions)
+  - [24.5 StateTransitionTracker (C++)](#245-statetransitiontracker-c)
+  - [24.6 Network Architecture Update (25→128→64→1)](#246-network-architecture-update-25128641)
+  - [24.7 Recommendation Card Transition Path Bar](#247-recommendation-card-transition-path-bar)
+  - [24.8 Future Roadmap](#248-future-roadmap)
+- [25. 7-Tuple Physical State & Scenario Intelligence](#25-7-tuple-physical-state--scenario-intelligence)
+  - [25.1 Architecture Overview](#251-architecture-overview)
+  - [25.2 7-Tuple Physical State Model](#252-7-tuple-physical-state-model)
+  - [25.3 PhysicalStateBuilder](#253-physicalstatebuilder)
+  - [25.4 Scenario Chain Matching](#254-scenario-chain-matching)
+  - [25.5 72 Scenario Definitions](#255-72-scenario-definitions)
+  - [25.6 RL Feature Expansion](#256-rl-feature-expansion)
+  - [25.7 Dual Pipeline Integration](#257-dual-pipeline-integration)
+  - [25.8 UI Display](#258-ui-display)
+  - [25.9 File Manifest](#259-file-manifest)
 - [Appendix: TODO Items](#appendix-todo-items)
 
 ---
@@ -2602,6 +2623,553 @@ In `buildExploreStateInfo()`, after the existing context state lines (time, loca
 | ≥ 50 | 已收敛 |
 
 This gives the Explore mode panel a quick view of the overall RL engine maturity.
+
+---
+
+## 24. State Transition Modeling and Feature Expansion
+
+The same current state can warrant very different recommendations depending on what state the user came from. For example, "at home after returning from the office" vs "at home after returning from the hospital" should trigger different suggestions. This section describes the state transition modeling system that captures this temporal context.
+
+### 24.1 7-Dimension State Model
+
+Every user situation can be described along 7 orthogonal dimensions:
+
+| Dimension | Code | Values | Sensor Source |
+|-----------|------|--------|---------------|
+| WHERE | Location/Place | home, office, gym, cafe, mall, hospital, airport, school, park, transit, unknown | Geofence, WiFi fingerprint, GPS |
+| DOING | Activity | stationary, walking, running, driving, transit, cycling, sleeping | Motion detector, step counter |
+| WHEN | Time context | dawn, morning, afternoon, evening, night × weekday/weekend | System clock |
+| BODY | Physical state | resting, normal, exercise, stressed | Heart rate, wearable |
+| SCHEDULE | Calendar context | free, has_upcoming, in_meeting, post_meeting | Calendar plugin |
+| DEVICE | Device state | charging, low_battery, connected_wifi, cellular_only | Battery, network |
+| ENVIRONMENT | Ambient | quiet, noisy, outdoor, indoor | Ambient sound plugin |
+
+These 7 dimensions define the state space. A "state" is a specific combination of values across these dimensions.
+
+### 24.2 Scenario Enumeration (70 Scenarios)
+
+Using the 7-dimension model, we enumerate 70 representative scenarios grouped by life domain:
+
+**Work (17 scenarios)**
+1. Morning commute (home→office, walking/driving)
+2. Arrive at office (geofence enter)
+3. Pre-meeting preparation (calendar: upcoming meeting)
+4. In meeting (calendar: in_meeting, stationary)
+5. Post-meeting summary (calendar: post_meeting)
+6. Lunch break start (office, noon, walking)
+7. Return from lunch (walking→stationary at office)
+8. Afternoon focus time (office, afternoon, stationary)
+9. Leave office (office geofence exit, evening)
+10. Evening commute home (office→home, driving/transit)
+11. Work from home (home, weekday, stationary, wifi)
+12. Client visit (unknown location, weekday, walking)
+13. Business trip departure (airport, has_upcoming)
+14. Conference/event (unknown, weekday, stationary)
+15. Late night work (office, night, stationary)
+16. Weekend overtime (office, weekend)
+17. Deadline crunch (office, evening+, stationary)
+
+**Life (23 scenarios)**
+18. Wake up at home (home, dawn/morning, stationary→walking)
+19. Morning exercise (gym/park, morning, running/walking)
+20. Breakfast preparation (home, morning, stationary)
+21. Grocery shopping (mall, walking)
+22. Cooking at home (home, evening, stationary)
+23. Dinner out (restaurant/cafe, evening, stationary)
+24. Evening relaxation (home, evening, stationary)
+25. Bedtime routine (home, night, stationary)
+26. Weekend morning (home, weekend, morning)
+27. Weekend outing (park/mall, weekend, walking)
+28. Hospital visit (hospital, stationary)
+29. Post-hospital return home (hospital→home)
+30. Family gathering (home, weekend, evening)
+31. Home maintenance (home, weekend, stationary)
+32. Pet walking (park, walking, short duration)
+33. Childcare (home/school, walking/stationary)
+34. Hair salon/spa (unknown, stationary, long duration)
+35. Bank/government office (unknown, weekday, stationary)
+36. Moving/relocating (transit, long duration)
+37. Home delivery arrival (home, stationary)
+38. Late night return home (home, night, walking→stationary)
+39. Nap time (home, afternoon, stationary→sleeping)
+40. Morning coffee ritual (cafe, morning, stationary)
+
+**Study (9 scenarios)**
+41. Library study (school/library, stationary, long duration)
+42. Online course (home, stationary, wifi)
+43. Group study (cafe/school, stationary)
+44. Exam preparation (home/library, evening+night, stationary)
+45. Class attendance (school, weekday, stationary)
+46. Research fieldwork (outdoor, walking, variable)
+47. Language practice commute (transit, walking)
+48. Workshop/seminar (unknown, stationary)
+49. Reading time (home, stationary, quiet)
+
+**Entertainment (14 scenarios)**
+50. Gym workout (gym, running/walking)
+51. Swimming (gym, stationary→walking)
+52. Outdoor jogging (park, running)
+53. Movie theater (unknown, stationary, quiet)
+54. Concert/event (unknown, stationary, noisy)
+55. Gaming at home (home, stationary, night/evening)
+56. Social media browsing (home, stationary)
+57. Music listening (any, any)
+58. Photography walk (outdoor, walking, weekend)
+59. Hiking (outdoor, walking, long duration)
+60. Cycling (outdoor, cycling)
+61. Yoga/meditation (home/gym, stationary, quiet)
+62. Bar/nightclub (unknown, night, noisy)
+63. Sports game spectating (unknown, stationary)
+
+**Transition (7 scenarios)**
+64. Home→Office transition (commute)
+65. Office→Home transition (return commute)
+66. Home→Gym transition
+67. Location→Hospital transition
+68. Any→Airport transition (travel)
+69. Home→School transition
+70. Unknown→Home return (late arrival)
+
+### 24.3 Input Dimension Coverage Analysis
+
+We analyze how many input features are needed to distinguish these 70 scenarios:
+
+| Tier | Dimensions | Cumulative Dim Count | Coverage | What it adds |
+|------|-----------|---------------------|----------|-------------|
+| **Tier 1** (Essential) | hour_sin, hour_cos, dayOfWeek_sin, dayOfWeek_cos, isWeekend, timeOfDay | 6 | ~80% | Time context separates morning/afternoon/evening/night × weekday/weekend |
+| **Tier 2** (Motion+Battery) | batteryLevel, isCharging, motion_stationary, motion_walking, motion_running, motion_driving, hasGeofence | 13 | ~93% | Activity and location awareness |
+| **Tier 3** (Connectivity) | wifiConnected, networkType_wifi, networkType_cellular | 16 | ~97% | Indoor/outdoor and connectivity context |
+| **Tier 4** (Transition) | prev_geofence, geofence_changed, prev_motion (2), transition_duration, time_in_current, transitions_count, is_routine, direction | 25 | ~100% | Temporal transitions complete the picture |
+
+**25-Dimension Feature Vector Mapping:**
+
+| Index | Feature | Source | Encoding | Range |
+|-------|---------|--------|----------|-------|
+| 0 | hour_sin | System clock | sin(2π·h/24) | [-1, 1] |
+| 1 | hour_cos | System clock | cos(2π·h/24) | [-1, 1] |
+| 2 | dayOfWeek_sin | System clock | sin(2π·d/7) | [-1, 1] |
+| 3 | dayOfWeek_cos | System clock | cos(2π·d/7) | [-1, 1] |
+| 4 | isWeekend | System clock | binary | {0, 1} |
+| 5 | timeOfDay | System clock | ordinal | [0.1, 0.9] |
+| 6 | batteryLevel | Battery API | level/100 | [0, 1] |
+| 7 | isCharging | Battery API | binary | {0, 1} |
+| 8 | motion_stationary | Motion detector | one-hot | {0, 1} |
+| 9 | motion_walking | Motion detector | one-hot | {0, 1} |
+| 10 | motion_running | Motion detector | one-hot | {0, 1} |
+| 11 | motion_driving | Motion detector | one-hot | {0, 1} |
+| 12 | hasGeofence | Geofence service | binary | {0, 1} |
+| 13 | wifiConnected | WiFi API | binary | {0, 1} |
+| 14 | networkType_wifi | Network API | one-hot | {0, 1} |
+| 15 | networkType_cellular | Network API | one-hot | {0, 1} |
+| 16 | prev_geofence | StateTransitionTracker | binary (had prev?) | {0, 1} |
+| 17 | geofence_changed | StateTransitionTracker | binary | {0, 1} |
+| 18 | prev_motion_stationary | StateTransitionTracker | 2-hot | {0, 1} |
+| 19 | prev_motion_moving | StateTransitionTracker | 2-hot | {0, 1} |
+| 20 | transition_duration_min | StateTransitionTracker | min(dur/120, 1) | [0, 1] |
+| 21 | time_in_current_min | StateTransitionTracker | min(dur/240, 1) | [0, 1] |
+| 22 | transitions_last_hour | StateTransitionTracker | min(count/10, 1) | [0, 1] |
+| 23 | is_routine_transition | StateTransitionTracker | binary | {0, 1} |
+| 24 | transition_direction | StateTransitionTracker | (dir+1)/2 | [0, 1] |
+
+### 24.4 State Transition Features (9 Dimensions)
+
+The 9 transition features (indices 16–24) are organized into three groups:
+
+**Group A: Previous State (4 dimensions)**
+
+| Feature | Description | Value |
+|---------|-------------|-------|
+| `prev_geofence` | Whether the user was in a geofence before the transition | 0 (no) or 1 (yes) |
+| `geofence_changed` | Whether the geofence changed during the transition | 0 or 1 |
+| `prev_motionState` (×2) | 2-hot encoding of previous motion: was_stationary / was_moving | {0,1} each |
+
+**Group B: Temporal Interval (3 dimensions)**
+
+| Feature | Description | Encoding |
+|---------|-------------|----------|
+| `transition_duration_min` | How long the transition took | min(minutes/120, 1.0) |
+| `time_in_current_state_min` | How long the user has been in the current state | min(minutes/240, 1.0) |
+| `transitions_last_hour` | Number of state changes in the past hour | min(count/10, 1.0) |
+
+**Group C: Sequence Pattern (2 dimensions)**
+
+| Feature | Description | Encoding |
+|---------|-------------|----------|
+| `is_routine_transition` | Whether this exact transition path has been seen 3+ times at this time | 0 or 1 |
+| `transition_direction` | Semantic direction: work→rest (-1), same-type (0), rest→work (+1) | (dir+1)/2 |
+
+**Value Examples:**
+
+| Scenario | Key Transition Features | Recommendation Impact |
+|----------|------------------------|----------------------|
+| Home → Office (morning commute) | prev_geofence=1, geofence_changed=1, direction=1.0, is_routine=1 | Show commute ETA, meeting prep |
+| Office → Home (evening) | prev_geofence=1, geofence_changed=1, direction=0.0, is_routine=1 | Show traffic, dinner suggestions |
+| Hospital → Home | prev_geofence=1, geofence_changed=1, direction=0.0, is_routine=0 | Show health tips, rest reminders |
+| Stationary → Walking (at office) | geofence_changed=0, prev_motion_stationary=1, time_in_current=low | Maybe lunch break — suggest restaurants |
+| Long stationary at home (night) | time_in_current=high, transitions_last_hour=low | Suggest bedtime routine |
+
+### 24.5 StateTransitionTracker (C++)
+
+```cpp
+// File: entry/src/main/cpp/context_engine/state_transition.h
+
+namespace context_engine {
+
+struct StateSnapshot {
+    std::string geofence;         // geofence ID or empty
+    std::string geofenceLabel;    // human-readable name
+    std::string geofenceIcon;     // emoji icon
+    std::string motionState;      // stationary/walking/running/driving
+    int64_t timestamp;            // ms since epoch
+};
+
+struct TransitionInfo {
+    StateSnapshot prev;
+    StateSnapshot current;
+    double durationMin;           // transition duration in minutes
+    double timeInCurrentMin;      // time spent in current state
+    int transitionsLastHour;      // state changes in last 60 min
+    bool isRoutine;               // seen this route 3+ times
+    int direction;                // -1=work→rest, 0=same, +1=rest→work
+    std::string patternLabel;     // e.g. "常规通勤 · 周一早晨"
+};
+
+class StateTransitionTracker {
+public:
+    bool update(const ContextMap& ctx);           // returns true if state changed
+    void injectFeatures(ContextMap& ctx) const;   // inject 9 transition keys
+    TransitionInfo getTransitionInfo() const;
+    std::string getTransitionJson() const;        // JSON for NAPI → UI
+    std::string exportJson() const;               // persistence
+    void importJson(const std::string& json);
+private:
+    StateSnapshot current_, previous_;
+    std::vector<int64_t> transitionTimestamps_;
+    bool hasTransition_ = false;
+    std::unordered_map<std::string, int> routeCounts_;
+    static constexpr int ROUTINE_THRESHOLD = 3;
+    bool detectStateChange(const ContextMap& ctx) const;
+    int classifyDirection(const std::string& from, const std::string& to) const;
+};
+
+}  // namespace context_engine
+```
+
+**Key algorithms:**
+
+1. **State Change Detection**: Compares current geofence and motionState against stored `current_` snapshot. A change in either triggers a transition.
+
+2. **Routine Detection**: Maintains a counter map with key `"fromGeo|toGeo|hourBucket"` where hourBucket = hour/4 (0–5). When count >= `ROUTINE_THRESHOLD` (3), the transition is classified as routine.
+
+3. **Direction Classification**:
+   - "Rest" locations: home, cafe, gym, park
+   - "Work" locations: office, school, hospital
+   - Direction = +1 (rest→work), -1 (work→rest), 0 (same category or unknown)
+
+4. **Geofence Icons**: home→🏠, office→🏢, gym→💪, cafe→☕, mall→🛍️, hospital→🏥, airport→✈️, school→🏫, park→🌳, transit→🚌
+
+### 24.6 Network Architecture Update (25→128→64→1)
+
+With the input dimension expanding from 16 to 25, the hidden layer sizes are proportionally increased:
+
+| Layer | Old | New | Parameters |
+|-------|-----|-----|-----------|
+| Input → H1 | 16→64 | 25→128 | 25×128 + 128 = 3,328 |
+| H1 → H2 | 64→32 | 128→64 | 128×64 + 64 = 8,256 |
+| H2 → Output | 32→1 | 64→1 | 64×1 + 1 = 65 |
+| **Total** | **3,169** | **11,649** | ~3.7× increase |
+
+The architecture remains:
+- **Sparse Initialization**: 90% zero weights (LeCun scaling for non-zero)
+- **Layer Normalization**: Non-learnable, applied after each linear layer
+- **LeakyReLU**: α = 0.01
+- **ObGD**: Overshooting-Bounded Gradient Descent for stable online learning
+- **Welford Normalization**: Online input/reward normalization
+
+The ~3.7× parameter increase is acceptable for on-device inference (< 0.1ms per prediction) and provides sufficient capacity to learn the 9 additional transition features.
+
+### 24.7 Recommendation Card Transition Path Bar
+
+When a state transition is detected, recommendation cards display a transition path bar at the top:
+
+**Visual Design:**
+```
+┌─────────────────────────────────────────┐
+│ 🏠 家 ── 45min ──▶ 🏢 办公室           │  ← Path bar (green, bold)
+│ 常规通勤 · 周一早晨                      │  ← Pattern label (gray, small)
+├─────────────────────────────────────────┤
+│ 🔍 检测到状态变化                        │  ← Existing state info
+│ 位置: 办公室 | 运动: 静止                │
+├─────────────────────────────────────────┤
+│ ── 💡 推荐操作 ──                        │
+│ [🥇 查看日程安排 (92%)]                  │
+│ [🥈 打开通勤路线 (85%)]                  │
+│ [🙈 忽略]                               │
+└─────────────────────────────────────────┘
+```
+
+**A2UI JSON Structure:**
+```json
+{
+  "type": "text",
+  "text": "🏠 家 ── 45min ──▶ 🏢 办公室",
+  "style": {"fontSize": 16, "fontWeight": "bold", "color": "#4CAF50"}
+}
+```
+
+The path bar is conditionally shown only when `getTransitionInfo()` returns valid transition data with both `from` and `to` locations.
+
+### 24.8 Future Roadmap
+
+| Priority | Feature | Description |
+|----------|---------|-------------|
+| **P1** | Chat Status Bar | Lightweight status bar at top/bottom of chat interface showing current location + time in state |
+| **P2** | Settings Page Timeline | Vertical timeline on ContextSettingsPage showing today's state transitions |
+| **P1** | Sliding Window (N-step) | Track patterns like "3 meetings in last 2 hours" using a sliding window over recent transitions |
+| **P2** | RNN/Transformer | Cloud-side full-sequence understanding for complex multi-step pattern recognition |
+
+---
+
+## 25. 7-Tuple Physical State & Scenario Intelligence
+
+This section describes the 7-tuple physical state model and scenario-based intelligence system that builds on top of the state transition features (Section 24). While Section 24 introduced the concept of 7 state dimensions and transition tracking, this section implements a concrete **physical state classification layer** and a **deterministic scenario chain matcher** that together form a parallel recommendation pipeline alongside the existing rule engine.
+
+**Core architecture flow**: Physical sensors → State (7-tuple) → State chains → Scenario → Scenario + Digital data → Recommendations → Action execution
+
+### 25.1 Architecture Overview
+
+The system introduces two new components:
+
+1. **PhysicalStateBuilder** (ArkTS): Reads raw sensor data from DataTray and classifies it into a discrete 7-tuple `PhysicalState`
+2. **ScenarioMatcher** (ArkTS): Matches the current `PhysicalState` against 72 predefined scenario chains to identify the user's current life situation
+
+These components run in parallel with the existing C++ rule engine:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                  periodicEvaluate()                      │
+│                                                          │
+│  DataTray (raw sensors)                                  │
+│       │                                                  │
+│       ├──▶ PhysicalStateBuilder.build()                  │
+│       │         │                                        │
+│       │         ▼                                        │
+│       │    PhysicalState (7-tuple)                       │
+│       │         │                                        │
+│       │         ├──▶ ScenarioMatcher.match()             │
+│       │         │         │                              │
+│       │         │         ▼                              │
+│       │         │    ScenarioMatchResult[]               │
+│       │         │                                        │
+│       │         └──▶ Inject ps_* into DataTray           │
+│       │                     │                            │
+│       └──▶ tray.getSnapshot() ──▶ C++ evaluate()        │
+│                                       │                  │
+│                                       ▼                  │
+│                              MatchResult[] (rules)       │
+│                                       │                  │
+│                              mergeResults → deliver      │
+└─────────────────────────────────────────────────────────┘
+```
+
+### 25.2 7-Tuple Physical State Model
+
+Every user situation is described by 7 orthogonal physical dimensions:
+
+| # | Dimension | Type | Values | Count |
+|---|-----------|------|--------|-------|
+| 1 | **Time** | `TimeSlot` | sleeping, dawn, morning, forenoon, lunch, afternoon, evening, night, late_night | 9 |
+| 2 | **Location** | `LocationCategory` | home, work, commute, restaurant, gym, transit_hub, shopping, outdoor, cafe, unknown | 10 |
+| 3 | **Motion** | `MotionCategory` | stationary, walking, running, cycling, driving, transit, unknown | 7 |
+| 4 | **Phone** | `PhoneCategory` | in_use, on_desk, in_pocket, face_down, charging, unknown | 6 |
+| 5 | **Light** | `LightCategory` | dark, dim, normal, bright | 4 |
+| 6 | **Sound** | `SoundCategory` | silent, quiet, normal, noisy, unknown | 5 |
+| 7 | **DayType** | `DayType` | workday, weekend, holiday | 3 |
+
+**State space**: 9 × 10 × 7 × 6 × 4 × 5 × 3 = **226,800** theoretical combinations. Due to physical impossibilities (e.g., gym + driving, bright + sleeping), effective combinations are approximately **300–600**.
+
+**Comparison with Section 24's 7 dimensions**:
+- Section 24's dimensions (WHERE, DOING, WHEN, BODY, SCHEDULE, DEVICE, ENVIRONMENT) are conceptual categories mixing physical and digital signals
+- This section's 7-tuple is purely physical-world state that can be directly measured from sensors
+- Digital-world signals (calendar, battery, app usage) are handled as `digitalConditions` on scenario steps
+
+### 25.3 PhysicalStateBuilder
+
+**File**: `entry/src/main/ets/service/context/PhysicalStateBuilder.ets`
+
+Reads DataTray sensor data and classifies each dimension:
+
+| Dimension | DataTray Keys | Classification Logic |
+|-----------|--------------|---------------------|
+| Time | `hour` (system) | 0:00–5:00→sleeping, 5:00–7:00→dawn, 7:00–9:00→morning, 9:00–11:30→forenoon, 11:30–13:30→lunch, 13:30–17:00→afternoon, 17:00–19:30→evening, 19:30–22:00→night, 22:00–24:00→late_night |
+| Location | `wifiGeofence`, `motionState`, `gpsSpeed` | WiFi geofence mapping (home/work/gym/restaurant/transit/shopping/cafe) → location; no geofence + motion=driving/transit → commute; no WiFi + GPS → outdoor; else → unknown |
+| Motion | `motionState`, `transportMode` | Direct mapping; `transportMode=transit` → transit; `transportMode=cycling` → cycling |
+| Phone | `isCharging`, `ambient_brightness`, `proximity`, `screen_on`, `phone_posture` | Priority: charging > pocket (dark+proximity) > face_down > in_use (screen_on) > on_desk (flat) > unknown |
+| Light | `ambient_brightness` (lux) | <5→dark, 5–50→dim, 50–500→normal, >500→bright |
+| Sound | `noise_level` (dB) | <25→silent, 25–40→quiet, 40–55→normal, >55→noisy |
+| DayType | `dayOfWeek`, calendar holiday events | Holiday calendar event → holiday; Saturday/Sunday → weekend; else → workday |
+
+**Static helpers**:
+- `fingerprint(ps)` → `"time|location|motion|phone|light|sound|dayType"` (for deduplication)
+- `equals(a, b)` → boolean comparison of all 7 dimensions
+
+### 25.4 Scenario Chain Matching
+
+**File**: `entry/src/main/ets/service/context/ScenarioMatcher.ets`
+
+A scenario is a multi-step **state chain** — a sequence of expected PhysicalState patterns that describe a life situation progression. The ScenarioMatcher performs deterministic pattern matching (not RL) to identify which scenarios are currently active.
+
+**Scenario definition** (JSON):
+```json
+{
+  "id": "S07",
+  "name": "早晨驾车通勤",
+  "nameEn": "Morning Driving Commute",
+  "category": "commute",
+  "steps": [
+    {
+      "time": "morning",
+      "location": "home",
+      "motion": "walking",
+      "phone": "in_pocket",
+      "light": "normal",
+      "sound": "quiet",
+      "dayType": "*",
+      "actions": [{ "id": "check_traffic", "type": "suggestion", "payload": "..." }]
+    },
+    {
+      "time": "morning",
+      "location": "commute",
+      "motion": "driving",
+      "phone": "*",
+      "light": "normal",
+      "sound": "*",
+      "dayType": "*",
+      "actions": [{ "id": "nav_to_work", "type": "suggestion", "payload": "..." }]
+    }
+  ],
+  "timeoutMs": 7200000,
+  "priority": 5,
+  "enabled": true
+}
+```
+
+**Matching algorithm**:
+1. **`advanceActiveChains()`**: For each active chain, check if the next step matches the current PhysicalState. If yes, advance the chain position.
+2. **`detectNewScenarios()`**: For all enabled scenarios not already active, check if Step 0 matches. If yes, start a new chain.
+3. **`cleanupTimeouts()`**: Remove chains that haven't progressed within `timeoutMs` (default 2 hours).
+4. **Step matching**: AND-match all 7 dimensions. `*` = wildcard (always matches). `A|B` = OR (matches either value). Confidence = number of specified (non-wildcard) dimensions / 7.
+5. **Digital conditions**: Each step can optionally have `digitalConditions` (e.g., `{"batteryLevel": "lte 30"}`) checked against DataTray values.
+
+### 25.5 72 Scenario Definitions
+
+**File**: `entry/src/main/resources/rawfile/config/scenarios.json`
+
+72 scenarios across 12 life categories:
+
+| Category | Scenarios | IDs | Key Examples |
+|----------|-----------|-----|-------------|
+| Morning Routine | 6 | S01–S06 | Workday wake-up, weekend sleep-in, morning jog |
+| Commute | 6 | S07–S12 | Driving/transit/cycling commute, late return |
+| Work | 8 | S13–S20 | Focus work, meetings, lunch break, overtime |
+| Home Life | 12 | S21–S32 | Cooking, TV, reading, housework, weekend rest |
+| Sleep | 5 | S33–S37 | Bedtime, nap, insomnia, night waking |
+| Exercise | 6 | S38–S43 | Gym, outdoor running, walking, cycling |
+| Dining | 5 | S44–S48 | Restaurant lunch/dinner, cafe, takeout |
+| Shopping | 3 | S49–S51 | Supermarket, mall, convenience store |
+| Travel | 8 | S52–S59 | Airport, boarding, flight, train, taxi |
+| Social | 3 | S60–S62 | Home visitors, outing, attending events |
+| Health | 5 | S63–S67 | Sedentary alert, hydration, eye care, sleep reminder |
+| Device | 5 | S68–S72 | Low battery, charging complete, BT vehicle, meeting start |
+
+**Coverage analysis**: 55/72 (76%) fully covered by 7-tuple alone; 12/72 (17%) need digital conditions; 5/72 (7%) are pure digital triggers.
+
+### 25.6 RL Feature Expansion
+
+The 7-tuple state and scenario context are encoded as features for the RL models:
+
+**Stream MLP** (25 → 34 dimensions):
+
+| Index | Feature | Encoding |
+|-------|---------|----------|
+| 0–1 | hour sin/cos | sin/cos(2π·h/24) |
+| 2–3 | dayType one-hot | weekend, holiday (workday = both 0) |
+| 4–12 | location 9-dim one-hot | home, work, commute, restaurant, gym, transit_hub, shopping, outdoor, cafe |
+| 13–18 | motion 6-dim one-hot | stationary, walking, running, cycling, driving, transit |
+| 19–23 | phone 5-dim one-hot | in_use, on_desk, in_pocket, charging, unknown |
+| 24–25 | light | ordinal (0/0.33/0.67/1) + dark_flag |
+| 26–27 | sound | ordinal (0/0.25/0.5/1) + has_voice |
+| 28 | has_active_scenario | binary |
+| 29 | chain_position | step/total (0–1) |
+| 30 | scenario_category_hash | category → ordinal (0.05–0.95) |
+| 31 | is_routine | from StateTransitionTracker |
+| 32 | time_in_state_norm | min(minutes/120, 1) |
+| 33 | battery_norm | batteryLevel/100 |
+
+**Network**: 34 → 128 → 64 → 1 (11,649 parameters per arm, up from 3,328)
+
+**LinUCB** (8 → 14 dimensions):
+
+| Index | Feature |
+|-------|---------|
+| 0–1 | hour sin/cos |
+| 2 | battery/100 |
+| 3 | isCharging |
+| 4–5 | dayType one-hot (weekend, holiday) |
+| 6–10 | motion 5-dim one-hot (stationary, walking, running, cycling, vehicle) |
+| 11 | light ordinal |
+| 12 | sound ordinal |
+| 13 | has_scenario |
+
+**Backward compatibility**: Both `buildFeatures()` functions include fallback paths (e.g., `ps_motion` falls back to `motionState`). `StreamMLP::importJson()` checks `featDim` and skips import on dimension mismatch, causing graceful re-initialization.
+
+### 25.7 Dual Pipeline Integration
+
+The evaluation pipeline in `ContextAwarenessService.periodicEvaluate()` now runs two parallel pipelines:
+
+```
+Pipeline 1 (Rules):    tray → snapshot → C++ evaluate() → MatchResult[]
+Pipeline 2 (Scenarios): tray → PhysicalStateBuilder → ScenarioMatcher → ScenarioMatchResult[]
+```
+
+**PhysicalState fields injected into DataTray** (consumed by both pipelines):
+- `ps_time`, `ps_location`, `ps_motion`, `ps_phone`, `ps_light`, `ps_sound`, `ps_dayType`
+- `ps_scenario` (top scenario name), `ps_scenarioCategory`, `ps_chainPosition`, `ps_scenarioConfidence`
+
+These `ps_*` keys are available to the C++ rule engine's `buildFeatures()` for RL scoring, enabling the Stream MLP and LinUCB to learn from the 7-tuple state without any changes to the C++ evaluation logic.
+
+### 25.8 UI Display
+
+**File**: `entry/src/main/ets/pages/ContextSettingsPage.ets`
+
+A new card appears below the status overview, showing:
+- 7 dimension labels with current values in a 2-column grid
+- Active scenario name, step progress (e.g., "2/3"), and count
+
+**File**: `entry/src/main/ets/common/I18n.ets`
+
+Added I18n labels for all dimension values in both Chinese and English:
+- `ps.title` → "Physical State" / "物理状态"
+- `ps.time.sleeping` → "Sleeping" / "深夜睡眠"
+- `ps.location.home` → "Home" / "家"
+- etc. (all 7 dimensions × all values)
+
+### 25.9 File Manifest
+
+| File | Action | Description |
+|------|--------|-------------|
+| `ContextModels.ets` | Edit | Added `TimeSlot`, `LocationCategory`, `MotionCategory`, `PhoneCategory`, `LightCategory`, `SoundCategory`, `DayType`, `PhysicalState`, `Scenario`, `ScenarioStep`, `ScenarioAction`, `ScenarioState`, `ScenarioMatchResult`, `ScenarioCategory` |
+| `PhysicalStateBuilder.ets` | New | Sensor → 7-tuple classification (7 classify methods + fingerprint/equals) |
+| `ScenarioMatcher.ets` | New | Deterministic scenario chain matcher (72 scenarios, init/match/advance/cleanup) |
+| `scenarios.json` | New | 72 scenario definitions in JSON (rawfile/config/) |
+| `ContextAwarenessService.ets` | Edit | Pipeline integration: build PhysicalState, run ScenarioMatcher, inject ps_* fields |
+| `ContextEngine.ets` | Edit | Added ps_* fields to ContextSnapshot interface |
+| `stream_mlp.h` | Edit | `STREAM_FEAT_DIM` 25→34, updated feature layout comment |
+| `stream_mlp.cpp` | Edit | `buildFeatures()` rewritten for 34-dim (7-tuple + scenario context) |
+| `context_engine.h` | Edit | `LINUCB_DIM` 8→14 |
+| `linucb.cpp` | Edit | `buildFeatureVec()` rewritten for 14-dim |
+| `ContextSettingsPage.ets` | Edit | 7-tuple PhysicalState display card |
+| `I18n.ets` | Edit | Chinese + English labels for all dimension values |
 
 ---
 

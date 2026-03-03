@@ -12,6 +12,7 @@ import { NotificationPlugin } from './actions/NotificationPlugin';
 import { ModeChangePlugin } from './actions/ModeChangePlugin';
 import { CalendarInfoPlugin } from './actions/CalendarInfoPlugin';
 import { TravelInfoPlugin } from './actions/TravelInfoPlugin';
+import { IntentFallbackPlugin } from './actions/IntentFallbackPlugin';
 import { AppLaunchPlugin } from './actions/AppLaunchPlugin';
 import { QRCodePlugin } from './actions/QRCodePlugin';
 import { SmartActionPlugin } from './actions/SmartActionPlugin';
@@ -26,6 +27,7 @@ export class ActionExecutor {
   private router: ActionRouter;
   private log: LogService = LogService.getInstance();
   private appLaunchPlugin: AppLaunchPlugin;
+  private intentFallbackPlugin: IntentFallbackPlugin;
   private smartActionPlugin: SmartActionPlugin;
 
   constructor(calendarPlugin?: CalendarPlugin) {
@@ -40,6 +42,8 @@ export class ActionExecutor {
       this.router.register(new CalendarInfoPlugin(calendarPlugin));
     }
     this.router.register(new TravelInfoPlugin());
+    this.intentFallbackPlugin = new IntentFallbackPlugin();
+    this.router.register(this.intentFallbackPlugin);
     this.router.register(new NotificationPlugin());
     this.router.register(new ModeChangePlugin());
     this.appLaunchPlugin = new AppLaunchPlugin();
@@ -49,9 +53,10 @@ export class ActionExecutor {
     this.log.info(TAG, `初始化完成，${this.router.getPlugins().length} 个插件已注册`);
   }
 
-  /** 设置 UIAbilityContext（用于 AppLaunchPlugin） */
+  /** 设置 UIAbilityContext（用于 AppLaunchPlugin / IntentFallbackPlugin） */
   setContext(context: common.UIAbilityContext): void {
     this.appLaunchPlugin.setContext(context);
+    this.intentFallbackPlugin.setContext(context);
   }
 
 

@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <sstream>
 #include <algorithm>
+#include <unordered_set>
 
 namespace context_engine {
 
@@ -49,8 +50,14 @@ static std::vector<std::string> splitCsv(const std::string& s) {
 double softMatch(const Condition& cond, const ContextMap& ctx) {
     auto it = ctx.find(cond.key);
     if (it == ctx.end()) {
-        // Missing data → 0.5 (uncertain, not penalized)
-        return 0.5;
+        // Critical fields: missing → 0.0 (no match), not 0.5 (uncertain)
+        // Prevents false positives like "driving" matching at 50% when motionState expired
+        static const std::unordered_set<std::string> criticalKeys = {
+            "motionState", "isCharging", "isWeekend", "isSleeping",
+            "timeOfDay", "geofence", "batteryLevel"
+        };
+        if (criticalKeys.count(cond.key)) return 0.0;
+        return 0.5;  // Non-critical fields: uncertain
     }
 
     const std::string& actual = it->second;

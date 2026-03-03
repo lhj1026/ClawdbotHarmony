@@ -15,9 +15,9 @@ const {
 // Constants (mirror stream_mlp.h)
 // ============================================================
 
-const STREAM_FEAT_DIM = 16;
-const STREAM_H1 = 64;
-const STREAM_H2 = 32;
+const STREAM_FEAT_DIM = 25;
+const STREAM_H1 = 128;
+const STREAM_H2 = 64;
 const STREAM_LR = 0.01;
 const STREAM_KAPPA = 2.0;
 const STREAM_WEIGHT_DECAY = 1e-4;
@@ -338,6 +338,17 @@ function buildFeatures(ctx) {
   out[14] = ctx.networkType === 'wifi' ? 1.0 : 0.0;
   out[15] = ctx.networkType === 'cellular' ? 1.0 : 0.0;
 
+  // [16-24] State transition features (from StateTransitionTracker injection)
+  out[16] = ctx.prev_geofence ? parseFloat(ctx.prev_geofence) : 0.0;
+  out[17] = ctx.geofence_changed ? parseFloat(ctx.geofence_changed) : 0.0;
+  out[18] = ctx.prev_motionState_stationary ? parseFloat(ctx.prev_motionState_stationary) : 0.0;
+  out[19] = ctx.prev_motionState_moving ? parseFloat(ctx.prev_motionState_moving) : 0.0;
+  out[20] = ctx.transition_duration_min ? parseFloat(ctx.transition_duration_min) : 0.0;
+  out[21] = ctx.time_in_current_state_min ? parseFloat(ctx.time_in_current_state_min) : 0.0;
+  out[22] = ctx.transitions_last_hour ? parseFloat(ctx.transitions_last_hour) : 0.0;
+  out[23] = ctx.is_routine_transition ? parseFloat(ctx.is_routine_transition) : 0.0;
+  out[24] = ctx.transition_direction ? parseFloat(ctx.transition_direction) : 0.0;
+
   return out;
 }
 
@@ -655,9 +666,43 @@ describe('buildFeatures - 特征构建', function () {
     assertEqual(f[8], 1.0, 'default stationary');
   });
 
-  it('特征向量维度为16', function () {
+  it('特征向量维度为25', function () {
     const f = buildFeatures({ hour: '10' });
-    assertEqual(f.length, 16, 'feature dimension should be 16');
+    assertEqual(f.length, 25, 'feature dimension should be 25');
+  });
+
+  it('转移特征默认为0（无注入时）', function () {
+    const f = buildFeatures({ hour: '10', motionState: 'walking' });
+    // Indices 16-24 should all be 0 when no transition keys present
+    for (let i = 16; i < 25; i++) {
+      assertEqual(f[i], 0.0, `feature[${i}] should default to 0`);
+    }
+  });
+
+  it('转移特征正确映射', function () {
+    const ctx = {
+      hour: '8',
+      motionState: 'walking',
+      prev_geofence: '1',
+      geofence_changed: '1',
+      prev_motionState_stationary: '1',
+      prev_motionState_moving: '0',
+      transition_duration_min: '0.375',  // 45min / 120
+      time_in_current_state_min: '0.125', // 30min / 240
+      transitions_last_hour: '0.3',       // 3 / 10
+      is_routine_transition: '1',
+      transition_direction: '1.0'         // rest→work
+    };
+    const f = buildFeatures(ctx);
+    assertEqual(f[16], 1.0, 'prev_geofence');
+    assertEqual(f[17], 1.0, 'geofence_changed');
+    assertEqual(f[18], 1.0, 'prev_motionState_stationary');
+    assertEqual(f[19], 0.0, 'prev_motionState_moving');
+    assertTrue(Math.abs(f[20] - 0.375) < 1e-6, 'transition_duration_min');
+    assertTrue(Math.abs(f[21] - 0.125) < 1e-6, 'time_in_current_state_min');
+    assertTrue(Math.abs(f[22] - 0.3) < 1e-6, 'transitions_last_hour');
+    assertEqual(f[23], 1.0, 'is_routine_transition');
+    assertEqual(f[24], 1.0, 'transition_direction');
   });
 });
 

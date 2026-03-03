@@ -1,11 +1,28 @@
 /**
  * stream_mlp.h — Stream Deep RL 在线强化学习引擎
  *
- * Per-Arm StreamMLP: 16→64→32→1 with:
+ * Per-Arm StreamMLP: 34→128→64→1 with:
+ *   - 34-dim input: 28 static context (7-tuple encoded) + 6 scenario context
  *   - Sparse Initialization (90% zero)
  *   - Layer Normalization (non-learnable)
  *   - ObGD (Overshooting-Bounded Gradient Descent)
  *   - Welford observation/reward normalization
+ *
+ * Feature vector layout (v2 — 7-Tuple Physical State):
+ *   [0-1]   hour sin/cos (2)
+ *   [2-3]   dayType one-hot: weekend, holiday (2) — workday = both 0
+ *   [4-12]  location one-hot (9): home,work,commute,restaurant,gym,transit_hub,shopping,outdoor,cafe
+ *   [13-18] motion one-hot (6): stationary,walking,running,cycling,driving,transit
+ *   [19-23] phone one-hot (5): in_use,on_desk,in_pocket,charging,unknown
+ *   [24-25] light: ordinal (1) + dark_flag (1)
+ *   [26-27] sound: ordinal (1) + has_voice (1)
+ *   Scenario Context (6 dims):
+ *   [28]    has_active_scenario
+ *   [29]    chain_position (step/total, 0~1)
+ *   [30]    scenario_category_hash (0~1)
+ *   [31]    is_routine (from StateTransitionTracker)
+ *   [32]    time_in_state_norm (capped 0~1)
+ *   [33]    battery_norm
  *
  * Reference: Elsayed et al. 2024 "Streaming Deep Reinforcement Learning Finally Works"
  */
@@ -28,9 +45,9 @@ using ContextMap = std::unordered_map<std::string, std::string>;
 // Constants
 // ============================================================
 
-constexpr int STREAM_FEAT_DIM = 16;
-constexpr int STREAM_H1 = 64;
-constexpr int STREAM_H2 = 32;
+constexpr int STREAM_FEAT_DIM = 34;   // 28 static (7-tuple encoded) + 6 scenario context
+constexpr int STREAM_H1 = 128;        // proportionally scaled
+constexpr int STREAM_H2 = 64;
 constexpr double STREAM_LR = 0.01;
 constexpr double STREAM_KAPPA = 2.0;
 constexpr double STREAM_WEIGHT_DECAY = 1e-4;
@@ -163,7 +180,7 @@ public:
     /** Train arm with observed reward */
     void trainArm(const std::string& actionId, const double* features, double reward);
 
-    /** Build 16-dim feature vector from ContextMap */
+    /** Build 25-dim feature vector from ContextMap (16 static + 9 transition) */
     static void buildFeatures(const ContextMap& ctx, double* out);
 
     /** Get sample count for cold-start logic */

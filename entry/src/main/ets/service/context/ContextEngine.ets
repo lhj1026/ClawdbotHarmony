@@ -68,6 +68,15 @@ function nativeGetStreamRLStats(): string {
 function nativeGetStreamRLArmSamples(actionId: string): number {
   return contextEngine.getStreamRLArmSamples(actionId) as number;
 }
+function nativeGetTransitionInfo(): string {
+  return contextEngine.getTransitionInfo() as string;
+}
+function nativeExportTransitionState(): string {
+  return contextEngine.exportTransitionState() as string;
+}
+function nativeImportTransitionState(json: string): void {
+  contextEngine.importTransitionState(json);
+}
 function nativePushEvent(json: string): void {
   contextEngine.pushEvent(json);
 }
@@ -149,6 +158,19 @@ export interface ContextSnapshot {
   flightArrivalMin?: string;    // 距离降落的分钟数（可为负）
   flightNumber?: string;        // 航班号 e.g. "CA1234"
   hasUpcomingFlight?: string;   // "true"/"false"
+  // 7-Tuple 物理状态 (PhysicalState)
+  ps_time?: string;             // TimeSlot: sleeping/dawn/morning/forenoon/lunch/afternoon/evening/night/late_night
+  ps_location?: string;         // LocationCategory: home/work/commute/restaurant/gym/transit_hub/shopping/outdoor/cafe/unknown
+  ps_motion?: string;           // MotionCategory: stationary/walking/running/cycling/driving/transit/unknown
+  ps_phone?: string;            // PhoneCategory: in_use/on_desk/in_pocket/face_down/charging/unknown
+  ps_light?: string;            // LightCategory: dark/dim/normal/bright
+  ps_sound?: string;            // SoundCategory: silent/quiet/normal/noisy/unknown
+  ps_dayType?: string;          // DayType: workday/weekend/holiday
+  // 场景匹配信息
+  ps_scenario?: string;         // 当前匹配的场景 ID (e.g. "S07")
+  ps_scenarioCategory?: string; // 场景类别 (commute/work/home/...)
+  ps_chainPosition?: string;    // 链位置 "step/total" (e.g. "1/3")
+  ps_scenarioConfidence?: string; // 场景匹配置信度 "0.85"
 }
 
 /** Minimal geofence info for rule binding (avoids circular import) */
@@ -233,6 +255,13 @@ export class ContextEngineService {
       if (streamRLJson.length > 0) {
         nativeImportStreamRL(streamRLJson);
         log.info(TAG, 'Stream RL state restored');
+      }
+
+      // Load transition state
+      let transitionJson: string = String(await this.prefsStore.get('transition_state', ''));
+      if (transitionJson.length > 0) {
+        nativeImportTransitionState(transitionJson);
+        log.info(TAG, 'Transition state restored');
       }
 
       // Deduplicate existing rules (clean up duplicates from previous LLM auto-persist)
@@ -548,6 +577,16 @@ export class ContextEngineService {
       if (snapshot.bt_fixed_devices !== undefined) snapshotRecord['bt_fixed_devices'] = snapshot.bt_fixed_devices;
       if (snapshot.bt_vehicle_devices !== undefined) snapshotRecord['bt_vehicle_devices'] = snapshot.bt_vehicle_devices;
       if (snapshot.sensorTier !== undefined) snapshotRecord['sensorTier'] = snapshot.sensorTier;
+      // 7-Tuple PhysicalState fields
+      if (snapshot.ps_time !== undefined) snapshotRecord['ps_time'] = snapshot.ps_time;
+      if (snapshot.ps_location !== undefined) snapshotRecord['ps_location'] = snapshot.ps_location;
+      if (snapshot.ps_motion !== undefined) snapshotRecord['ps_motion'] = snapshot.ps_motion;
+      if (snapshot.ps_phone !== undefined) snapshotRecord['ps_phone'] = snapshot.ps_phone;
+      if (snapshot.ps_light !== undefined) snapshotRecord['ps_light'] = snapshot.ps_light;
+      if (snapshot.ps_sound !== undefined) snapshotRecord['ps_sound'] = snapshot.ps_sound;
+      if (snapshot.ps_dayType !== undefined) snapshotRecord['ps_dayType'] = snapshot.ps_dayType;
+      if (snapshot.ps_scenario !== undefined) snapshotRecord['ps_scenario'] = snapshot.ps_scenario;
+      if (snapshot.ps_scenarioCategory !== undefined) snapshotRecord['ps_scenarioCategory'] = snapshot.ps_scenarioCategory;
       if (snapshot.heart_rate_status !== undefined) snapshotRecord['heart_rate_status'] = snapshot.heart_rate_status;
       if (snapshot.wearing_state !== undefined) snapshotRecord['wearing_state'] = snapshot.wearing_state;
       let filtered: MatchResult[] = [];
@@ -560,6 +599,8 @@ export class ContextEngineService {
           log.debug(TAG, `Rule ${result.ruleId} excluded by excludeConditions`);
         }
       }
+      // 周期性持久化转移状态（fire-and-forget，不阻塞 evaluate）
+      this.persistTransitionState();
       return filtered;
     } catch (err) {
       log.debug(TAG, `evaluate parse error: ${resultJson}`);
@@ -635,6 +676,7 @@ export class ContextEngineService {
     await this.persistStats();
     await this.persistLinUCB();
     await this.persistStreamRL();
+    await this.persistTransitionState();
   }
 
   /** Action selection from candidates. Uses LinUCB if context provided, MAB fallback otherwise. */
@@ -664,6 +706,11 @@ export class ContextEngineService {
   /** Get Stream RL sample count for a specific arm */
   getStreamRLArmSamples(actionId: string): number {
     return nativeGetStreamRLArmSamples(actionId);
+  }
+
+  /** Get state transition info as JSON string (for UI path bar) */
+  getTransitionInfo(): string {
+    return nativeGetTransitionInfo();
   }
 
   /** Export rules as JSON */
@@ -816,6 +863,13 @@ export class ContextEngineService {
     if (!this.prefsStore) return;
     let json = nativeExportStreamRL();
     await this.prefsStore.put('stream_rl_state', json);
+    await this.prefsStore.flush();
+  }
+
+  private async persistTransitionState(): Promise<void> {
+    if (!this.prefsStore) return;
+    let json = nativeExportTransitionState();
+    await this.prefsStore.put('transition_state', json);
     await this.prefsStore.flush();
   }
 }

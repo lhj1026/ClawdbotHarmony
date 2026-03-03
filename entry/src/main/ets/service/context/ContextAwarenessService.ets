@@ -47,6 +47,12 @@ import { TrainingDataSync } from './TrainingDataSync';
 import { FederatedSync } from './FederatedSync';
 import { GeoCodingService } from './GeoCodingService';
 import { TravelInfoService } from './TravelInfoService';
+import { DailyTimelineService } from './DailyTimelineService';
+import { SensorRecorder } from './SensorRecorder';
+import { SensorPlayer, ReplayState } from './SensorPlayer';
+import { RecordingInfo, ReplayProgress, PhysicalState, ScenarioMatchResult } from './ContextModels';
+import { PhysicalStateBuilder } from './PhysicalStateBuilder';
+import { ScenarioMatcher } from './ScenarioMatcher';
 
 const TAG = 'ContextService';
 
@@ -179,6 +185,21 @@ export class ContextAwarenessService {
   private static readonly MOTION_MIN_DURATION_MS = 10000;
   private motionStartTime: number = 0;
   private motionStepCountStart: number = 0;
+
+  // 运动状态平滑（滑动窗口多数投票 + dwell）
+  private pendingMotionState: MotionState = 'unknown';
+  private motionDwellStart: number = 0;
+  private static readonly STATIONARY_DWELL_MS = 3000;   // 转静止需3秒
+  private static readonly ACTIVE_DWELL_MS = 800;         // 转运动需0.8秒
+  private static readonly DRIVING_EXIT_DWELL_MS = 30 * 1000;  // driving退出需30秒dwell
+  private static readonly DRIVING_INERTIA_MS = 90 * 1000;     // 驾车惯性90秒
+  private static readonly GEOFENCE_DEPARTURE_COOLDOWN_MS = 3 * 60 * 1000;  // 围栏离开冷却3分钟
+
+  // 驾车惯性
+  private lastHighSpeedTime: number = 0;
+  private drivingInertiaStepBase: number = 0;  // 高速行驶时的步数基线，用于惯性期步数比对
+  // 围栏离开冷却
+  private geofenceDepartureTime: number = 0;
   
   // WiFi 状态跟踪
   private lastWifiSsid: string = '';
@@ -272,10 +293,23 @@ export class ContextAwarenessService {
   private digitalWorld: DigitalWorldService = DigitalWorldService.getInstance();
   // 传感器数据托盘
   private tray: SensorDataTray = DataTray;
+  // 传感器录制/回放
+  private recorder: SensorRecorder = SensorRecorder.getInstance();
+  private player: SensorPlayer = SensorPlayer.getInstance();
+  private isReplaying: boolean = false;
+  private preReplayMotionState: MotionState = 'unknown';
+  private preReplayLocation: LocationState | undefined;
+  private preReplayTraySnapshot: Map<string, string> = new Map();
   // 训练数据同步
   private trainingSync: TrainingDataSync = TrainingDataSync.getInstance();
   // 旅行信息服务 (航班/火车票)
   private travelInfoSvc: TravelInfoService = TravelInfoService.getInstance();
+
+  // ==================== 7-Tuple 物理状态 & 场景匹配 ====================
+  private psBuilder: PhysicalStateBuilder = PhysicalStateBuilder.getInstance();
+  private scenarioMatcher: ScenarioMatcher = ScenarioMatcher.getInstance();
+  private lastPhysicalState: PhysicalState | undefined;
+  private lastScenarioResults: ScenarioMatchResult[] = [];
 
   // ==================== 分层传感器 (Sensor Tier System) ====================
   private currentTier: SensorTier = 1;
@@ -371,8 +405,38 @@ export class ContextAwarenessService {
       this.log.warn(TAG, `TravelInfoService init failed: ${err.message}`);
     });
 
+    // 初始化场景匹配器 (加载 scenarios.json)
+    await this.scenarioMatcher.init(context);
+    this.log.info(TAG, `ScenarioMatcher initialized: ${this.scenarioMatcher.getScenarioCount()} scenarios`);
+
+    // 初始化每日行程时间线
+    await DailyTimelineService.getInstance().init(context);
+
+    // 初始化传感器录制服务
+    this.recorder.init(context.filesDir);
+
     // 监听地理围栏事件
     this.geofenceMgr.addListener((event) => this.onGeofenceEvent(event));
+
+    // 注册系统 WiFi 连接状态变化监听（实时检测 WiFi 断开/连接）
+    try {
+      wifiManager.on('wifiConnectionChange', (state: number) => {
+        if (state === 1) {
+          // WiFi 已连接
+          this.log.info(TAG, 'WiFi connection event: connected');
+          this.refreshWifiAsync();
+        } else {
+          // WiFi 已断开
+          this.log.info(TAG, 'WiFi connection event: disconnected');
+          if (this.lastWifiSsid.length > 0) {
+            this.onWifiDisconnected();
+          }
+        }
+      });
+      this.log.info(TAG, 'WiFi connection change listener registered');
+    } catch (err) {
+      this.log.warn(TAG, `WiFi listener registration failed: ${(err as Error).message}`);
+    }
 
     this.initialized = true;
     this.log.info(TAG, `Context Awareness Service initialized, rules: ${this.engine.getRuleCount()}`);
@@ -453,7 +517,7 @@ export class ContextAwarenessService {
     this.isLyingDown = isLyingDown;
 
     // 只更新躺卧状态，不更新tiltAngle (避免与本类加速度计冲突)
-    this.tray.put('isLyingDown', this.isLyingDown ? 'true' : 'false', 0.9, 'accelerometer');
+    this.recordedPut('isLyingDown', this.isLyingDown ? 'true' : 'false', 0.9, 'accelerometer');
 
     // 仅在姿势变化时记录日志
     if (wasLyingDown !== isLyingDown) {
@@ -465,6 +529,7 @@ export class ContextAwarenessService {
   // ==================== WiFi 连接事件处理 ====================
   
   private onWifiDisconnected(): void {
+    if (this.isReplaying) return;  // 回放中不处理WiFi事件
     let lostSsid = this.lastWifiSsid;
     this.log.info(TAG, `WiFi disconnected, last SSID: ${lostSsid}`);
 
@@ -488,16 +553,24 @@ export class ContextAwarenessService {
       this.wifiLostTimestamps.set(matchedCategory, now);
 
       // 设置通用丢失标记
-      this.tray.put('wifiLost', 'true', 0.8, 'wifi');
-      this.tray.put('wifiLostCategory', matchedCategory, 0.8, 'wifi');
+      this.recordedPut('wifiLost', 'true', 0.8, 'wifi');
+      this.recordedPut('wifiLostCategory', matchedCategory, 0.8, 'wifi');
 
       // 向后兼容：work 类别同时设置 wifiLostWork
       if (matchedCategory === 'work') {
         this.wifiLostWorkTimestamp = now;
-        this.tray.put('wifiLostWork', 'true', 0.8, 'wifi');
+        this.recordedPut('wifiLostWork', 'true', 0.8, 'wifi');
       }
 
       this.engine.pushEvent('wifi_lost_' + matchedCategory);
+
+      // 围栏 WiFi 断开 → 用户正在离开该围栏
+      // 立即强制 GPS 刷新，并按当前运动状态切换到室外 GPS 频率
+      this.log.info(TAG, `Geofence WiFi lost: force GPS fetch, entering outdoor mode (motion=${this.lastMotionState})`);
+      this.recordedPut('geofence', '', 0, 'geofence');  // 先清除旧围栏，防止 T1 skip
+      this.geofenceDepartureTime = Date.now();  // 启动围栏离开冷却
+      this.adjustLocationInterval(this.lastMotionState);  // 按运动状态设置GPS频率
+      this.fetchSingleLocation();  // 立即获取一次 GPS 定位
 
       // 立即触发评估
       this.refreshTray().then(() => {
@@ -507,15 +580,17 @@ export class ContextAwarenessService {
     }
 
     // 清除当前 WiFi 围栏匹配
-    this.tray.put('wifiGeofence', '', 0, 'wifi');
+    this.recordedPut('wifiGeofence', '', 0, 'wifi');
     this.lastWifiSsid = '';
   }
   
   private onWifiConnected(): void {
+    if (this.isReplaying) return;  // 回放中不处理WiFi事件
     this.log.info(TAG, `onWifiConnected called, lastWifiSsid=${this.lastWifiSsid}`);
     // WiFi 重新连接，清除丢失标记
     this.wifiLostWorkTimestamp = 0;
     this.wifiLostTimestamps.clear();
+    this.geofenceDepartureTime = 0;  // WiFi重连，取消围栏离开冷却
 
     // 尝试获取当前 SSID 并匹配围栏
     try {
@@ -527,7 +602,7 @@ export class ContextAwarenessService {
         if (ssid.length === 0) return;
 
         this.lastWifiSsid = ssid;
-        this.tray.put('wifiSsid', ssid, 1.0, 'wifi');
+        this.recordedPut('wifiSsid', ssid, 1.0, 'wifi');
 
         // 遍历所有围栏查找匹配
         let matched = false;
@@ -535,10 +610,14 @@ export class ContextAwarenessService {
         for (let gf of allGeofences) {
           let summary = this.locationFusion.getLearnedSignalsSummary(gf);
           if (summary && summary.wifiSsids.includes(ssid)) {
-            this.log.info(TAG, `WiFi connected: ${ssid} matches ${gf.category} geofence`);
-            this.tray.put('wifiGeofence', gf.category, 0.9, 'wifi');
+            this.log.info(TAG, `WiFi connected: ${ssid} matches ${gf.category} geofence (${gf.id})`);
+            this.recordedPut('wifiGeofence', gf.category, 0.9, 'wifi');
+            this.recordedPut('geofence', gf.id, 1.0, 'wifi');  // WiFi 直接确认围栏
             this.engine.pushEvent('wifi_arrive_' + gf.category);
             matched = true;
+
+            // 到达新围栏 → WiFi 已确认位置，无需额外 GPS
+            this.adjustLocationInterval(this.lastMotionState);
 
             // 交通场景: 检查旅行信息并显示登机牌/火车票
             if (gf.category === 'transit') {
@@ -803,7 +882,7 @@ export class ContextAwarenessService {
     this.isHoldingPhone = !isFlat;
 
     // 更新数据托盘
-    this.tray.put('isHolding', this.isHoldingPhone ? 'true' : 'false', 0.9, 'accelerometer');
+    this.recordedPut('isHolding', this.isHoldingPhone ? 'true' : 'false', 0.9, 'accelerometer');
 
     // 始终记录日志用于调试
     this.log.info(TAG, `Holding: ${this.isHoldingPhone ? 'YES' : 'NO'} (z=${z.toFixed(2)}, |z|=${Math.abs(z).toFixed(2)}, flat=${isFlat})`);
@@ -836,10 +915,83 @@ export class ContextAwarenessService {
   }
   
   /**
+   * 单样本加速度分类（用于滑动窗口投票）
+   */
+  private classifySingleSample(magnitude: number): MotionState {
+    if (magnitude < 10.5) return 'stationary';
+    if (magnitude < 12) return 'walking';
+    if (magnitude < 15) return 'running';
+    return 'driving';
+  }
+
+  /**
+   * 滑动窗口多数投票分类 + 方差检测
+   * 取 accelHistory 最后 7 个样本(~1.4秒@200ms)，每个样本分别分类再投票。
+   * 方差补偿：走路时 magnitude 在 9.5~12 之间震荡，均值可能接近 9.8（静止），
+   * 但方差远高于真正静止(>0.3)，此时强制判定为 walking。
+   * walking→running 需要 5/7 票（防止走路摆臂误判为跑步）。
+   */
+  private classifyWithSmoothing(): MotionState {
+    let windowSize = Math.min(7, this.accelHistory.length);
+    if (windowSize === 0) return 'stationary';
+
+    let samples = this.accelHistory.slice(-windowSize);
+
+    // 计算 magnitude 均值和方差
+    let sum = 0;
+    for (let i = 0; i < samples.length; i++) {
+      sum += samples[i].magnitude;
+    }
+    let mean = sum / samples.length;
+    let varianceSum = 0;
+    for (let i = 0; i < samples.length; i++) {
+      let diff = samples[i].magnitude - mean;
+      varianceSum += diff * diff;
+    }
+    let variance = varianceSum / samples.length;
+
+    // 方差补偿：手持走路时 magnitude 均值接近 9.8 但震荡明显(方差>0.3)
+    // 真正静止时方差极低(<0.15)
+    if (variance > 0.3 && mean < 10.5) {
+      return 'walking';
+    }
+
+    // 多数投票
+    let votes: Map<string, number> = new Map();
+    for (let i = 0; i < samples.length; i++) {
+      let cls = this.classifySingleSample(samples[i].magnitude) as string;
+      votes.set(cls, (votes.get(cls) ?? 0) + 1);
+    }
+
+    // 找出票数最多的状态
+    let bestStateStr: string = 'stationary';
+    let bestCount = 0;
+    votes.forEach((count: number, state: string) => {
+      if (count > bestCount) {
+        bestCount = count;
+        bestStateStr = state;
+      }
+    });
+
+    // walking→running 防误判：需要 5/7 票才允许升级到 running
+    let currentMotionSlot = this.tray.get('motionState');
+    let curState = currentMotionSlot ? currentMotionSlot.value : 'unknown';
+    if (curState === 'walking' && bestStateStr === 'running') {
+      let runningVotes = votes.get('running') ?? 0;
+      if (runningVotes < 5) {
+        return 'walking'; // 不够票，维持 walking
+      }
+    }
+
+    return bestStateStr as MotionState;
+  }
+
+  /**
    * 基于加速度计数据和GPS速度综合判断运动状态
    * 解决：开车/高铁匀速时加速度小但速度快的问题
    */
   private updateMotionState(): void {
+    if (this.isReplaying) return;  // 回放中不更新真实运动状态
     let x = this.accelerometerData.x;
     let y = this.accelerometerData.y;
     let z = this.accelerometerData.z;
@@ -849,7 +1001,7 @@ export class ContextAwarenessService {
     let isPickup = this.detectPickup();
     
     if (isPickup || this.pickupConfirmed) {
-      this.tray.put('motionState', 'pickup', 0.85, 'accelerometer');
+      this.recordedPut('motionState', 'pickup', 0.85, 'accelerometer');
 
       if (this.lastMotionState !== 'pickup') {
         this.stateBeforePickup = this.lastMotionState;
@@ -877,22 +1029,32 @@ export class ContextAwarenessService {
     }
     
     let newState: MotionState;
-    
-    if (gpsSpeed > 20) {
+
+    if (gpsSpeed > 5) {
       newState = 'driving';
-    } else if (gpsSpeed > 5) {
-      newState = 'driving';
+      // 高速行驶：刷新惯性时间戳 + 步数基线
+      this.lastHighSpeedTime = Date.now();
+      this.drivingInertiaStepBase = this.stepCount;
     } else if (gpsSpeed > 1.5) {
-      newState = magnitude > 12 ? 'running' : 'walking';
-    } else {
-      if (magnitude < 10.5) {
-        newState = 'stationary';
-      } else if (magnitude < 12) {
-        newState = 'walking';
-      } else if (magnitude < 15) {
-        newState = 'running';
-      } else {
+      // 中速：已在驾车就继续驾车，否则判走路/跑步
+      if (this.lastMotionState === 'driving') {
         newState = 'driving';
+        this.lastHighSpeedTime = Date.now();
+        this.drivingInertiaStepBase = this.stepCount;
+      } else {
+        newState = magnitude > 12 ? 'running' : 'walking';
+      }
+    } else {
+      // GPS速度极低：驾车惯性保护（红灯/短暂停车）
+      let recentlyDriving = (this.lastMotionState === 'driving')
+        && (Date.now() - this.lastHighSpeedTime < ContextAwarenessService.DRIVING_INERTIA_MS);
+      // 步数比对：只统计从最后一次确认驾车速度以来的新增步数
+      let stepsSinceHighSpeed = this.stepCount - this.drivingInertiaStepBase;
+      if (recentlyDriving && stepsSinceHighSpeed < 20) {
+        newState = 'driving';  // 红灯/短暂停车，维持驾车
+      } else {
+        // 使用滑动窗口多数投票代替单次 magnitude 判断，减少频繁跳变
+        newState = this.classifyWithSmoothing();
       }
     }
     
@@ -900,6 +1062,35 @@ export class ContextAwarenessService {
     let btInVehicle = this.tray.get('bt_in_vehicle');
     if (btInVehicle && btInVehicle.value === 'true' && (newState === 'stationary' || newState === 'walking')) {
       newState = 'driving';
+    }
+
+    // Dwell 逻辑：新候选状态须持续一段时间才生效，防止短暂波动
+    let currentMotion = this.tray.get('motionState');
+    let currentState: MotionState = (currentMotion ? currentMotion.value : 'unknown') as MotionState;
+    if (newState !== currentState && currentState !== 'unknown' && currentState !== 'pickup' && currentState !== 'putdown') {
+      let now_dwell = Date.now();
+      if (newState !== this.pendingMotionState) {
+        // 新候选状态，开始 dwell 计时
+        this.pendingMotionState = newState;
+        this.motionDwellStart = now_dwell;
+        return; // 不更新，等待 dwell 确认
+      }
+      // 同一候选状态，检查 dwell 时间是否满足
+      // driving退出到stationary/walking需要更长dwell，防止停车后加速度计波动
+      let isDrivingExit = (currentState === 'driving') && (newState === 'stationary' || newState === 'walking');
+      let dwellRequired = isDrivingExit
+        ? ContextAwarenessService.DRIVING_EXIT_DWELL_MS
+        : (newState === 'stationary')
+          ? ContextAwarenessService.STATIONARY_DWELL_MS
+          : ContextAwarenessService.ACTIVE_DWELL_MS;
+      if (now_dwell - this.motionDwellStart < dwellRequired) {
+        return; // dwell 时间不够，继续等待
+      }
+      // dwell 通过，清除 pending 状态，继续执行更新
+      this.pendingMotionState = 'unknown';
+    } else {
+      // 状态未变或特殊状态，清除 pending
+      this.pendingMotionState = 'unknown';
     }
 
     if (newState !== 'stationary') {
@@ -912,11 +1103,17 @@ export class ContextAwarenessService {
       this.motionStepCountStart = 0;
     }
 
-    this.tray.put('motionState', newState, 0.9, 'accelerometer');
-    this.tray.put('gpsSpeed', gpsSpeed.toFixed(2), 0.85, 'gps');
+    this.recordedPut('motionState', newState, 0.9, 'accelerometer');
+    this.recordedPut('gpsSpeed', gpsSpeed.toFixed(2), 0.85, 'gps');
 
     if (newState !== this.lastMotionState) {
       this.log.info(TAG, `Motion state: ${this.lastMotionState} -> ${newState}, gpsSpeed=${gpsSpeed.toFixed(1)}m/s`);
+
+      // driving → 非driving：立即刷新GPS获取最新速度，避免旧速度残留
+      if (this.lastMotionState === 'driving' && newState !== 'driving') {
+        this.log.info(TAG, `Driving exit: force GPS refresh for accurate speed`);
+        this.fetchSingleLocation();
+      }
 
       // 放下手机：从 pickup 转为其他状态，恢复拿起前状态，启动冷却期
       if (this.lastMotionState === 'pickup') {
@@ -925,7 +1122,7 @@ export class ContextAwarenessService {
         newState = this.stateBeforePickup;
         this.postPickupCooldownUntil = Date.now() + ContextAwarenessService.POST_PICKUP_COOLDOWN_MS;
         this.log.info(TAG, `Putdown: pickup -> restore ${newState} (cooldown ${ContextAwarenessService.POST_PICKUP_COOLDOWN_MS}ms)`);
-        this.tray.put('motionState', newState, 0.9, 'accelerometer');
+        this.recordedPut('motionState', newState, 0.9, 'accelerometer');
       }
 
       // 更新状态历史
@@ -1024,6 +1221,47 @@ export class ContextAwarenessService {
   }
 
   /**
+   * 推送当前状态到每日行程时间线
+   * 由 enrichTray() 在每次数据汇总后调用
+   */
+  private pushTimelineEvent(): void {
+    let geofenceSlot = this.tray.get('geofence');
+    let geofenceId: string = (geofenceSlot && geofenceSlot.value) ? geofenceSlot.value : '';
+    let geofenceLabel: string = '';
+    let geofenceIcon: string = '';
+
+    if (geofenceId.length > 0) {
+      try {
+        let gf = this.geofenceMgr.getGeofence(geofenceId);
+        if (gf) {
+          geofenceLabel = gf.name;
+          geofenceIcon = this.getGeofenceCategoryIcon(gf.category);
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    let motionState: string = this.lastMotionState;
+    let lat: number = this.lastLocation ? this.lastLocation.latitude : 0;
+    let lng: number = this.lastLocation ? this.lastLocation.longitude : 0;
+    DailyTimelineService.getInstance().pushStateChange(
+      geofenceId, geofenceLabel, geofenceIcon, motionState, lat, lng
+    );
+  }
+
+  private getGeofenceCategoryIcon(cat: string): string {
+    if (cat === 'home') return '\u{1F3E0}';        // 🏠
+    if (cat === 'work') return '\u{1F3E2}';         // 🏢
+    if (cat === 'transit') return '\u{1F687}';       // 🚇
+    if (cat === 'gym') return '\u{1F4AA}';           // 💪
+    if (cat === 'restaurant') return '\u{1F35C}';    // 🍜
+    if (cat === 'shopping') return '\u{1F6D2}';      // 🛒
+    if (cat === 'custom') return '\u{1F4CD}';        // 📍
+    return '\u{1F4CD}';
+  }
+
+  /**
    * 更新用户姿势 (基于手机方向和倾斜角检测用户是否躺着)
    */
   private updatePosture(): void {
@@ -1062,8 +1300,8 @@ export class ContextAwarenessService {
     }
 
     // 始终更新数据托盘（确保及时反映当前状态）
-    this.tray.put('isLyingDown', this.isLyingDown ? 'true' : 'false', 0.8, 'accelerometer');
-    this.tray.put('tiltAngle', this.lastTiltAngle.toFixed(1), 0.8, 'accelerometer');
+    this.recordedPut('isLyingDown', this.isLyingDown ? 'true' : 'false', 0.8, 'accelerometer');
+    this.recordedPut('tiltAngle', this.lastTiltAngle.toFixed(1), 0.8, 'accelerometer');
 
     // 仅在姿势变化时记录日志和触发提醒
     if (wasLyingDown !== this.isLyingDown) {
@@ -1330,7 +1568,7 @@ export class ContextAwarenessService {
         if (ssid.startsWith('"') && ssid.endsWith('"')) {
           ssid = ssid.substring(1, ssid.length - 1);
         }
-        this.tray.put('wifiSsid', ssid, 0.9, 'wifi');
+        this.recordedPut('wifiSsid', ssid, 0.9, 'wifi');
         
         if (ssid !== this.lastWifiSsid) {
           let oldSsid = this.lastWifiSsid;
@@ -1375,28 +1613,42 @@ export class ContextAwarenessService {
   }
 
   /**
-   * 获取单次位置并处理 (环境信号优化：如果WiFi/BT没变且静止，跳过GPS)
+   * 获取单次位置并处理
+   * GPS 跳过策略：
+   *   1. 静止 + 已知围栏 → 跳过（室内不需要 GPS）
+   *   2. 运动中但围栏 WiFi 仍连接 → 跳过（还在围栏范围内）
+   *   3. WiFi 断开后 → 正常按间隔获取 GPS（室外模式）
    */
   private async fetchSingleLocation(): Promise<void> {
     try {
       // 先获取WiFi信息
       this.refreshWifiSync();
 
-      // T1 + stationary + 已知围栏 → 跳过 GPS 请求
-      if (this.currentTier <= 1 && this.lastMotionState === 'stationary') {
-        let geofenceSlot = this.tray.get('geofence');
-        if (geofenceSlot !== undefined && geofenceSlot !== null && geofenceSlot.value !== null && geofenceSlot.value.length > 0 && this.lastLocation) {
-          this.log.debug(TAG, 'T1 skip GPS: stationary in known geofence');
-          return;
-        }
+      // 检查是否仍在已知围栏内（WiFi 连接 = 仍在围栏覆盖范围）
+      let geofenceSlot = this.tray.get('geofence');
+      let inKnownGeofence = geofenceSlot !== undefined && geofenceSlot !== null
+        && geofenceSlot.value !== null && geofenceSlot.value.length > 0;
+      let wifiGeofenceSlot = this.tray.get('wifiGeofence');
+      let wifiMatchesGeofence = wifiGeofenceSlot !== undefined && wifiGeofenceSlot !== null
+        && wifiGeofenceSlot.value !== null && wifiGeofenceSlot.value.length > 0;
+
+      // 围栏 WiFi 仍连接 → 用户还在围栏内，跳过 GPS（无论是静止还是走路）
+      if (inKnownGeofence && wifiMatchesGeofence && this.lastLocation) {
+        this.log.debug(TAG, 'Skip GPS: geofence WiFi still connected');
+        return;
       }
 
-      // 环境信号优化：如果静止且WiFi/BT没变，跳过GPS请求
+      // 静止 + 已知围栏（无 WiFi 但 GPS 已确认在围栏内）→ 跳过
+      if (this.lastMotionState === 'stationary' && inKnownGeofence && this.lastLocation) {
+        this.log.debug(TAG, 'Skip GPS: stationary in known geofence');
+        return;
+      }
+
+      // 静止 + 环境信号未变 → 跳过
       if (this.lastMotionState === 'stationary') {
         let envChanged = await this.checkEnvironmentChanged();
         if (!envChanged && this.lastLocation) {
-          // 环境信号没变，用户可能还在同一位置，使用缓存位置
-          this.log.debug(TAG, 'Environment unchanged (WiFi/BT stable), using cached location');
+          this.log.debug(TAG, 'Skip GPS: stationary, environment unchanged');
           this.checkForNewPlaceSmart(this.lastLocation.latitude, this.lastLocation.longitude);
           return;
         }
@@ -1425,12 +1677,21 @@ export class ContextAwarenessService {
     try {
       wifiManager.getLinkedInfo().then((info) => {
         let ssid = info.ssid ?? '';
-        this.tray.put('wifiSsid', ssid, 0.9, 'wifi');
-        if (ssid !== this.lastWifiSsid) {
-          this.log.info(TAG, `WiFi: ${this.lastWifiSsid} -> ${ssid}`);
-          this.engine.pushEvent('wifi_change');
+        if (ssid.startsWith('"') && ssid.endsWith('"')) {
+          ssid = ssid.substring(1, ssid.length - 1);
         }
-        this.lastWifiSsid = ssid;
+        this.recordedPut('wifiSsid', ssid, 0.9, 'wifi');
+        if (ssid !== this.lastWifiSsid) {
+          let oldSsid = this.lastWifiSsid;
+          this.log.info(TAG, `WiFi(sync): ${oldSsid} -> ${ssid}`);
+          this.lastWifiSsid = ssid;
+          this.engine.pushEvent('wifi_change');
+          if (ssid.length > 0 && oldSsid !== ssid) {
+            this.onWifiConnected();
+          } else if (ssid.length === 0 && oldSsid.length > 0) {
+            this.onWifiDisconnected();
+          }
+        }
       }).catch(() => {});
     } catch {
       // ignore
@@ -1447,7 +1708,7 @@ export class ContextAwarenessService {
       if (ssid.startsWith('"') && ssid.endsWith('"')) {
         ssid = ssid.substring(1, ssid.length - 1);
       }
-      this.tray.put('wifiSsid', ssid, 0.9, 'wifi');
+      this.recordedPut('wifiSsid', ssid, 0.9, 'wifi');
       if (ssid !== this.lastWifiSsid) {
         let oldSsid = this.lastWifiSsid;
         this.log.info(TAG, `WiFi(async): ${oldSsid} -> ${ssid}`);
@@ -1468,15 +1729,16 @@ export class ContextAwarenessService {
    * 处理位置更新
    */
   private handleLocationUpdate(location: geoLocationManager.Location): void {
+    if (this.isReplaying) return;  // 回放中不更新真实位置
     let lat = location.latitude;
     let lng = location.longitude;
     let speed = location.speed ?? 0;
     let accuracy = location.accuracy ?? 100;
     
     // 更新数据托盘
-    this.tray.put('latitude', lat.toFixed(6), 1.0, 'gps');
-    this.tray.put('longitude', lng.toFixed(6), 1.0, 'gps');
-    this.tray.put('locationAccuracy', accuracy.toFixed(0), 0.8, 'gps');
+    this.recordedPut('latitude', lat.toFixed(6), 1.0, 'gps');
+    this.recordedPut('longitude', lng.toFixed(6), 1.0, 'gps');
+    this.recordedPut('locationAccuracy', accuracy.toFixed(0), 0.8, 'gps');
     
     // 检查围栏
     let locState: LocationState = {
@@ -1561,7 +1823,7 @@ export class ContextAwarenessService {
   }
 
   private async periodicEvaluate(): Promise<void> {
-    if (!this.isRunning) return;
+    if (!this.isRunning || this.isReplaying) return;  // 回放中暂停周期评估
     // Refresh tray with latest sensor data, then read snapshot from tray
     await this.refreshTray();
 
@@ -1573,6 +1835,35 @@ export class ContextAwarenessService {
 
     // Detect BT device changes and track connections
     this.detectBtChangesAndTrackConnections();
+
+    // ==================== 7-Tuple 物理状态 & 场景匹配 ====================
+    // 传感器 → 7-tuple 状态
+    let ps = this.psBuilder.build();
+    this.lastPhysicalState = ps;
+
+    // 状态链 → 场景匹配
+    let scenarioResults = this.scenarioMatcher.match(ps);
+    this.lastScenarioResults = scenarioResults;
+
+    // 注入 ps_* 字段到 DataTray (供 C++ RL 引擎读取)
+    this.recordedPut('ps_time', ps.time, 1.0, 'physical_state');
+    this.recordedPut('ps_location', ps.location, 1.0, 'physical_state');
+    this.recordedPut('ps_motion', ps.motion, 1.0, 'physical_state');
+    this.recordedPut('ps_phone', ps.phone, 1.0, 'physical_state');
+    this.recordedPut('ps_light', ps.light, 1.0, 'physical_state');
+    this.recordedPut('ps_sound', ps.sound, 1.0, 'physical_state');
+    this.recordedPut('ps_dayType', ps.dayType, 1.0, 'physical_state');
+
+    // 注入最佳场景匹配信息
+    if (scenarioResults.length > 0) {
+      let best = scenarioResults[0];
+      this.recordedPut('ps_scenario', best.scenarioId, 1.0, 'scenario');
+      this.recordedPut('ps_scenarioCategory', best.category, 1.0, 'scenario');
+      this.recordedPut('ps_chainPosition', `${best.currentStep}/${best.totalSteps}`, 1.0, 'scenario');
+      this.recordedPut('ps_scenarioConfidence', best.confidence.toFixed(2), 1.0, 'scenario');
+    }
+
+    this.log.info(TAG, `[PS] ${PhysicalStateBuilder.fingerprint(ps)} | scenarios=${scenarioResults.length} active=${this.scenarioMatcher.getActiveCount()}`);
 
     let snapshot = this.tray.getSnapshot();
     await this.evaluateAndDeliver(snapshot);
@@ -1591,26 +1882,29 @@ export class ContextAwarenessService {
         let next = flights[0];
         let countdownMin = Math.floor((next.departureTime - Date.now()) / 60000);
         this.log.info(TAG, `[Travel] next flight: ${next.flightNumber} ${next.departure}→${next.arrival} countdown=${countdownMin}min`);
-        this.tray.put('flightCountdownMin', countdownMin.toString(), 1.0, 'travel');
-        this.tray.put('flightNumber', next.flightNumber, 1.0, 'travel');
-        this.tray.put('hasUpcomingFlight', 'true', 1.0, 'travel');
+        this.recordedPut('flightCountdownMin', countdownMin.toString(), 1.0, 'travel');
+        this.recordedPut('flightNumber', next.flightNumber, 1.0, 'travel');
+        this.recordedPut('hasUpcomingFlight', 'true', 1.0, 'travel');
         if (next.calendarEndTime !== undefined) {
           let arrivalMin = Math.floor((next.calendarEndTime - Date.now()) / 60000);
-          this.tray.put('flightArrivalMin', arrivalMin.toString(), 1.0, 'travel');
+          this.recordedPut('flightArrivalMin', arrivalMin.toString(), 1.0, 'travel');
         }
       } else if (trains.length > 0) {
         let next = trains[0];
         let countdownMin = Math.floor((next.departureTime - Date.now()) / 60000);
         this.log.info(TAG, `[Travel] next train: ${next.trainNumber} ${next.departure}→${next.arrival} countdown=${countdownMin}min`);
-        this.tray.put('flightCountdownMin', countdownMin.toString(), 1.0, 'travel');
-        this.tray.put('flightNumber', next.trainNumber, 1.0, 'travel');
-        this.tray.put('hasUpcomingFlight', 'true', 1.0, 'travel');
+        this.recordedPut('flightCountdownMin', countdownMin.toString(), 1.0, 'travel');
+        this.recordedPut('flightNumber', next.trainNumber, 1.0, 'travel');
+        this.recordedPut('hasUpcomingFlight', 'true', 1.0, 'travel');
         if (next.calendarEndTime !== undefined) {
           let arrivalMin = Math.floor((next.calendarEndTime - Date.now()) / 60000);
-          this.tray.put('flightArrivalMin', arrivalMin.toString(), 1.0, 'travel');
+          this.recordedPut('flightArrivalMin', arrivalMin.toString(), 1.0, 'travel');
         }
       } else {
-        this.tray.put('hasUpcomingFlight', 'false', 1.0, 'travel');
+        this.recordedPut('hasUpcomingFlight', 'false', 1.0, 'travel');
+        // 设置大值使航班相关规则不匹配（无 remove 方法，用 99999 表示"无航班"）
+        this.recordedPut('flightCountdownMin', '99999', 0.0, 'travel');
+        this.recordedPut('flightArrivalMin', '99999', 0.0, 'travel');
       }
     } catch (err) {
       this.log.warn(TAG, `injectTravelData failed: ${(err as Error).message}`);
@@ -1697,16 +1991,16 @@ export class ContextAwarenessService {
     let dayOfWeek = now.getDay();
     let isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
 
-    this.tray.put('hour', hour.toString(), 1.0, 'system');
-    this.tray.put('timeOfDay', timeOfDay, 1.0, 'system');
-    this.tray.put('dayOfWeek', dayOfWeek.toString(), 1.0, 'system');
-    this.tray.put('isWeekend', isWeekend ? 'true' : 'false', 1.0, 'system');
+    this.recordedPut('hour', hour.toString(), 1.0, 'system');
+    this.recordedPut('timeOfDay', timeOfDay, 1.0, 'system');
+    this.recordedPut('dayOfWeek', dayOfWeek.toString(), 1.0, 'system');
+    this.recordedPut('isWeekend', isWeekend ? 'true' : 'false', 1.0, 'system');
 
     // 电池
     try {
-      this.tray.put('batteryLevel', batteryInfo.batterySOC.toString(), 1.0, 'battery');
+      this.recordedPut('batteryLevel', batteryInfo.batterySOC.toString(), 1.0, 'battery');
       let charging = batteryInfo.chargingStatus === batteryInfo.BatteryChargeState.ENABLE;
-      this.tray.put('isCharging', charging ? 'true' : 'false', 1.0, 'battery');
+      this.recordedPut('isCharging', charging ? 'true' : 'false', 1.0, 'battery');
     } catch {
       // ignore
     }
@@ -1714,7 +2008,7 @@ export class ContextAwarenessService {
     // 网络 + WiFi SSID
     try {
       if (wifiManager.isWifiActive()) {
-        this.tray.put('networkType', 'wifi', 1.0, 'wifi');
+        this.recordedPut('networkType', 'wifi', 1.0, 'wifi');
         try {
           let info = await wifiManager.getLinkedInfo();
           let ssid = info.ssid || '';
@@ -1722,12 +2016,12 @@ export class ContextAwarenessService {
             ssid = ssid.substring(1, ssid.length - 1);
           }
           if (ssid.length > 0) {
-            this.tray.put('wifiSsid', ssid, 1.0, 'wifi');
+            this.recordedPut('wifiSsid', ssid, 1.0, 'wifi');
             this.lastWifiSsid = ssid;
           }
         } catch { /* ignore */ }
       } else {
-        this.tray.put('networkType', 'cellular', 0.8, 'network');
+        this.recordedPut('networkType', 'cellular', 0.8, 'network');
       }
     } catch {
       // ignore
@@ -1737,29 +2031,35 @@ export class ContextAwarenessService {
     let nowMs = Date.now();
     this.wifiLostTimestamps.forEach((ts: number, category: string) => {
       if (nowMs - ts < ContextAwarenessService.WIFI_LOST_TTL_MS) {
-        this.tray.put('wifiLost', 'true', 0.8, 'wifi');
-        this.tray.put('wifiLostCategory', category, 0.8, 'wifi');
+        this.recordedPut('wifiLost', 'true', 0.8, 'wifi');
+        this.recordedPut('wifiLostCategory', category, 0.8, 'wifi');
         // 向后兼容
         if (category === 'work') {
-          this.tray.put('wifiLostWork', 'true', 0.8, 'wifi');
+          this.recordedPut('wifiLostWork', 'true', 0.8, 'wifi');
         }
       }
     });
 
     // 位置 / 围栏
     if (this.lastLocation) {
-      this.tray.put('latitude', this.lastLocation.latitude.toString(), 1.0, 'gps');
-      this.tray.put('longitude', this.lastLocation.longitude.toString(), 1.0, 'gps');
+      this.recordedPut('latitude', this.lastLocation.latitude.toString(), 1.0, 'gps');
+      this.recordedPut('longitude', this.lastLocation.longitude.toString(), 1.0, 'gps');
 
-      let geofences = this.geofenceMgr.getGeofencesAtLocation(
-        this.lastLocation.latitude,
-        this.lastLocation.longitude
-      );
-      if (geofences.length > 0) {
-        this.tray.put('geofence', geofences[0].id, 1.0, 'geofence');
-      } else {
-        // 不在任何围栏内，清除旧值（防止新地点检测被 T1 skip 阻断）
-        this.tray.put('geofence', '', 0, 'geofence');
+      // 围栏离开冷却期内：跳过GPS围栏重匹配，防止旧坐标重新匹配到刚离开的围栏
+      let inDepartureCooldown = this.geofenceDepartureTime > 0
+        && (Date.now() - this.geofenceDepartureTime < ContextAwarenessService.GEOFENCE_DEPARTURE_COOLDOWN_MS);
+
+      if (!inDepartureCooldown) {
+        let geofences = this.geofenceMgr.getGeofencesAtLocation(
+          this.lastLocation.latitude,
+          this.lastLocation.longitude
+        );
+        if (geofences.length > 0) {
+          this.recordedPut('geofence', geofences[0].id, 1.0, 'geofence');
+        } else {
+          // 不在任何围栏内，清除旧值（防止新地点检测被 T1 skip 阻断）
+          this.recordedPut('geofence', '', 0, 'geofence');
+        }
       }
     }
 
@@ -1773,22 +2073,25 @@ export class ContextAwarenessService {
       }
       let traySteps = this.tray.get('step_count_today');
       if (!traySteps || traySteps.value === '0' || traySteps.value === '') {
-        this.tray.put('step_count_today', casDaily.toString(), 0.8, 'pedometer');
+        this.recordedPut('step_count_today', casDaily.toString(), 0.8, 'pedometer');
       }
     }
 
     // 运动状态（加速度计回调已写入，这里确保有值）
     if (this.lastMotionState !== 'unknown') {
-      this.tray.put('motionState', this.lastMotionState, 0.9, 'accelerometer');
+      this.recordedPut('motionState', this.lastMotionState, 0.9, 'accelerometer');
     }
     // 手握状态由 updateHoldingState() 更新，不在此处重复写入
 
+    // 每日行程时间线：推送当前地点+运动状态
+    this.pushTimelineEvent();
+
     // Sensor tier
-    this.tray.put('sensorTier', this.currentTier.toString(), 1.0, 'system');
+    this.recordedPut('sensorTier', this.currentTier.toString(), 1.0, 'system');
 
     // BT 环境指纹 (替代不可用的 CellID)
     if (this.lastCellId.length > 0) {
-      this.tray.put('btFingerprint', this.lastCellId, 0.8, 'bluetooth');
+      this.recordedPut('btFingerprint', this.lastCellId, 0.8, 'bluetooth');
     }
 
     // 插件数据 → 托盘（按物理/数字世界分类）
@@ -1823,7 +2126,7 @@ export class ContextAwarenessService {
         let k = keys[j];
         let v = snapshot.data[k];
         if (v.length > 0 && !pluginSkip.includes(k)) {
-          this.tray.put(k, v, 0.8, source);
+          this.recordedPut(k, v, 0.8, source);
         }
       }
     }
@@ -2545,7 +2848,7 @@ export class ContextAwarenessService {
     let prev = this.currentTier;
     this.currentTier = target;
     this.tierEscalationTime = Date.now();
-    this.tray.put('sensorTier', target.toString(), 1.0, 'system');
+    this.recordedPut('sensorTier', target.toString(), 1.0, 'system');
     this.log.info(TAG, `Tier T${prev}->T${target}: ${reason}`);
 
     if (target >= 2) this.onTier2Activated();
@@ -2564,7 +2867,7 @@ export class ContextAwarenessService {
     if (prev >= 2 && target < 2) this.onTier2Deactivated();
 
     this.currentTier = target;
-    this.tray.put('sensorTier', target.toString(), 1.0, 'system');
+    this.recordedPut('sensorTier', target.toString(), 1.0, 'system');
     this.log.info(TAG, `Tier T${prev}->T${target}: ${reason}`);
   }
 
@@ -2838,19 +3141,20 @@ export class ContextAwarenessService {
   }
 
   private async onGeofenceEvent(event: GeofenceEvent): Promise<void> {
+    if (this.isReplaying) return;  // 回放中不处理围栏事件
     this.log.info(TAG, `Geofence ${event.type}: ${event.geofence.name}`);
 
     // 更新位置
     this.lastLocation = event.location;
 
     // 写入托盘
-    this.tray.put('latitude', event.location.latitude.toString(), 1.0, 'gps');
-    this.tray.put('longitude', event.location.longitude.toString(), 1.0, 'gps');
+    this.recordedPut('latitude', event.location.latitude.toString(), 1.0, 'gps');
+    this.recordedPut('longitude', event.location.longitude.toString(), 1.0, 'gps');
     if (event.type === 'enter') {
-      this.tray.put('geofence', event.geofence.id, 1.0, 'geofence');
+      this.recordedPut('geofence', event.geofence.id, 1.0, 'geofence');
     } else {
       // Exit: 清除围栏标记，让新地点检测和 GPS 定时器正常工作
-      this.tray.put('geofence', '', 0, 'geofence');
+      this.recordedPut('geofence', '', 0, 'geofence');
       this.log.info(TAG, `Geofence exit: cleared tray, left ${event.geofence.name}`);
     }
 
@@ -4287,5 +4591,152 @@ export class ContextAwarenessService {
   /** Get CalendarPlugin instance for action execution */
   getCalendarPlugin(): CalendarPlugin | undefined {
     return this.digitalWorld.getCalendarPlugin();
+  }
+
+  // ==================== 传感器录制/回放 ====================
+
+  /**
+   * Wrapper for tray.put that also records events when recording is active.
+   */
+  private recordedPut(key: string, value: string, quality: number, source: string): void {
+    this.tray.put(key, value, quality, source);
+    if (this.recorder.isRecording()) {
+      this.recorder.recordEvent(key, value, quality, source);
+    }
+  }
+
+  /** Start sensor recording */
+  startRecording(label: string): RecordingInfo | null {
+    return this.recorder.startRecording(label);
+  }
+
+  /** Stop sensor recording */
+  stopRecording(): RecordingInfo | null {
+    return this.recorder.stopRecording();
+  }
+
+  /** Check if currently recording */
+  isSensorRecording(): boolean {
+    return this.recorder.isRecording();
+  }
+
+  /** Get current recording duration */
+  getRecordingDuration(): number {
+    return this.recorder.getRecordingDuration();
+  }
+
+  /** Get current recording event count */
+  getRecordingEventCount(): number {
+    return this.recorder.getEventCount();
+  }
+
+  /** List all saved recordings */
+  listRecordings(): RecordingInfo[] {
+    return this.recorder.listRecordings();
+  }
+
+  /** Delete a recording */
+  deleteRecording(id: string): boolean {
+    return this.recorder.deleteRecording(id);
+  }
+
+  /** Load a recording for replay */
+  loadReplay(sessionId: string): boolean {
+    return this.player.loadRecording(sessionId);
+  }
+
+  /** Start replay at given speed (1/2/5/10/0=instant) */
+  startReplay(speed: number = 1): void {
+    if (!this.isReplaying) {
+      // 首次开始回放：保存当前真实状态
+      this.isReplaying = true;
+      this.preReplayMotionState = this.lastMotionState;
+      this.preReplayLocation = this.lastLocation;
+      this.preReplayTraySnapshot.clear();
+      let keys: string[] = ['motionState', 'gpsSpeed', 'geofence', 'latitude', 'longitude',
+        'locationAccuracy', 'wifiSsid', 'networkType', 'btFingerprint'];
+      for (let k of keys) {
+        let entry = this.tray.get(k);
+        if (entry && entry.value !== null) {
+          this.preReplayTraySnapshot.set(k, entry.value);
+        }
+      }
+      this.log.info(TAG, `Replay: saved pre-replay state (motion=${this.preReplayMotionState})`);
+    }
+    this.player.play(speed);
+  }
+
+  /** Pause replay */
+  pauseReplay(): void {
+    this.player.pause();
+  }
+
+  /** Resume replay */
+  resumeReplay(): void {
+    this.player.resume();
+  }
+
+  /** Stop replay and restore pre-replay state */
+  stopReplay(): void {
+    this.player.stop();
+    if (this.isReplaying) {
+      this.isReplaying = false;
+      // 恢复回放前的真实状态
+      this.lastMotionState = this.preReplayMotionState;
+      this.lastLocation = this.preReplayLocation;
+      // 恢复 tray 中的关键值
+      this.preReplayTraySnapshot.forEach((v: string, k: string) => {
+        this.recordedPut(k, v, 0.9, 'restore');
+      });
+      this.preReplayTraySnapshot.clear();
+      this.log.info(TAG, `Replay: restored pre-replay state (motion=${this.lastMotionState})`);
+    }
+  }
+
+  /** Seek replay to timestamp */
+  seekReplay(timestamp: number): void {
+    this.player.seekTo(timestamp);
+  }
+
+  /** Get replay progress */
+  getReplayProgress(): ReplayProgress {
+    return this.player.getProgress();
+  }
+
+  /** Get replay state */
+  getReplayState(): ReplayState {
+    return this.player.getState();
+  }
+
+  /** Get recording time range [t0, tEnd] */
+  getReplayTimeRange(): [number, number] {
+    return this.player.getRecordingTimeRange();
+  }
+
+  /** Set replay progress listener */
+  setReplayProgressListener(listener: ((progress: ReplayProgress) => void) | null): void {
+    this.player.setProgressListener(listener);
+  }
+
+  // ==================== 7-Tuple 物理状态 API ====================
+
+  /** 获取最新 PhysicalState 7-tuple */
+  getLastPhysicalState(): PhysicalState | undefined {
+    return this.lastPhysicalState;
+  }
+
+  /** 获取最新场景匹配结果 */
+  getLastScenarioResults(): ScenarioMatchResult[] {
+    return this.lastScenarioResults;
+  }
+
+  /** 获取 ScenarioMatcher 活跃场景数 */
+  getActiveScenarioCount(): number {
+    return this.scenarioMatcher.getActiveCount();
+  }
+
+  /** 获取 ScenarioMatcher 实例 (用于 UI 显示) */
+  getScenarioMatcher(): ScenarioMatcher {
+    return this.scenarioMatcher;
   }
 }

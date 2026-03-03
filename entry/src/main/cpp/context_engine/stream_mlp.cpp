@@ -417,6 +417,8 @@ void StreamRLEngine::trainArm(const std::string& actionId, const double* feature
 void StreamRLEngine::buildFeatures(const ContextMap& ctx, double* out) {
     std::memset(out, 0, sizeof(double) * STREAM_FEAT_DIM);
 
+    // ==================== 7-Tuple Encoded (28 dims) ====================
+
     // [0-1] hour sin/cos
     double hour = 12.0;
     auto it = ctx.find("hour");
@@ -424,59 +426,148 @@ void StreamRLEngine::buildFeatures(const ContextMap& ctx, double* out) {
     out[0] = std::sin(2.0 * M_PI * hour / 24.0);
     out[1] = std::cos(2.0 * M_PI * hour / 24.0);
 
-    // [2-3] dayOfWeek sin/cos
-    double dow = 0.0;
-    it = ctx.find("dayOfWeek");
-    if (it != ctx.end()) dow = safe_stod(it->second, 0.0);
-    out[2] = std::sin(2.0 * M_PI * dow / 7.0);
-    out[3] = std::cos(2.0 * M_PI * dow / 7.0);
-
-    // [4] isWeekend
-    it = ctx.find("isWeekend");
-    out[4] = (it != ctx.end() && it->second == "true") ? 1.0 : 0.0;
-
-    // [5] timeOfDay ordinal
-    it = ctx.find("timeOfDay");
+    // [2-3] dayType one-hot: weekend, holiday (workday = both 0)
+    it = ctx.find("ps_dayType");
     if (it != ctx.end()) {
-        const auto& tod = it->second;
-        if (tod == "dawn") out[5] = 0.1;
-        else if (tod == "morning") out[5] = 0.3;
-        else if (tod == "afternoon") out[5] = 0.5;
-        else if (tod == "evening") out[5] = 0.7;
-        else if (tod == "night") out[5] = 0.9;
-        else out[5] = 0.5;
+        out[2] = (it->second == "weekend") ? 1.0 : 0.0;
+        out[3] = (it->second == "holiday") ? 1.0 : 0.0;
+    } else {
+        it = ctx.find("isWeekend");
+        out[2] = (it != ctx.end() && it->second == "true") ? 1.0 : 0.0;
+        out[3] = 0.0;
     }
 
-    // [6] batteryLevel / 100
+    // [4-12] location one-hot (9): home,work,commute,restaurant,gym,transit_hub,shopping,outdoor,cafe
+    it = ctx.find("ps_location");
+    if (it != ctx.end()) {
+        const auto& loc = it->second;
+        out[4]  = (loc == "home") ? 1.0 : 0.0;
+        out[5]  = (loc == "work") ? 1.0 : 0.0;
+        out[6]  = (loc == "commute") ? 1.0 : 0.0;
+        out[7]  = (loc == "restaurant") ? 1.0 : 0.0;
+        out[8]  = (loc == "gym") ? 1.0 : 0.0;
+        out[9]  = (loc == "transit_hub") ? 1.0 : 0.0;
+        out[10] = (loc == "shopping") ? 1.0 : 0.0;
+        out[11] = (loc == "outdoor") ? 1.0 : 0.0;
+        out[12] = (loc == "cafe") ? 1.0 : 0.0;
+    } else {
+        // Fallback: try to infer from geofence/wifiGeofence
+        it = ctx.find("wifiGeofence");
+        if (it != ctx.end()) {
+            const auto& wg = it->second;
+            out[4]  = (wg == "home") ? 1.0 : 0.0;
+            out[5]  = (wg == "work") ? 1.0 : 0.0;
+            out[7]  = (wg == "restaurant") ? 1.0 : 0.0;
+            out[8]  = (wg == "gym") ? 1.0 : 0.0;
+            out[9]  = (wg == "transit") ? 1.0 : 0.0;
+            out[10] = (wg == "shopping") ? 1.0 : 0.0;
+            out[12] = (wg == "cafe") ? 1.0 : 0.0;
+        }
+    }
+
+    // [13-18] motion one-hot (6): stationary,walking,running,cycling,driving,transit
+    std::string motion = "stationary";
+    it = ctx.find("ps_motion");
+    if (it != ctx.end() && !it->second.empty()) {
+        motion = it->second;
+    } else {
+        it = ctx.find("motionState");
+        if (it != ctx.end()) motion = it->second;
+    }
+    out[13] = (motion == "stationary") ? 1.0 : 0.0;
+    out[14] = (motion == "walking") ? 1.0 : 0.0;
+    out[15] = (motion == "running") ? 1.0 : 0.0;
+    out[16] = (motion == "cycling") ? 1.0 : 0.0;
+    out[17] = (motion == "driving") ? 1.0 : 0.0;
+    out[18] = (motion == "transit") ? 1.0 : 0.0;
+
+    // [19-23] phone one-hot (5): in_use,on_desk,in_pocket,charging,unknown
+    it = ctx.find("ps_phone");
+    if (it != ctx.end()) {
+        const auto& ph = it->second;
+        out[19] = (ph == "in_use") ? 1.0 : 0.0;
+        out[20] = (ph == "on_desk") ? 1.0 : 0.0;
+        out[21] = (ph == "in_pocket") ? 1.0 : 0.0;
+        out[22] = (ph == "charging") ? 1.0 : 0.0;
+        out[23] = (ph == "unknown") ? 1.0 : 0.0;
+    } else {
+        // Fallback from isCharging
+        it = ctx.find("isCharging");
+        if (it != ctx.end() && it->second == "true") out[22] = 1.0;
+    }
+
+    // [24-25] light: ordinal + dark_flag
+    it = ctx.find("ps_light");
+    if (it != ctx.end()) {
+        const auto& lt = it->second;
+        if (lt == "dark")        { out[24] = 0.0;  out[25] = 1.0; }
+        else if (lt == "dim")    { out[24] = 0.33; out[25] = 0.0; }
+        else if (lt == "normal") { out[24] = 0.67; out[25] = 0.0; }
+        else if (lt == "bright") { out[24] = 1.0;  out[25] = 0.0; }
+    } else {
+        out[24] = 0.5; // default
+    }
+
+    // [26-27] sound: ordinal + has_voice
+    it = ctx.find("ps_sound");
+    if (it != ctx.end()) {
+        const auto& snd = it->second;
+        if (snd == "silent")      out[26] = 0.0;
+        else if (snd == "quiet")  out[26] = 0.25;
+        else if (snd == "normal") out[26] = 0.5;
+        else if (snd == "noisy")  out[26] = 1.0;
+    } else {
+        out[26] = 0.5;
+    }
+    // has_voice: not directly available yet, default 0
+    out[27] = 0.0;
+
+    // ==================== Scenario Context (6 dims) ====================
+
+    // [28] has_active_scenario
+    it = ctx.find("ps_scenario");
+    out[28] = (it != ctx.end() && !it->second.empty()) ? 1.0 : 0.0;
+
+    // [29] chain_position (step/total → 0~1)
+    it = ctx.find("ps_chainPosition");
+    if (it != ctx.end()) {
+        auto slashPos = it->second.find('/');
+        if (slashPos != std::string::npos) {
+            double step = safe_stod(it->second.substr(0, slashPos), 0.0);
+            double total = safe_stod(it->second.substr(slashPos + 1), 1.0);
+            out[29] = (total > 0) ? step / total : 0.0;
+        }
+    }
+
+    // [30] scenario_category_hash (category → ordinal 0~1)
+    it = ctx.find("ps_scenarioCategory");
+    if (it != ctx.end()) {
+        const auto& cat = it->second;
+        if (cat == "morning")       out[30] = 0.05;
+        else if (cat == "commute")  out[30] = 0.15;
+        else if (cat == "work")     out[30] = 0.25;
+        else if (cat == "home")     out[30] = 0.35;
+        else if (cat == "sleep")    out[30] = 0.45;
+        else if (cat == "exercise") out[30] = 0.55;
+        else if (cat == "dining")   out[30] = 0.65;
+        else if (cat == "shopping") out[30] = 0.70;
+        else if (cat == "travel")   out[30] = 0.80;
+        else if (cat == "social")   out[30] = 0.85;
+        else if (cat == "health")   out[30] = 0.90;
+        else if (cat == "device")   out[30] = 0.95;
+    }
+
+    // [31] is_routine (from StateTransitionTracker)
+    it = ctx.find("is_routine_transition");
+    if (it != ctx.end()) out[31] = safe_stod(it->second, 0.0);
+
+    // [32] time_in_state_norm: min(dur/240, 1.0)
+    it = ctx.find("time_in_current_state_min");
+    if (it != ctx.end()) out[32] = safe_stod(it->second, 0.0);
+
+    // [33] battery_norm
     it = ctx.find("batteryLevel");
-    out[6] = (it != ctx.end()) ? safe_stod(it->second, 50.0) / 100.0 : 0.5;
-
-    // [7] isCharging
-    it = ctx.find("isCharging");
-    out[7] = (it != ctx.end() && it->second == "true") ? 1.0 : 0.0;
-
-    // [8-11] motionState one-hot
-    it = ctx.find("motionState");
-    std::string motion = (it != ctx.end()) ? it->second : "stationary";
-    out[8]  = (motion == "stationary") ? 1.0 : 0.0;
-    out[9]  = (motion == "walking") ? 1.0 : 0.0;
-    out[10] = (motion == "running") ? 1.0 : 0.0;
-    out[11] = (motion == "driving" || motion == "transit") ? 1.0 : 0.0;
-
-    // [12] hasGeofence
-    it = ctx.find("geofence");
-    out[12] = (it != ctx.end() && !it->second.empty()) ? 1.0 : 0.0;
-
-    // [13] wifiConnected
-    it = ctx.find("wifiSsid");
-    out[13] = (it != ctx.end() && !it->second.empty()) ? 1.0 : 0.0;
-
-    // [14-15] networkType one-hot
-    it = ctx.find("networkType");
-    if (it != ctx.end()) {
-        out[14] = (it->second == "wifi") ? 1.0 : 0.0;
-        out[15] = (it->second == "cellular") ? 1.0 : 0.0;
-    }
+    out[33] = (it != ctx.end()) ? safe_stod(it->second, 50.0) / 100.0 : 0.5;
 }
 
 int StreamRLEngine::getArmSamples(const std::string& actionId) const {

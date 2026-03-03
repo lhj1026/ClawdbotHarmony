@@ -24,6 +24,8 @@
 
 // Forward declare StreamRLEngine (defined in stream_mlp.h)
 namespace context_engine { class StreamRLEngine; }
+// Forward declare StateTransitionTracker (defined in state_transition.h)
+namespace context_engine { class StateTransitionTracker; }
 
 namespace context_engine {
 
@@ -181,7 +183,7 @@ private:
 // LinUCB Contextual Bandit
 // ============================================================
 
-constexpr int LINUCB_DIM = 8;  // feature dimension
+constexpr int LINUCB_DIM = 14;  // feature dimension (v2: 7-tuple encoded)
 
 /** Per-arm state for LinUCB: A matrix and b vector */
 struct LinUCBArm {
@@ -194,9 +196,12 @@ public:
     explicit LinUCB(double alpha = 1.0);
 
     /**
-     * Build feature vector from context map.
-     * Features: [hour_sin, hour_cos, battery/100, isCharging, isWeekend,
-     *            motion_stationary, motion_active, motion_vehicle]
+     * Build feature vector from context map (d=14).
+     * Features: [hour_sin, hour_cos, battery/100, isCharging,
+     *            dayType_weekend, dayType_holiday,
+     *            motion_stationary, motion_walking, motion_running,
+     *            motion_cycling, motion_vehicle,
+     *            light_ordinal, sound_ordinal, has_scenario]
      */
     std::array<double, LINUCB_DIM> buildFeatureVec(const ContextMap& ctx) const;
 
@@ -261,6 +266,9 @@ public:
     /** Get the Stream RL engine for online learning */
     StreamRLEngine& streamRL() { return *streamRL_; }
 
+    /** Get the state transition tracker */
+    StateTransitionTracker& transitionTracker() { return *transitionTracker_; }
+
     /** Get rule count */
     size_t ruleCount() const { return rules_.size(); }
 
@@ -286,6 +294,7 @@ private:
     MAB mab_;
     LinUCB linucb_;
     std::unique_ptr<StreamRLEngine> streamRL_;
+    std::unique_ptr<StateTransitionTracker> transitionTracker_;
     std::unordered_map<std::string, int64_t> lastFired_;  // ruleId → timestamp
     EventBuffer eventBuffer_;
     RateLimits rateLimits_;

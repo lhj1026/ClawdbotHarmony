@@ -1,0 +1,3019 @@
+{
+  "version": "1.0.0",
+  "scenarios": [
+    {
+      "id": "S01",
+      "name": "工作日早起",
+      "nameEn": "Weekday morning wakeup",
+      "category": "morning",
+      "priority": 5,
+      "timeoutMs": 7200000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "dawn",
+            "location": "home",
+            "motion": "stationary",
+            "phone": "charging",
+            "light": "dark",
+            "sound": "silent",
+            "dayType": "workday"
+          },
+          "actions": [
+            {
+              "id": "morning_alarm",
+              "type": "notification",
+              "payload": "{\"title\":\"早上好\",\"body\":\"新的一天开始了，该起床啦\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "dawn|morning",
+            "location": "home",
+            "motion": "walking",
+            "phone": "in_use",
+            "light": "dim",
+            "sound": "quiet",
+            "dayType": "workday"
+          },
+          "actions": [
+            {
+              "id": "weather_briefing",
+              "type": "card",
+              "payload": "{\"title\":\"今日天气\",\"body\":\"为您播报今日天气和通勤路况\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "morning",
+            "location": "home",
+            "motion": "stationary",
+            "phone": "in_use",
+            "light": "normal",
+            "sound": "quiet",
+            "dayType": "workday"
+          },
+          "actions": [
+            {
+              "id": "commute_info",
+              "type": "card",
+              "payload": "{\"title\":\"通勤建议\",\"body\":\"查看今日通勤路线和预估时间\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S02",
+      "name": "周末赖床",
+      "nameEn": "Weekend sleeping in",
+      "category": "morning",
+      "priority": 3,
+      "timeoutMs": 10800000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "morning",
+            "location": "home",
+            "motion": "stationary",
+            "phone": "charging",
+            "light": "dark",
+            "sound": "silent",
+            "dayType": "weekend|holiday"
+          },
+          "actions": [
+            {
+              "id": "weekend_dnd",
+              "type": "setting",
+              "payload": "{\"action\":\"dnd_on\",\"reason\":\"周末休息中，勿扰模式已开启\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "morning|forenoon",
+            "location": "home",
+            "motion": "stationary",
+            "phone": "in_use",
+            "light": "dim",
+            "sound": "quiet",
+            "dayType": "weekend|holiday"
+          },
+          "actions": [
+            {
+              "id": "weekend_greeting",
+              "type": "card",
+              "payload": "{\"title\":\"周末愉快\",\"body\":\"今天没有工作安排，好好放松吧\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S03",
+      "name": "早起晨跑",
+      "nameEn": "Morning jog",
+      "category": "morning",
+      "priority": 4,
+      "timeoutMs": 7200000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "dawn",
+            "location": "home",
+            "motion": "stationary",
+            "phone": "charging",
+            "light": "dark",
+            "sound": "silent",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "jog_alarm",
+              "type": "notification",
+              "payload": "{\"title\":\"晨跑时间\",\"body\":\"天气适合跑步，准备出发吧\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "dawn",
+            "location": "home",
+            "motion": "walking",
+            "phone": "in_pocket",
+            "light": "dim",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "jog_warmup",
+              "type": "notification",
+              "payload": "{\"title\":\"热身准备\",\"body\":\"出发前别忘了热身拉伸\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "dawn|morning",
+            "location": "outdoor",
+            "motion": "running",
+            "phone": "in_pocket",
+            "light": "bright|normal",
+            "sound": "normal",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "jog_tracking",
+              "type": "service",
+              "payload": "{\"action\":\"start_run_tracking\",\"title\":\"跑步进行中\"}"
+            },
+            {
+              "id": "jog_music",
+              "type": "media",
+              "payload": "{\"action\":\"play_playlist\",\"playlist\":\"running\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "morning",
+            "location": "home",
+            "motion": "stationary",
+            "phone": "in_use",
+            "light": "normal",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "jog_summary",
+              "type": "card",
+              "payload": "{\"title\":\"晨跑完成\",\"body\":\"查看本次跑步数据和成绩\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S04",
+      "name": "早起瑜伽/冥想",
+      "nameEn": "Morning yoga",
+      "category": "morning",
+      "priority": 3,
+      "timeoutMs": 3600000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "dawn",
+            "location": "home",
+            "motion": "stationary",
+            "phone": "on_desk",
+            "light": "dim",
+            "sound": "silent",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "yoga_dnd",
+              "type": "setting",
+              "payload": "{\"action\":\"dnd_on\",\"reason\":\"瑜伽/冥想时间\"}"
+            },
+            {
+              "id": "yoga_music",
+              "type": "media",
+              "payload": "{\"action\":\"play_playlist\",\"playlist\":\"meditation\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S05",
+      "name": "准备早餐",
+      "nameEn": "Preparing breakfast",
+      "category": "morning",
+      "priority": 3,
+      "timeoutMs": 3600000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "morning",
+            "location": "home",
+            "motion": "walking",
+            "phone": "on_desk",
+            "light": "normal",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "breakfast_news",
+              "type": "media",
+              "payload": "{\"action\":\"play_news_briefing\",\"title\":\"早间新闻\"}"
+            },
+            {
+              "id": "breakfast_timer",
+              "type": "notification",
+              "payload": "{\"title\":\"准备早餐\",\"body\":\"需要设定烹饪计时器吗？\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S06",
+      "name": "送孩子上学",
+      "nameEn": "Taking kids to school",
+      "category": "morning",
+      "priority": 6,
+      "timeoutMs": 5400000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "morning",
+            "location": "home",
+            "motion": "walking",
+            "phone": "in_pocket",
+            "light": "normal",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "school_reminder",
+              "type": "notification",
+              "payload": "{\"title\":\"出发上学\",\"body\":\"别忘了书包和午餐盒\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "morning",
+            "location": "commute",
+            "motion": "driving",
+            "phone": "*",
+            "light": "normal",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "school_nav",
+              "type": "service",
+              "payload": "{\"action\":\"start_navigation\",\"destination\":\"school\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "morning",
+            "location": "unknown",
+            "motion": "stationary",
+            "phone": "*",
+            "light": "normal",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "school_arrive",
+              "type": "notification",
+              "payload": "{\"title\":\"到达学校\",\"body\":\"安全送达\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "morning",
+            "location": "commute",
+            "motion": "driving",
+            "phone": "*",
+            "light": "normal",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "school_return_nav",
+              "type": "service",
+              "payload": "{\"action\":\"start_navigation\",\"destination\":\"work\"}"
+            },
+            {
+              "id": "school_return_music",
+              "type": "media",
+              "payload": "{\"action\":\"play_playlist\",\"playlist\":\"commute\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S07",
+      "name": "早晨驾车通勤",
+      "nameEn": "Morning drive commute",
+      "category": "commute",
+      "priority": 6,
+      "timeoutMs": 5400000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "morning",
+            "location": "home",
+            "motion": "walking",
+            "phone": "in_pocket",
+            "light": "normal",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "drive_commute_prep",
+              "type": "card",
+              "payload": "{\"title\":\"通勤准备\",\"body\":\"今日路况：查看最优路线\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "morning",
+            "location": "commute",
+            "motion": "driving",
+            "phone": "*",
+            "light": "normal",
+            "sound": "*",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "drive_commute_nav",
+              "type": "service",
+              "payload": "{\"action\":\"start_navigation\",\"destination\":\"work\"}"
+            },
+            {
+              "id": "drive_commute_music",
+              "type": "media",
+              "payload": "{\"action\":\"play_playlist\",\"playlist\":\"commute\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "morning|forenoon",
+            "location": "work",
+            "motion": "stationary",
+            "phone": "on_desk",
+            "light": "normal",
+            "sound": "normal",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "drive_commute_arrive",
+              "type": "notification",
+              "payload": "{\"title\":\"已到公司\",\"body\":\"通勤结束，开始新的一天\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S08",
+      "name": "早晨公交/地铁通勤",
+      "nameEn": "Morning transit commute",
+      "category": "commute",
+      "priority": 6,
+      "timeoutMs": 7200000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "morning",
+            "location": "home",
+            "motion": "walking",
+            "phone": "in_pocket",
+            "light": "normal",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "transit_prep",
+              "type": "card",
+              "payload": "{\"title\":\"出发提醒\",\"body\":\"查看公交/地铁实时信息\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "morning",
+            "location": "transit_hub",
+            "motion": "walking",
+            "phone": "in_pocket",
+            "light": "normal",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "transit_qr",
+              "type": "service",
+              "payload": "{\"action\":\"show_transit_qr\",\"title\":\"乘车码已准备\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "morning",
+            "location": "commute",
+            "motion": "transit",
+            "phone": "in_use|in_pocket",
+            "light": "*",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "transit_music",
+              "type": "media",
+              "payload": "{\"action\":\"play_playlist\",\"playlist\":\"commute\"}"
+            },
+            {
+              "id": "transit_news",
+              "type": "card",
+              "payload": "{\"title\":\"通勤资讯\",\"body\":\"为您准备了今日新闻摘要\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "morning|forenoon",
+            "location": "work",
+            "motion": "walking",
+            "phone": "in_pocket",
+            "light": "normal",
+            "sound": "normal",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "transit_arrive",
+              "type": "notification",
+              "payload": "{\"title\":\"已到公司\",\"body\":\"通勤结束，祝工作顺利\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S09",
+      "name": "早晨骑车通勤",
+      "nameEn": "Morning cycling commute",
+      "category": "commute",
+      "priority": 5,
+      "timeoutMs": 5400000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "morning",
+            "location": "home",
+            "motion": "walking",
+            "phone": "in_pocket",
+            "light": "normal",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "cycle_prep",
+              "type": "notification",
+              "payload": "{\"title\":\"骑行通勤\",\"body\":\"今日天气适合骑车\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "morning",
+            "location": "commute",
+            "motion": "cycling",
+            "phone": "in_pocket",
+            "light": "bright",
+            "sound": "normal",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "cycle_tracking",
+              "type": "service",
+              "payload": "{\"action\":\"start_ride_tracking\",\"title\":\"骑行中\"}"
+            },
+            {
+              "id": "cycle_music",
+              "type": "media",
+              "payload": "{\"action\":\"play_playlist\",\"playlist\":\"cycling\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "morning|forenoon",
+            "location": "work",
+            "motion": "walking",
+            "phone": "in_pocket",
+            "light": "normal",
+            "sound": "normal",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "cycle_arrive",
+              "type": "card",
+              "payload": "{\"title\":\"骑行完成\",\"body\":\"查看骑行数据和消耗热量\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S10",
+      "name": "晚间驾车回家",
+      "nameEn": "Evening drive home",
+      "category": "commute",
+      "priority": 6,
+      "timeoutMs": 5400000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "evening",
+            "location": "work",
+            "motion": "walking",
+            "phone": "in_pocket",
+            "light": "normal",
+            "sound": "normal",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "evening_drive_prep",
+              "type": "card",
+              "payload": "{\"title\":\"下班回家\",\"body\":\"查看回家路线和实时路况\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "evening",
+            "location": "commute",
+            "motion": "driving",
+            "phone": "*",
+            "light": "dim|dark",
+            "sound": "*",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "evening_drive_nav",
+              "type": "service",
+              "payload": "{\"action\":\"start_navigation\",\"destination\":\"home\"}"
+            },
+            {
+              "id": "evening_drive_music",
+              "type": "media",
+              "payload": "{\"action\":\"play_playlist\",\"playlist\":\"evening_commute\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "evening|night",
+            "location": "home",
+            "motion": "stationary",
+            "phone": "*",
+            "light": "normal",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "evening_drive_arrive",
+              "type": "notification",
+              "payload": "{\"title\":\"到家了\",\"body\":\"欢迎回家，辛苦了一天\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S11",
+      "name": "晚间公交回家",
+      "nameEn": "Evening transit home",
+      "category": "commute",
+      "priority": 5,
+      "timeoutMs": 7200000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "evening",
+            "location": "work",
+            "motion": "walking",
+            "phone": "in_pocket",
+            "light": "normal",
+            "sound": "normal",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "evening_transit_prep",
+              "type": "card",
+              "payload": "{\"title\":\"公交回家\",\"body\":\"查看最近班次和路线\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "evening",
+            "location": "transit_hub",
+            "motion": "walking",
+            "phone": "in_use",
+            "light": "dim",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "evening_transit_qr",
+              "type": "service",
+              "payload": "{\"action\":\"show_transit_qr\",\"title\":\"乘车码已准备\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "evening",
+            "location": "commute",
+            "motion": "transit",
+            "phone": "in_use",
+            "light": "dark|dim",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "evening_transit_relax",
+              "type": "media",
+              "payload": "{\"action\":\"play_playlist\",\"playlist\":\"relax\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "evening|night",
+            "location": "home",
+            "motion": "walking",
+            "phone": "in_pocket",
+            "light": "dark",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "evening_transit_arrive",
+              "type": "notification",
+              "payload": "{\"title\":\"到家了\",\"body\":\"欢迎回家\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S12",
+      "name": "加班晚归",
+      "nameEn": "Late night overtime return",
+      "category": "commute",
+      "priority": 7,
+      "timeoutMs": 5400000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "night|late_night",
+            "location": "work",
+            "motion": "walking",
+            "phone": "in_pocket",
+            "light": "dark",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "overtime_leave",
+              "type": "notification",
+              "payload": "{\"title\":\"加班辛苦了\",\"body\":\"注意安全回家\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "late_night",
+            "location": "commute",
+            "motion": "driving",
+            "phone": "*",
+            "light": "dark",
+            "sound": "*",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "overtime_nav",
+              "type": "service",
+              "payload": "{\"action\":\"start_navigation\",\"destination\":\"home\"}"
+            },
+            {
+              "id": "overtime_alert",
+              "type": "notification",
+              "payload": "{\"title\":\"深夜驾车\",\"body\":\"注意安全，保持警觉\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "late_night",
+            "location": "home",
+            "motion": "stationary",
+            "phone": "charging",
+            "light": "dark",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "overtime_home",
+              "type": "setting",
+              "payload": "{\"action\":\"dnd_on\",\"reason\":\"深夜到家，准备休息\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S13",
+      "name": "到达公司开始工作",
+      "nameEn": "Arrive at work",
+      "category": "work",
+      "priority": 5,
+      "timeoutMs": 3600000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "morning|forenoon",
+            "location": "work",
+            "motion": "stationary",
+            "phone": "on_desk",
+            "light": "normal",
+            "sound": "normal",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "work_start_schedule",
+              "type": "card",
+              "payload": "{\"title\":\"今日日程\",\"body\":\"查看今天的会议和待办事项\"}"
+            },
+            {
+              "id": "work_start_focus",
+              "type": "setting",
+              "payload": "{\"action\":\"focus_mode\",\"mode\":\"work\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S14",
+      "name": "上午专注工作",
+      "nameEn": "Morning focus work",
+      "category": "work",
+      "priority": 4,
+      "timeoutMs": 10800000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "forenoon",
+            "location": "work",
+            "motion": "stationary",
+            "phone": "on_desk",
+            "light": "normal",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "focus_mode_on",
+              "type": "setting",
+              "payload": "{\"action\":\"focus_mode\",\"mode\":\"deep_work\",\"blockNotifications\":true}"
+            },
+            {
+              "id": "focus_timer",
+              "type": "notification",
+              "payload": "{\"title\":\"专注模式\",\"body\":\"已进入深度工作模式，非紧急通知已静音\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S15",
+      "name": "开会",
+      "nameEn": "In meeting",
+      "category": "work",
+      "priority": 7,
+      "timeoutMs": 7200000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "work",
+            "motion": "stationary",
+            "phone": "on_desk|face_down",
+            "light": "normal",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "meeting_silent",
+              "type": "setting",
+              "payload": "{\"action\":\"silent_mode\",\"vibrate\":false}"
+            },
+            {
+              "id": "meeting_dnd",
+              "type": "setting",
+              "payload": "{\"action\":\"dnd_on\",\"reason\":\"会议中\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S16",
+      "name": "午餐外出",
+      "nameEn": "Lunch out",
+      "category": "work",
+      "priority": 4,
+      "timeoutMs": 5400000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "lunch",
+            "location": "work",
+            "motion": "walking",
+            "phone": "in_pocket",
+            "light": "bright",
+            "sound": "normal",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "lunch_out_suggest",
+              "type": "card",
+              "payload": "{\"title\":\"午餐推荐\",\"body\":\"附近餐厅推荐\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "lunch",
+            "location": "restaurant|unknown",
+            "motion": "stationary",
+            "phone": "in_use",
+            "light": "normal",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "lunch_out_pay",
+              "type": "service",
+              "payload": "{\"action\":\"show_payment_qr\",\"title\":\"付款码已准备\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "lunch|afternoon",
+            "location": "work",
+            "motion": "walking",
+            "phone": "in_pocket",
+            "light": "normal",
+            "sound": "normal",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "lunch_out_return",
+              "type": "notification",
+              "payload": "{\"title\":\"午餐结束\",\"body\":\"下午工作即将开始\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S17",
+      "name": "办公室午餐",
+      "nameEn": "Office lunch",
+      "category": "work",
+      "priority": 3,
+      "timeoutMs": 3600000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "lunch",
+            "location": "work",
+            "motion": "stationary",
+            "phone": "in_use",
+            "light": "normal",
+            "sound": "normal",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "office_lunch_relax",
+              "type": "card",
+              "payload": "{\"title\":\"午餐时间\",\"body\":\"休息一下，看看今日热点\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S18",
+      "name": "下午茶/休息",
+      "nameEn": "Afternoon break",
+      "category": "work",
+      "priority": 3,
+      "timeoutMs": 1800000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "afternoon",
+            "location": "work",
+            "motion": "walking",
+            "phone": "in_pocket",
+            "light": "normal",
+            "sound": "normal",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "break_walk",
+              "type": "notification",
+              "payload": "{\"title\":\"休息时间\",\"body\":\"起来走走，喝杯下午茶\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "afternoon",
+            "location": "work",
+            "motion": "stationary",
+            "phone": "in_use",
+            "light": "normal",
+            "sound": "normal",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "break_content",
+              "type": "card",
+              "payload": "{\"title\":\"下午茶时间\",\"body\":\"放松一下，稍后继续\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S19",
+      "name": "准备下班",
+      "nameEn": "Preparing to leave",
+      "category": "work",
+      "priority": 4,
+      "timeoutMs": 3600000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "evening",
+            "location": "work",
+            "motion": "stationary",
+            "phone": "in_use",
+            "light": "normal",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "leave_summary",
+              "type": "card",
+              "payload": "{\"title\":\"下班准备\",\"body\":\"今日工作小结和明日待办\"}"
+            },
+            {
+              "id": "leave_traffic",
+              "type": "card",
+              "payload": "{\"title\":\"回家路况\",\"body\":\"查看实时路况信息\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "evening",
+            "location": "work",
+            "motion": "walking",
+            "phone": "in_pocket",
+            "light": "normal",
+            "sound": "normal",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "leave_nav",
+              "type": "service",
+              "payload": "{\"action\":\"start_navigation\",\"destination\":\"home\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S20",
+      "name": "加班",
+      "nameEn": "Overtime",
+      "category": "work",
+      "priority": 5,
+      "timeoutMs": 14400000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "evening|night",
+            "location": "work",
+            "motion": "stationary",
+            "phone": "on_desk",
+            "light": "normal",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "overtime_focus",
+              "type": "setting",
+              "payload": "{\"action\":\"focus_mode\",\"mode\":\"overtime\"}"
+            },
+            {
+              "id": "overtime_reminder",
+              "type": "notification",
+              "payload": "{\"title\":\"加班提醒\",\"body\":\"注意休息，每小时起来活动一下\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S21",
+      "name": "到家放松",
+      "nameEn": "Relaxing at home",
+      "category": "home",
+      "priority": 4,
+      "timeoutMs": 10800000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "evening|night",
+            "location": "home",
+            "motion": "stationary",
+            "phone": "in_use",
+            "light": "normal",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "home_relax_mode",
+              "type": "setting",
+              "payload": "{\"action\":\"focus_mode\",\"mode\":\"relax\"}"
+            },
+            {
+              "id": "home_relax_suggest",
+              "type": "card",
+              "payload": "{\"title\":\"放松时间\",\"body\":\"推荐今晚的休闲内容\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S22",
+      "name": "在家做饭",
+      "nameEn": "Cooking at home",
+      "category": "home",
+      "priority": 4,
+      "timeoutMs": 5400000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "evening",
+            "location": "home",
+            "motion": "walking",
+            "phone": "on_desk",
+            "light": "normal",
+            "sound": "normal",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "cooking_recipe",
+              "type": "card",
+              "payload": "{\"title\":\"做饭时间\",\"body\":\"今日菜谱推荐\"}"
+            },
+            {
+              "id": "cooking_timer",
+              "type": "service",
+              "payload": "{\"action\":\"cooking_assistant\",\"title\":\"烹饪计时器已就绪\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S23",
+      "name": "在家用餐",
+      "nameEn": "Dining at home",
+      "category": "home",
+      "priority": 3,
+      "timeoutMs": 3600000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "evening|night",
+            "location": "home",
+            "motion": "stationary",
+            "phone": "on_desk",
+            "light": "normal",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "home_dinner",
+              "type": "notification",
+              "payload": "{\"title\":\"用餐时间\",\"body\":\"享受晚餐，暂停工作通知\"}"
+            },
+            {
+              "id": "home_dinner_dnd",
+              "type": "setting",
+              "payload": "{\"action\":\"dnd_on\",\"duration\":1800,\"reason\":\"用餐中\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S24",
+      "name": "看电视/视频",
+      "nameEn": "Watching TV",
+      "category": "home",
+      "priority": 2,
+      "timeoutMs": 10800000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "night",
+            "location": "home",
+            "motion": "stationary",
+            "phone": "on_desk",
+            "light": "dim",
+            "sound": "normal",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "tv_mode",
+              "type": "setting",
+              "payload": "{\"action\":\"silent_mode\",\"vibrate\":true}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S25",
+      "name": "阅读",
+      "nameEn": "Reading",
+      "category": "home",
+      "priority": 3,
+      "timeoutMs": 7200000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "night",
+            "location": "home",
+            "motion": "stationary",
+            "phone": "in_use",
+            "light": "dim",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "reading_mode",
+              "type": "setting",
+              "payload": "{\"action\":\"eye_comfort\",\"bluelight\":true,\"brightness\":\"auto_dim\"}"
+            },
+            {
+              "id": "reading_dnd",
+              "type": "setting",
+              "payload": "{\"action\":\"dnd_on\",\"reason\":\"阅读中\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S26",
+      "name": "在家玩游戏",
+      "nameEn": "Gaming",
+      "category": "home",
+      "priority": 2,
+      "timeoutMs": 10800000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "night",
+            "location": "home",
+            "motion": "stationary",
+            "phone": "in_use",
+            "light": "dim|normal",
+            "sound": "normal",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "gaming_mode",
+              "type": "setting",
+              "payload": "{\"action\":\"gaming_mode\",\"blockNotifications\":true,\"performance\":\"high\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S27",
+      "name": "在家午餐",
+      "nameEn": "Home lunch",
+      "category": "home",
+      "priority": 3,
+      "timeoutMs": 3600000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "lunch",
+            "location": "home",
+            "motion": "stationary",
+            "phone": "on_desk",
+            "light": "normal",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "home_lunch_break",
+              "type": "notification",
+              "payload": "{\"title\":\"午餐时间\",\"body\":\"放下工作，好好吃饭\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S28",
+      "name": "午休/午睡",
+      "nameEn": "Afternoon nap",
+      "category": "home",
+      "priority": 4,
+      "timeoutMs": 5400000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "lunch|afternoon",
+            "location": "home",
+            "motion": "stationary",
+            "phone": "on_desk|charging",
+            "light": "dark|dim",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "nap_dnd",
+              "type": "setting",
+              "payload": "{\"action\":\"dnd_on\",\"duration\":3600,\"reason\":\"午休中\"}"
+            },
+            {
+              "id": "nap_alarm",
+              "type": "service",
+              "payload": "{\"action\":\"set_alarm\",\"minutes\":30,\"title\":\"午休结束\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S29",
+      "name": "做家务",
+      "nameEn": "Housework",
+      "category": "home",
+      "priority": 2,
+      "timeoutMs": 7200000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "home",
+            "motion": "walking",
+            "phone": "in_pocket",
+            "light": "normal",
+            "sound": "normal",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "housework_music",
+              "type": "media",
+              "payload": "{\"action\":\"play_playlist\",\"playlist\":\"housework\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S30",
+      "name": "在家带小孩",
+      "nameEn": "Babysitting",
+      "category": "home",
+      "priority": 5,
+      "timeoutMs": 14400000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "home",
+            "motion": "walking",
+            "phone": "in_pocket|on_desk",
+            "light": "normal",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "babysit_mode",
+              "type": "setting",
+              "payload": "{\"action\":\"volume_boost\",\"reason\":\"带小孩模式，来电铃声增大\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S31",
+      "name": "居家办公",
+      "nameEn": "Working from home",
+      "category": "home",
+      "priority": 5,
+      "timeoutMs": 28800000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "forenoon|afternoon",
+            "location": "home",
+            "motion": "stationary",
+            "phone": "on_desk",
+            "light": "normal",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "wfh_focus",
+              "type": "setting",
+              "payload": "{\"action\":\"focus_mode\",\"mode\":\"work\"}"
+            },
+            {
+              "id": "wfh_schedule",
+              "type": "card",
+              "payload": "{\"title\":\"居家办公\",\"body\":\"今日工作安排和会议提醒\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S32",
+      "name": "周末宅家休息",
+      "nameEn": "Weekend lounging",
+      "category": "home",
+      "priority": 2,
+      "timeoutMs": 28800000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "morning|forenoon|afternoon",
+            "location": "home",
+            "motion": "stationary",
+            "phone": "in_use",
+            "light": "*",
+            "sound": "quiet",
+            "dayType": "weekend|holiday"
+          },
+          "actions": [
+            {
+              "id": "weekend_relax",
+              "type": "card",
+              "payload": "{\"title\":\"周末休息\",\"body\":\"今天没有安排，尽情放松\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S33",
+      "name": "晚间入睡",
+      "nameEn": "Going to sleep",
+      "category": "sleep",
+      "priority": 6,
+      "timeoutMs": 7200000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "night",
+            "location": "home",
+            "motion": "stationary",
+            "phone": "in_use",
+            "light": "dim",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "sleep_prep",
+              "type": "card",
+              "payload": "{\"title\":\"睡前准备\",\"body\":\"明日天气和闹钟确认\"}"
+            },
+            {
+              "id": "sleep_eye_comfort",
+              "type": "setting",
+              "payload": "{\"action\":\"eye_comfort\",\"bluelight\":true,\"brightness\":\"low\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "late_night",
+            "location": "home",
+            "motion": "stationary",
+            "phone": "charging",
+            "light": "dark",
+            "sound": "silent",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "sleep_dnd",
+              "type": "setting",
+              "payload": "{\"action\":\"dnd_on\",\"reason\":\"已入睡\"}"
+            },
+            {
+              "id": "sleep_mode",
+              "type": "setting",
+              "payload": "{\"action\":\"sleep_mode\",\"alarmSet\":true}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S34",
+      "name": "午睡",
+      "nameEn": "Afternoon nap",
+      "category": "sleep",
+      "priority": 4,
+      "timeoutMs": 5400000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "lunch|afternoon",
+            "location": "home",
+            "motion": "stationary",
+            "phone": "on_desk",
+            "light": "dark|dim",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "afternoon_nap_dnd",
+              "type": "setting",
+              "payload": "{\"action\":\"dnd_on\",\"duration\":3600,\"reason\":\"午睡中\"}"
+            },
+            {
+              "id": "afternoon_nap_alarm",
+              "type": "service",
+              "payload": "{\"action\":\"set_alarm\",\"minutes\":30,\"title\":\"午睡起床\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S35",
+      "name": "早醒未起",
+      "nameEn": "Early wake staying in bed",
+      "category": "sleep",
+      "priority": 3,
+      "timeoutMs": 7200000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "dawn",
+            "location": "home",
+            "motion": "stationary",
+            "phone": "charging",
+            "light": "dark",
+            "sound": "silent",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "early_wake_dnd",
+              "type": "setting",
+              "payload": "{\"action\":\"dnd_on\",\"reason\":\"早醒但未起床，继续勿扰\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S36",
+      "name": "夜间失眠",
+      "nameEn": "Insomnia",
+      "category": "sleep",
+      "priority": 5,
+      "timeoutMs": 10800000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "late_night|sleeping",
+            "location": "home",
+            "motion": "stationary",
+            "phone": "in_use",
+            "light": "dark",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "insomnia_comfort",
+              "type": "setting",
+              "payload": "{\"action\":\"eye_comfort\",\"bluelight\":true,\"brightness\":\"minimum\"}"
+            },
+            {
+              "id": "insomnia_suggest",
+              "type": "card",
+              "payload": "{\"title\":\"睡不着？\",\"body\":\"试试助眠白噪音或冥想音频\"}"
+            },
+            {
+              "id": "insomnia_audio",
+              "type": "media",
+              "payload": "{\"action\":\"play_playlist\",\"playlist\":\"sleep_aid\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S37",
+      "name": "夜间起夜",
+      "nameEn": "Nighttime bathroom",
+      "category": "sleep",
+      "priority": 4,
+      "timeoutMs": 1800000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "sleeping",
+            "location": "home",
+            "motion": "walking",
+            "phone": "*",
+            "light": "dark",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "bathroom_light",
+              "type": "setting",
+              "payload": "{\"action\":\"screen_flashlight\",\"brightness\":\"minimum\",\"color\":\"warm\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "sleeping",
+            "location": "home",
+            "motion": "stationary",
+            "phone": "charging",
+            "light": "dark",
+            "sound": "silent",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "bathroom_return_sleep",
+              "type": "setting",
+              "payload": "{\"action\":\"dnd_on\",\"reason\":\"继续睡眠\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S38",
+      "name": "到达健身房",
+      "nameEn": "Arrive at gym",
+      "category": "exercise",
+      "priority": 4,
+      "timeoutMs": 1800000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "gym",
+            "motion": "walking",
+            "phone": "in_pocket",
+            "light": "normal",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "gym_arrive",
+              "type": "card",
+              "payload": "{\"title\":\"到达健身房\",\"body\":\"今日训练计划已准备\"}"
+            },
+            {
+              "id": "gym_music",
+              "type": "media",
+              "payload": "{\"action\":\"play_playlist\",\"playlist\":\"workout\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S39",
+      "name": "健身房锻炼中",
+      "nameEn": "Working out at gym",
+      "category": "exercise",
+      "priority": 5,
+      "timeoutMs": 7200000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "gym",
+            "motion": "walking|running",
+            "phone": "in_pocket",
+            "light": "normal",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "gym_workout_tracking",
+              "type": "service",
+              "payload": "{\"action\":\"start_workout_tracking\",\"title\":\"锻炼进行中\"}"
+            },
+            {
+              "id": "gym_workout_dnd",
+              "type": "setting",
+              "payload": "{\"action\":\"dnd_on\",\"reason\":\"锻炼中\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S40",
+      "name": "健身房结束",
+      "nameEn": "Finished gym",
+      "category": "exercise",
+      "priority": 4,
+      "timeoutMs": 1800000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "gym",
+            "motion": "stationary",
+            "phone": "in_use",
+            "light": "normal",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "gym_finish_summary",
+              "type": "card",
+              "payload": "{\"title\":\"锻炼完成\",\"body\":\"查看本次训练数据和消耗\"}"
+            },
+            {
+              "id": "gym_finish_dnd_off",
+              "type": "setting",
+              "payload": "{\"action\":\"dnd_off\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S41",
+      "name": "户外跑步",
+      "nameEn": "Outdoor running",
+      "category": "exercise",
+      "priority": 5,
+      "timeoutMs": 7200000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "outdoor",
+            "motion": "running",
+            "phone": "in_pocket",
+            "light": "bright|normal",
+            "sound": "normal",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "outdoor_run_tracking",
+              "type": "service",
+              "payload": "{\"action\":\"start_run_tracking\",\"title\":\"户外跑步中\"}"
+            },
+            {
+              "id": "outdoor_run_music",
+              "type": "media",
+              "payload": "{\"action\":\"play_playlist\",\"playlist\":\"running\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S42",
+      "name": "户外散步",
+      "nameEn": "Outdoor walking",
+      "category": "exercise",
+      "priority": 2,
+      "timeoutMs": 7200000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "outdoor",
+            "motion": "walking",
+            "phone": "*",
+            "light": "bright|normal",
+            "sound": "normal",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "walk_tracking",
+              "type": "service",
+              "payload": "{\"action\":\"start_walk_tracking\",\"title\":\"散步中\"}"
+            },
+            {
+              "id": "walk_podcast",
+              "type": "media",
+              "payload": "{\"action\":\"play_playlist\",\"playlist\":\"podcast\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S43",
+      "name": "骑车出行",
+      "nameEn": "Cycling",
+      "category": "exercise",
+      "priority": 4,
+      "timeoutMs": 7200000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "commute|outdoor",
+            "motion": "cycling",
+            "phone": "in_pocket",
+            "light": "bright",
+            "sound": "normal|noisy",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "cycling_tracking",
+              "type": "service",
+              "payload": "{\"action\":\"start_ride_tracking\",\"title\":\"骑行中\"}"
+            },
+            {
+              "id": "cycling_music",
+              "type": "media",
+              "payload": "{\"action\":\"play_playlist\",\"playlist\":\"cycling\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S44",
+      "name": "外出就餐(午)",
+      "nameEn": "Lunch at restaurant",
+      "category": "dining",
+      "priority": 3,
+      "timeoutMs": 5400000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "lunch",
+            "location": "restaurant",
+            "motion": "stationary",
+            "phone": "on_desk",
+            "light": "normal",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "lunch_restaurant_pay",
+              "type": "service",
+              "payload": "{\"action\":\"show_payment_qr\",\"title\":\"付款码已准备\"}"
+            },
+            {
+              "id": "lunch_restaurant_silent",
+              "type": "setting",
+              "payload": "{\"action\":\"silent_mode\",\"vibrate\":true}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S45",
+      "name": "外出就餐(晚)",
+      "nameEn": "Dinner at restaurant",
+      "category": "dining",
+      "priority": 3,
+      "timeoutMs": 7200000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "evening|night",
+            "location": "restaurant",
+            "motion": "stationary",
+            "phone": "on_desk",
+            "light": "dim|normal",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "dinner_restaurant_pay",
+              "type": "service",
+              "payload": "{\"action\":\"show_payment_qr\",\"title\":\"付款码已准备\"}"
+            },
+            {
+              "id": "dinner_restaurant_silent",
+              "type": "setting",
+              "payload": "{\"action\":\"silent_mode\",\"vibrate\":true}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S46",
+      "name": "朋友聚餐",
+      "nameEn": "Dining with friends",
+      "category": "dining",
+      "priority": 4,
+      "timeoutMs": 10800000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "evening|night",
+            "location": "restaurant",
+            "motion": "stationary",
+            "phone": "on_desk",
+            "light": "dim",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "friends_dinner_silent",
+              "type": "setting",
+              "payload": "{\"action\":\"silent_mode\",\"vibrate\":true}"
+            },
+            {
+              "id": "friends_dinner_dnd",
+              "type": "setting",
+              "payload": "{\"action\":\"dnd_on\",\"reason\":\"朋友聚餐中\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S47",
+      "name": "咖啡店",
+      "nameEn": "At cafe",
+      "category": "dining",
+      "priority": 3,
+      "timeoutMs": 10800000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "cafe",
+            "motion": "stationary",
+            "phone": "in_use",
+            "light": "normal",
+            "sound": "normal",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "cafe_mode",
+              "type": "setting",
+              "payload": "{\"action\":\"focus_mode\",\"mode\":\"cafe\"}"
+            },
+            {
+              "id": "cafe_wifi",
+              "type": "notification",
+              "payload": "{\"title\":\"咖啡店\",\"body\":\"已检测到可用WiFi网络\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S48",
+      "name": "叫外卖在家/办公室",
+      "nameEn": "Ordering delivery",
+      "category": "dining",
+      "priority": 2,
+      "timeoutMs": 5400000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "lunch|evening",
+            "location": "home|work",
+            "motion": "stationary",
+            "phone": "in_use",
+            "light": "normal",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "delivery_suggest",
+              "type": "card",
+              "payload": "{\"title\":\"用餐时间\",\"body\":\"需要点外卖吗？附近好评餐厅推荐\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S49",
+      "name": "超市/大卖场购物",
+      "nameEn": "Grocery shopping",
+      "category": "shopping",
+      "priority": 3,
+      "timeoutMs": 7200000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "shopping",
+            "motion": "walking",
+            "phone": "in_use|in_pocket",
+            "light": "normal|bright",
+            "sound": "normal",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "grocery_list",
+              "type": "card",
+              "payload": "{\"title\":\"购物清单\",\"body\":\"查看您的购物清单\"}"
+            },
+            {
+              "id": "grocery_pay",
+              "type": "service",
+              "payload": "{\"action\":\"show_payment_qr\",\"title\":\"付款码\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S50",
+      "name": "商场逛街",
+      "nameEn": "Mall shopping",
+      "category": "shopping",
+      "priority": 2,
+      "timeoutMs": 14400000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "shopping",
+            "motion": "walking",
+            "phone": "in_use",
+            "light": "normal",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "mall_deals",
+              "type": "card",
+              "payload": "{\"title\":\"商场优惠\",\"body\":\"附近门店优惠信息\"}"
+            },
+            {
+              "id": "mall_pay",
+              "type": "service",
+              "payload": "{\"action\":\"show_payment_qr\",\"title\":\"付款码已准备\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S51",
+      "name": "便利店快买",
+      "nameEn": "Convenience store",
+      "category": "shopping",
+      "priority": 2,
+      "timeoutMs": 1800000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "shopping",
+            "motion": "walking",
+            "phone": "in_pocket",
+            "light": "normal",
+            "sound": "normal",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "convenience_pay",
+              "type": "service",
+              "payload": "{\"action\":\"show_payment_qr\",\"title\":\"快捷付款\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S52",
+      "name": "出发去机场",
+      "nameEn": "Heading to airport",
+      "category": "travel",
+      "priority": 8,
+      "timeoutMs": 10800000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "home",
+            "motion": "walking",
+            "phone": "in_pocket",
+            "light": "normal",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "airport_prep",
+              "type": "card",
+              "payload": "{\"title\":\"出发去机场\",\"body\":\"检查护照、机票和行李\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "*",
+            "location": "commute",
+            "motion": "driving",
+            "phone": "*",
+            "light": "normal",
+            "sound": "*",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "airport_nav",
+              "type": "service",
+              "payload": "{\"action\":\"start_navigation\",\"destination\":\"airport\"}"
+            },
+            {
+              "id": "airport_flight_info",
+              "type": "card",
+              "payload": "{\"title\":\"航班信息\",\"body\":\"查看航班动态和值机状态\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "*",
+            "location": "transit_hub",
+            "motion": "walking",
+            "phone": "in_use",
+            "light": "normal|bright",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "airport_arrive",
+              "type": "card",
+              "payload": "{\"title\":\"已到机场\",\"body\":\"查看登机口和安检信息\"}"
+            },
+            {
+              "id": "airport_boarding_pass",
+              "type": "service",
+              "payload": "{\"action\":\"show_boarding_pass\",\"title\":\"电子登机牌\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S53",
+      "name": "机场候机",
+      "nameEn": "Waiting at airport",
+      "category": "travel",
+      "priority": 5,
+      "timeoutMs": 14400000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "transit_hub",
+            "motion": "stationary",
+            "phone": "in_use",
+            "light": "normal|bright",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "airport_wait_info",
+              "type": "card",
+              "payload": "{\"title\":\"候机中\",\"body\":\"航班状态和登机口变更提醒\"}"
+            },
+            {
+              "id": "airport_wait_wifi",
+              "type": "notification",
+              "payload": "{\"title\":\"机场WiFi\",\"body\":\"已检测到机场WiFi，是否连接？\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S54",
+      "name": "即将登机",
+      "nameEn": "Boarding soon",
+      "category": "travel",
+      "priority": 9,
+      "timeoutMs": 2700000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "transit_hub",
+            "motion": "stationary|walking",
+            "phone": "in_use",
+            "light": "normal",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "digitalConditions": {
+            "flightCountdownMin": "lte 45"
+          },
+          "actions": [
+            {
+              "id": "boarding_soon_alert",
+              "type": "notification",
+              "payload": "{\"title\":\"即将登机\",\"body\":\"请前往登机口准备登机\"}"
+            },
+            {
+              "id": "boarding_soon_pass",
+              "type": "service",
+              "payload": "{\"action\":\"show_boarding_pass\",\"title\":\"电子登机牌\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S55",
+      "name": "紧急登机",
+      "nameEn": "Urgent boarding",
+      "category": "travel",
+      "priority": 10,
+      "timeoutMs": 600000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "transit_hub",
+            "motion": "walking|running",
+            "phone": "in_pocket",
+            "light": "normal",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "digitalConditions": {
+            "flightCountdownMin": "lte 10"
+          },
+          "actions": [
+            {
+              "id": "urgent_boarding_alert",
+              "type": "notification",
+              "payload": "{\"title\":\"紧急登机！\",\"body\":\"登机口即将关闭，请立即前往！\"}"
+            },
+            {
+              "id": "urgent_boarding_pass",
+              "type": "service",
+              "payload": "{\"action\":\"show_boarding_pass\",\"title\":\"电子登机牌\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S56",
+      "name": "飞行中",
+      "nameEn": "In flight",
+      "category": "travel",
+      "priority": 6,
+      "timeoutMs": 43200000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "unknown",
+            "motion": "stationary",
+            "phone": "in_use|on_desk",
+            "light": "dim",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "digitalConditions": {
+            "flightCountdownMin": "lte 0"
+          },
+          "actions": [
+            {
+              "id": "inflight_mode",
+              "type": "setting",
+              "payload": "{\"action\":\"airplane_mode\",\"enabled\":true}"
+            },
+            {
+              "id": "inflight_info",
+              "type": "card",
+              "payload": "{\"title\":\"飞行中\",\"body\":\"预计到达时间和目的地天气\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S57",
+      "name": "落地到达",
+      "nameEn": "Arrived",
+      "category": "travel",
+      "priority": 7,
+      "timeoutMs": 3600000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "transit_hub",
+            "motion": "stationary",
+            "phone": "in_use",
+            "light": "normal",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "digitalConditions": {
+            "flightArrivalMin": "lte 10"
+          },
+          "actions": [
+            {
+              "id": "arrived_airplane_off",
+              "type": "setting",
+              "payload": "{\"action\":\"airplane_mode\",\"enabled\":false}"
+            },
+            {
+              "id": "arrived_info",
+              "type": "card",
+              "payload": "{\"title\":\"已落地\",\"body\":\"欢迎到达目的地，查看行李转盘和交通信息\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S58",
+      "name": "高铁/火车出行",
+      "nameEn": "Train travel",
+      "category": "travel",
+      "priority": 6,
+      "timeoutMs": 28800000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "transit_hub",
+            "motion": "stationary",
+            "phone": "in_use",
+            "light": "normal",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "train_station_qr",
+              "type": "service",
+              "payload": "{\"action\":\"show_transit_qr\",\"title\":\"电子车票\"}"
+            },
+            {
+              "id": "train_station_info",
+              "type": "card",
+              "payload": "{\"title\":\"火车站\",\"body\":\"查看检票口和候车信息\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "*",
+            "location": "commute",
+            "motion": "transit",
+            "phone": "in_use",
+            "light": "normal",
+            "sound": "normal",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "train_ride_info",
+              "type": "card",
+              "payload": "{\"title\":\"列车行驶中\",\"body\":\"预计到达时间和途经站点\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "*",
+            "location": "transit_hub",
+            "motion": "walking",
+            "phone": "in_pocket",
+            "light": "normal",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "train_arrive",
+              "type": "card",
+              "payload": "{\"title\":\"已到站\",\"body\":\"查看出站导航和当地交通\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S59",
+      "name": "打车/网约车",
+      "nameEn": "Ride-hailing",
+      "category": "travel",
+      "priority": 5,
+      "timeoutMs": 5400000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "unknown|outdoor",
+            "motion": "stationary",
+            "phone": "in_use",
+            "light": "*",
+            "sound": "*",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "ridehail_wait",
+              "type": "card",
+              "payload": "{\"title\":\"等车中\",\"body\":\"查看司机位置和预计到达时间\"}"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "time": "*",
+            "location": "commute",
+            "motion": "driving",
+            "phone": "in_use",
+            "light": "*",
+            "sound": "normal",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "ridehail_onboard",
+              "type": "card",
+              "payload": "{\"title\":\"乘车中\",\"body\":\"预计到达时间和费用\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S60",
+      "name": "朋友来访",
+      "nameEn": "Friends visiting",
+      "category": "social",
+      "priority": 4,
+      "timeoutMs": 14400000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "home",
+            "motion": "stationary",
+            "phone": "on_desk",
+            "light": "normal",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "friends_visit_mode",
+              "type": "setting",
+              "payload": "{\"action\":\"silent_mode\",\"vibrate\":true}"
+            },
+            {
+              "id": "friends_visit_music",
+              "type": "media",
+              "payload": "{\"action\":\"play_playlist\",\"playlist\":\"gathering\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S61",
+      "name": "外出社交",
+      "nameEn": "Social outing",
+      "category": "social",
+      "priority": 4,
+      "timeoutMs": 14400000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "evening|night",
+            "location": "unknown|restaurant",
+            "motion": "stationary",
+            "phone": "on_desk",
+            "light": "dim",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "social_silent",
+              "type": "setting",
+              "payload": "{\"action\":\"silent_mode\",\"vibrate\":true}"
+            },
+            {
+              "id": "social_dnd",
+              "type": "setting",
+              "payload": "{\"action\":\"dnd_on\",\"reason\":\"社交活动中\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S62",
+      "name": "参加活动/讲座",
+      "nameEn": "Attending event",
+      "category": "social",
+      "priority": 6,
+      "timeoutMs": 10800000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "unknown",
+            "motion": "stationary",
+            "phone": "in_pocket|face_down",
+            "light": "normal",
+            "sound": "noisy",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "event_silent",
+              "type": "setting",
+              "payload": "{\"action\":\"silent_mode\",\"vibrate\":false}"
+            },
+            {
+              "id": "event_dnd",
+              "type": "setting",
+              "payload": "{\"action\":\"dnd_on\",\"reason\":\"参加活动中\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S63",
+      "name": "久坐提醒",
+      "nameEn": "Sedentary alert",
+      "category": "health",
+      "priority": 5,
+      "timeoutMs": 3600000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "forenoon|afternoon",
+            "location": "work|home",
+            "motion": "stationary",
+            "phone": "on_desk",
+            "light": "normal",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "digitalConditions": {
+            "activityDuration": "gte 2400"
+          },
+          "actions": [
+            {
+              "id": "sedentary_alert",
+              "type": "notification",
+              "payload": "{\"title\":\"久坐提醒\",\"body\":\"您已经坐了40分钟了，起来活动一下吧\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S64",
+      "name": "喝水提醒",
+      "nameEn": "Water reminder",
+      "category": "health",
+      "priority": 3,
+      "timeoutMs": 7200000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "work|home",
+            "motion": "stationary",
+            "phone": "*",
+            "light": "*",
+            "sound": "*",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "water_reminder",
+              "type": "notification",
+              "payload": "{\"title\":\"喝水提醒\",\"body\":\"该喝水了，保持充足的水分摄入\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S65",
+      "name": "护眼提醒",
+      "nameEn": "Eye care alert",
+      "category": "health",
+      "priority": 5,
+      "timeoutMs": 3600000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "work|home",
+            "motion": "stationary",
+            "phone": "in_use",
+            "light": "normal",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "digitalConditions": {
+            "screenTime": "gte 3600"
+          },
+          "actions": [
+            {
+              "id": "eye_care_alert",
+              "type": "notification",
+              "payload": "{\"title\":\"护眼提醒\",\"body\":\"您已持续看屏幕1小时，请休息20秒看看远处\"}"
+            },
+            {
+              "id": "eye_care_comfort",
+              "type": "setting",
+              "payload": "{\"action\":\"eye_comfort\",\"bluelight\":true,\"duration\":60}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S66",
+      "name": "站立/活动提醒",
+      "nameEn": "Stand up alert",
+      "category": "health",
+      "priority": 4,
+      "timeoutMs": 3600000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "afternoon",
+            "location": "work",
+            "motion": "stationary",
+            "phone": "on_desk",
+            "light": "normal",
+            "sound": "quiet",
+            "dayType": "*"
+          },
+          "digitalConditions": {
+            "activityDuration": "gte 1800"
+          },
+          "actions": [
+            {
+              "id": "standup_alert",
+              "type": "notification",
+              "payload": "{\"title\":\"站立提醒\",\"body\":\"下午容易犯困，站起来伸展一下吧\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S67",
+      "name": "深夜早睡提醒",
+      "nameEn": "Late night sleep alert",
+      "category": "health",
+      "priority": 6,
+      "timeoutMs": 3600000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "late_night",
+            "location": "*",
+            "motion": "stationary",
+            "phone": "in_use",
+            "light": "*",
+            "sound": "*",
+            "dayType": "*"
+          },
+          "actions": [
+            {
+              "id": "late_sleep_alert",
+              "type": "notification",
+              "payload": "{\"title\":\"早睡提醒\",\"body\":\"已经很晚了，建议尽快休息，充足的睡眠很重要\"}"
+            },
+            {
+              "id": "late_sleep_comfort",
+              "type": "setting",
+              "payload": "{\"action\":\"eye_comfort\",\"bluelight\":true,\"brightness\":\"low\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S68",
+      "name": "低电量提醒",
+      "nameEn": "Low battery",
+      "category": "device",
+      "priority": 7,
+      "timeoutMs": 600000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "*",
+            "motion": "*",
+            "phone": "*",
+            "light": "*",
+            "sound": "*",
+            "dayType": "*"
+          },
+          "digitalConditions": {
+            "batteryLevel": "lte 30",
+            "isCharging": "eq false"
+          },
+          "actions": [
+            {
+              "id": "low_battery_alert",
+              "type": "notification",
+              "payload": "{\"title\":\"低电量提醒\",\"body\":\"电量不足30%，建议开启省电模式\"}"
+            },
+            {
+              "id": "low_battery_save",
+              "type": "setting",
+              "payload": "{\"action\":\"battery_save\",\"enabled\":true}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S69",
+      "name": "极低电量警告",
+      "nameEn": "Critical battery",
+      "category": "device",
+      "priority": 10,
+      "timeoutMs": 300000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "*",
+            "motion": "*",
+            "phone": "*",
+            "light": "*",
+            "sound": "*",
+            "dayType": "*"
+          },
+          "digitalConditions": {
+            "batteryLevel": "lte 5",
+            "isCharging": "eq false"
+          },
+          "actions": [
+            {
+              "id": "critical_battery_alert",
+              "type": "notification",
+              "payload": "{\"title\":\"电量严重不足！\",\"body\":\"电量低于5%，设备即将关机，请立即充电\"}"
+            },
+            {
+              "id": "critical_battery_ultra_save",
+              "type": "setting",
+              "payload": "{\"action\":\"ultra_battery_save\",\"enabled\":true}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S70",
+      "name": "充电完成",
+      "nameEn": "Charging complete",
+      "category": "device",
+      "priority": 3,
+      "timeoutMs": 600000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "*",
+            "motion": "*",
+            "phone": "charging",
+            "light": "*",
+            "sound": "*",
+            "dayType": "*"
+          },
+          "digitalConditions": {
+            "batteryLevel": "gte 100"
+          },
+          "actions": [
+            {
+              "id": "charge_complete_alert",
+              "type": "notification",
+              "payload": "{\"title\":\"充电完成\",\"body\":\"电量已充满，建议拔掉充电器\"}"
+            },
+            {
+              "id": "charge_complete_save_off",
+              "type": "setting",
+              "payload": "{\"action\":\"battery_save\",\"enabled\":false}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S71",
+      "name": "车载蓝牙连接",
+      "nameEn": "Car Bluetooth",
+      "category": "device",
+      "priority": 6,
+      "timeoutMs": 300000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "*",
+            "motion": "*",
+            "phone": "*",
+            "light": "*",
+            "sound": "*",
+            "dayType": "*"
+          },
+          "digitalConditions": {
+            "bt_in_vehicle": "eq true"
+          },
+          "actions": [
+            {
+              "id": "car_bt_mode",
+              "type": "setting",
+              "payload": "{\"action\":\"car_mode\",\"audioRoute\":\"bluetooth\",\"autoAnswer\":true}"
+            },
+            {
+              "id": "car_bt_nav",
+              "type": "card",
+              "payload": "{\"title\":\"车载模式\",\"body\":\"已连接车载蓝牙，需要导航吗？\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S72",
+      "name": "会议即将开始",
+      "nameEn": "Meeting soon",
+      "category": "device",
+      "priority": 8,
+      "timeoutMs": 900000,
+      "enabled": true,
+      "steps": [
+        {
+          "condition": {
+            "time": "*",
+            "location": "*",
+            "motion": "*",
+            "phone": "*",
+            "light": "*",
+            "sound": "*",
+            "dayType": "*"
+          },
+          "digitalConditions": {
+            "cal_hasUpcoming": "eq true",
+            "cal_nextMinutes": "lte 15"
+          },
+          "actions": [
+            {
+              "id": "meeting_soon_alert",
+              "type": "notification",
+              "payload": "{\"title\":\"会议提醒\",\"body\":\"会议即将在15分钟内开始，请做好准备\"}"
+            },
+            {
+              "id": "meeting_soon_prep",
+              "type": "card",
+              "payload": "{\"title\":\"会议准备\",\"body\":\"查看会议议程和参会人员\"}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

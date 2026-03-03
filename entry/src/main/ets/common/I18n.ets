@@ -644,6 +644,19 @@ function buildZh(): Map<string, string> {
   m.set('ctx.status.pickup', '拿起手机');
   m.set('ctx.status.putdown', '放下手机');
   m.set('ctx.status.unknown', '未知');
+  // 每日行程时间线
+  m.set('ctx.timeline.title', '今日行程');
+  m.set('ctx.timeline.count', '段');
+  m.set('ctx.timeline.empty', '暂无行程记录');
+  m.set('ctx.timeline.transit', '途中');
+  m.set('ctx.motion.stationary', '静止');
+  m.set('ctx.motion.walking', '步行');
+  m.set('ctx.motion.running', '跑步');
+  m.set('ctx.motion.driving', '驾车');
+  m.set('ctx.motion.transit', '公共交通');
+  m.set('ctx.timeline.listMode', '列表');
+  m.set('ctx.timeline.mapMode', '地图');
+  m.set('ctx.timeline.ongoing', '进行中');
 
   // SettingsPage - Context Awareness section
   m.set('settings.contextAwareness', '情景智能');
@@ -838,6 +851,97 @@ function buildZh(): Map<string, string> {
   m.set('travel.train.type.K', '(快速)');
   m.set('travel.train.type.L', '(临时)');
   m.set('travel.train.type.Y', '(旅游)');
+
+  // 传感器录制/回放
+  m.set('ctx.recording.title', '传感器录制');
+  m.set('ctx.recording.start', '开始录制');
+  m.set('ctx.recording.stop', '停止录制');
+  m.set('ctx.recording.recording', '录制中...');
+  m.set('ctx.recording.label', '录制标签');
+  m.set('ctx.recording.labelPlaceholder', '如：早通勤、午休...');
+  m.set('ctx.recording.list', '录制列表');
+  m.set('ctx.recording.empty', '暂无录制');
+  m.set('ctx.recording.replay', '回放');
+  m.set('ctx.recording.delete', '删除');
+  m.set('ctx.recording.deleteConfirm', '确定删除此录制？');
+  m.set('ctx.recording.duration', '时长');
+  m.set('ctx.recording.events', '事件');
+  m.set('ctx.recording.speed', '倍速');
+  m.set('ctx.recording.progress', '进度');
+  m.set('ctx.recording.playing', '回放中');
+  m.set('ctx.recording.paused', '已暂停');
+  m.set('ctx.recording.finished', '回放完成');
+  m.set('ctx.recording.pause', '暂停');
+  m.set('ctx.recording.resume', '继续');
+  m.set('ctx.recording.stopReplay', '停止回放');
+  m.set('ctx.recording.replayAgain', '再次回放');
+  m.set('ctx.recording.close', '关闭');
+
+  // 7-Tuple 物理状态标签
+  m.set('ps.title', '物理状态');
+  m.set('ps.time', '时间');
+  m.set('ps.location', '位置');
+  m.set('ps.motion', '运动');
+  m.set('ps.phone', '手机');
+  m.set('ps.light', '光线');
+  m.set('ps.sound', '声音');
+  m.set('ps.dayType', '日期');
+  // TimeSlot
+  m.set('ps.time.sleeping', '深夜');
+  m.set('ps.time.dawn', '清晨');
+  m.set('ps.time.morning', '早上');
+  m.set('ps.time.forenoon', '上午');
+  m.set('ps.time.lunch', '午餐');
+  m.set('ps.time.afternoon', '下午');
+  m.set('ps.time.evening', '傍晚');
+  m.set('ps.time.night', '夜晚');
+  m.set('ps.time.late_night', '深夜前');
+  // LocationCategory
+  m.set('ps.location.home', '家');
+  m.set('ps.location.work', '公司');
+  m.set('ps.location.commute', '通勤');
+  m.set('ps.location.restaurant', '餐厅');
+  m.set('ps.location.gym', '健身房');
+  m.set('ps.location.transit_hub', '交通枢纽');
+  m.set('ps.location.shopping', '商场');
+  m.set('ps.location.outdoor', '户外');
+  m.set('ps.location.cafe', '咖啡馆');
+  m.set('ps.location.unknown', '未知');
+  // MotionCategory
+  m.set('ps.motion.stationary', '静止');
+  m.set('ps.motion.walking', '步行');
+  m.set('ps.motion.running', '跑步');
+  m.set('ps.motion.cycling', '骑车');
+  m.set('ps.motion.driving', '驾车');
+  m.set('ps.motion.transit', '公共交通');
+  m.set('ps.motion.unknown', '未知');
+  // PhoneCategory
+  m.set('ps.phone.in_use', '使用中');
+  m.set('ps.phone.on_desk', '放桌上');
+  m.set('ps.phone.in_pocket', '在口袋');
+  m.set('ps.phone.face_down', '屏幕朝下');
+  m.set('ps.phone.charging', '充电中');
+  m.set('ps.phone.unknown', '未知');
+  // LightCategory
+  m.set('ps.light.dark', '黑暗');
+  m.set('ps.light.dim', '昏暗');
+  m.set('ps.light.normal', '正常');
+  m.set('ps.light.bright', '明亮');
+  // SoundCategory
+  m.set('ps.sound.silent', '安静');
+  m.set('ps.sound.quiet', '较安静');
+  m.set('ps.sound.normal', '正常');
+  m.set('ps.sound.noisy', '嘈杂');
+  m.set('ps.sound.unknown', '未知');
+  // DayType
+  m.set('ps.dayType.workday', '工作日');
+  m.set('ps.dayType.weekend', '周末');
+  m.set('ps.dayType.holiday', '假日');
+  // Scenario
+  m.set('ps.scenario', '场景');
+  m.set('ps.scenario.active', '活跃场景');
+  m.set('ps.scenario.none', '无匹配');
+  m.set('ps.scenario.step', '步骤');
 
   return m;
 }
@@ -1478,6 +1582,19 @@ function buildEn(): Map<string, string> {
   m.set('ctx.status.pickup', 'Picked up');
   m.set('ctx.status.putdown', 'Put down');
   m.set('ctx.status.unknown', 'Unknown');
+  // Daily Timeline
+  m.set('ctx.timeline.title', 'Daily Timeline');
+  m.set('ctx.timeline.count', ' segments');
+  m.set('ctx.timeline.empty', 'No timeline entries yet');
+  m.set('ctx.timeline.transit', 'In Transit');
+  m.set('ctx.motion.stationary', 'Stationary');
+  m.set('ctx.motion.walking', 'Walking');
+  m.set('ctx.motion.running', 'Running');
+  m.set('ctx.motion.driving', 'Driving');
+  m.set('ctx.motion.transit', 'Transit');
+  m.set('ctx.timeline.listMode', 'List');
+  m.set('ctx.timeline.mapMode', 'Map');
+  m.set('ctx.timeline.ongoing', 'Ongoing');
 
   // SettingsPage - Context Awareness section
   m.set('settings.contextAwareness', 'Context Intelligence');
@@ -1672,6 +1789,89 @@ function buildEn(): Map<string, string> {
   m.set('travel.train.type.K', '(Fast)');
   m.set('travel.train.type.L', '(Temporary)');
   m.set('travel.train.type.Y', '(Tourist)');
+
+  // Sensor recording/replay
+  m.set('ctx.recording.title', 'Sensor Recording');
+  m.set('ctx.recording.start', 'Start Recording');
+  m.set('ctx.recording.stop', 'Stop Recording');
+  m.set('ctx.recording.recording', 'Recording...');
+  m.set('ctx.recording.label', 'Label');
+  m.set('ctx.recording.labelPlaceholder', 'e.g. Morning commute...');
+  m.set('ctx.recording.list', 'Recordings');
+  m.set('ctx.recording.empty', 'No recordings');
+  m.set('ctx.recording.replay', 'Replay');
+  m.set('ctx.recording.delete', 'Delete');
+  m.set('ctx.recording.deleteConfirm', 'Delete this recording?');
+  m.set('ctx.recording.duration', 'Duration');
+  m.set('ctx.recording.events', 'Events');
+  m.set('ctx.recording.speed', 'Speed');
+  m.set('ctx.recording.progress', 'Progress');
+  m.set('ctx.recording.playing', 'Playing');
+  m.set('ctx.recording.paused', 'Paused');
+  m.set('ctx.recording.finished', 'Finished');
+  m.set('ctx.recording.pause', 'Pause');
+  m.set('ctx.recording.resume', 'Resume');
+  m.set('ctx.recording.stopReplay', 'Stop Replay');
+  m.set('ctx.recording.replayAgain', 'Replay Again');
+  m.set('ctx.recording.close', 'Close');
+
+  // 7-Tuple Physical State labels
+  m.set('ps.title', 'Physical State');
+  m.set('ps.time', 'Time');
+  m.set('ps.location', 'Location');
+  m.set('ps.motion', 'Motion');
+  m.set('ps.phone', 'Phone');
+  m.set('ps.light', 'Light');
+  m.set('ps.sound', 'Sound');
+  m.set('ps.dayType', 'Day');
+  m.set('ps.time.sleeping', 'Sleeping');
+  m.set('ps.time.dawn', 'Dawn');
+  m.set('ps.time.morning', 'Morning');
+  m.set('ps.time.forenoon', 'Forenoon');
+  m.set('ps.time.lunch', 'Lunch');
+  m.set('ps.time.afternoon', 'Afternoon');
+  m.set('ps.time.evening', 'Evening');
+  m.set('ps.time.night', 'Night');
+  m.set('ps.time.late_night', 'Late Night');
+  m.set('ps.location.home', 'Home');
+  m.set('ps.location.work', 'Work');
+  m.set('ps.location.commute', 'Commute');
+  m.set('ps.location.restaurant', 'Restaurant');
+  m.set('ps.location.gym', 'Gym');
+  m.set('ps.location.transit_hub', 'Transit Hub');
+  m.set('ps.location.shopping', 'Shopping');
+  m.set('ps.location.outdoor', 'Outdoor');
+  m.set('ps.location.cafe', 'Cafe');
+  m.set('ps.location.unknown', 'Unknown');
+  m.set('ps.motion.stationary', 'Stationary');
+  m.set('ps.motion.walking', 'Walking');
+  m.set('ps.motion.running', 'Running');
+  m.set('ps.motion.cycling', 'Cycling');
+  m.set('ps.motion.driving', 'Driving');
+  m.set('ps.motion.transit', 'Transit');
+  m.set('ps.motion.unknown', 'Unknown');
+  m.set('ps.phone.in_use', 'In Use');
+  m.set('ps.phone.on_desk', 'On Desk');
+  m.set('ps.phone.in_pocket', 'In Pocket');
+  m.set('ps.phone.face_down', 'Face Down');
+  m.set('ps.phone.charging', 'Charging');
+  m.set('ps.phone.unknown', 'Unknown');
+  m.set('ps.light.dark', 'Dark');
+  m.set('ps.light.dim', 'Dim');
+  m.set('ps.light.normal', 'Normal');
+  m.set('ps.light.bright', 'Bright');
+  m.set('ps.sound.silent', 'Silent');
+  m.set('ps.sound.quiet', 'Quiet');
+  m.set('ps.sound.normal', 'Normal');
+  m.set('ps.sound.noisy', 'Noisy');
+  m.set('ps.sound.unknown', 'Unknown');
+  m.set('ps.dayType.workday', 'Workday');
+  m.set('ps.dayType.weekend', 'Weekend');
+  m.set('ps.dayType.holiday', 'Holiday');
+  m.set('ps.scenario', 'Scenario');
+  m.set('ps.scenario.active', 'Active Scenarios');
+  m.set('ps.scenario.none', 'No Match');
+  m.set('ps.scenario.step', 'Step');
 
   return m;
 }

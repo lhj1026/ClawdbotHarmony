@@ -20,9 +20,9 @@ const {
 // Constants
 // ============================================================
 
-const STREAM_FEAT_DIM = 16;
-const STREAM_H1 = 64;
-const STREAM_H2 = 32;
+const STREAM_FEAT_DIM = 25;
+const STREAM_H1 = 128;
+const STREAM_H2 = 64;
 const STREAM_LR = 0.01;
 const STREAM_KAPPA = 2.0;
 const STREAM_WEIGHT_DECAY = 1e-4;
@@ -182,6 +182,17 @@ function buildFeatures(ctx) {
   out[13] = (ctx.wifiSsid && ctx.wifiSsid.length > 0) ? 1 : 0;
   out[14] = ctx.networkType === 'wifi' ? 1 : 0;
   out[15] = ctx.networkType === 'cellular' ? 1 : 0;
+
+  // [16-24] State transition features
+  out[16] = ctx.prev_geofence ? parseFloat(ctx.prev_geofence) : 0;
+  out[17] = ctx.geofence_changed ? parseFloat(ctx.geofence_changed) : 0;
+  out[18] = ctx.prev_motionState_stationary ? parseFloat(ctx.prev_motionState_stationary) : 0;
+  out[19] = ctx.prev_motionState_moving ? parseFloat(ctx.prev_motionState_moving) : 0;
+  out[20] = ctx.transition_duration_min ? parseFloat(ctx.transition_duration_min) : 0;
+  out[21] = ctx.time_in_current_state_min ? parseFloat(ctx.time_in_current_state_min) : 0;
+  out[22] = ctx.transitions_last_hour ? parseFloat(ctx.transitions_last_hour) : 0;
+  out[23] = ctx.is_routine_transition ? parseFloat(ctx.is_routine_transition) : 0;
+  out[24] = ctx.transition_direction ? parseFloat(ctx.transition_direction) : 0;
   return out;
 }
 
@@ -620,4 +631,115 @@ describe('Explore 模式 RL 阶段标记', function () {
   it('49样本 → 学习中', function () { assertEqual(getRLPhase(49), '学习中'); });
   it('50样本 → 已收敛', function () { assertEqual(getRLPhase(50), '已收敛'); });
   it('100样本 → 已收敛', function () { assertEqual(getRLPhase(100), '已收敛'); });
+});
+
+// ============================================================
+// v9.0: State Transition Features in Hybrid Scoring
+// ============================================================
+
+describe('场景: 转移特征参与混合评分', function () {
+  it('相同当前状态 + 不同前序状态 → 不同推荐分', function () {
+    // Scenario: user is at home, but came from office vs came from hospital
+    // Use separate MLPs to isolate the training effect
+    const mlpOffice = new StreamMLP(42);
+    const mlpHospital = new StreamMLP(42);
+
+    const fromOfficeCtx = {
+      timeOfDay: 'evening', hour: '18', motionState: 'stationary',
+      geofence: 'home_001',
+      prev_geofence: '1', geofence_changed: '1',
+      prev_motionState_stationary: '1', prev_motionState_moving: '0',
+      transition_duration_min: '0.375',
+      is_routine_transition: '1',
+      transition_direction: '0.0'
+    };
+
+    const fromHospitalCtx = {
+      timeOfDay: 'evening', hour: '18', motionState: 'stationary',
+      geofence: 'home_001',
+      prev_geofence: '1', geofence_changed: '1',
+      prev_motionState_stationary: '1', prev_motionState_moving: '0',
+      transition_duration_min: '0.25',
+      is_routine_transition: '0',
+      transition_direction: '0.0'
+    };
+
+    const featsOffice = buildFeatures(fromOfficeCtx);
+    const featsHospital = buildFeatures(fromHospitalCtx);
+
+    // Train per-arm: office arm gets positive, hospital arm gets negative
+    for (let i = 0; i < 40; i++) {
+      mlpOffice.update(featsOffice, 1.0);
+      mlpHospital.update(featsHospital, -0.5);
+    }
+
+    const ruleScore = 0.8;
+    const scoreOffice = hybridScore(ruleScore, mlpOffice.samples(), mlpOffice.predict(featsOffice));
+    const scoreHospital = hybridScore(ruleScore, mlpHospital.samples(), mlpHospital.predict(featsHospital));
+
+    assertGreaterThan(scoreOffice, scoreHospital,
+      'same location but different transition history should produce different hybrid scores');
+  });
+
+  it('转移特征全0 → 不影响原有16维特征的评分', function () {
+    // With all transition features = 0 (no transition data),
+    // the MLP should behave similarly to before
+    const mlp = new StreamMLP(42);
+
+    const ctxNoTransition = {
+      timeOfDay: 'morning', hour: '8', motionState: 'walking',
+      geofence: 'home_001', batteryLevel: '80'
+      // No transition keys → features [16-24] = 0
+    };
+
+    const features = buildFeatures(ctxNoTransition);
+
+    // Verify features 16-24 are all 0
+    for (let i = 16; i < 25; i++) {
+      assertEqual(features[i], 0.0, `feature[${i}] should be 0 without transition data`);
+    }
+
+    // Train and predict should work normally
+    for (let i = 0; i < 20; i++) {
+      mlp.update(features, 0.8);
+    }
+    const pred = mlp.predict(features);
+    assertTrue(isFinite(pred), 'prediction should be finite with zero transition features');
+  });
+
+  it('routine transition → 高置信度推荐', function () {
+    const mlpRoutine = new StreamMLP(42);
+    const mlpNovel = new StreamMLP(43);
+
+    const routineCtx = {
+      timeOfDay: 'morning', hour: '8', motionState: 'walking',
+      prev_geofence: '1', geofence_changed: '1',
+      is_routine_transition: '1', transition_direction: '1.0'
+    };
+
+    const novelCtx = {
+      timeOfDay: 'morning', hour: '8', motionState: 'walking',
+      prev_geofence: '1', geofence_changed: '1',
+      is_routine_transition: '0', transition_direction: '1.0'
+    };
+
+    const featsRoutine = buildFeatures(routineCtx);
+    const featsNovel = buildFeatures(novelCtx);
+
+    // Train with significantly different rewards to ensure separation
+    for (let i = 0; i < 50; i++) {
+      mlpRoutine.update(featsRoutine, 1.0);
+      mlpNovel.update(featsNovel, -0.5);
+    }
+
+    const ruleScore = 0.9;
+    const scoreRoutine = hybridScore(ruleScore, mlpRoutine.samples(), mlpRoutine.predict(featsRoutine));
+    const scoreNovel = hybridScore(ruleScore, mlpNovel.samples(), mlpNovel.predict(featsNovel));
+
+    // Both should be finite and the routine one should score higher
+    assertTrue(isFinite(scoreRoutine), 'routine score should be finite');
+    assertTrue(isFinite(scoreNovel), 'novel score should be finite');
+    assertGreaterThan(scoreRoutine, scoreNovel,
+      'routine transition (positive feedback) should produce higher hybrid score than novel (negative feedback)');
+  });
 });

@@ -13,6 +13,7 @@
     "pages/DocViewerPage",
     "pages/ContextSettingsPage",
     "pages/RuleManagementPage",
-    "pages/NetworkDiagRoutePage"
+    "pages/NetworkDiagRoutePage",
+    "pages/DailyTimelinePage"
   ]
 }
