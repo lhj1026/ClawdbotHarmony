@@ -72,7 +72,7 @@ import { sensor } from '@kit.SensorServiceKit';
 import { AccessibilityService, ScreenNode, WindowInfo } from '../accessibility/AccessibilityService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.65.8';
+const APP_VERSION = '2.66.0';
 
 interface PendingStateRec {
   ruleId: string;
@@ -361,6 +361,8 @@ export class NodeRuntime {
       if (this.connectionState === ConnectionState.Connected && this._context) {
         this.startBackgroundTask(this._context);
       }
+      // 持久化 LinUCB 参数（退后台时保存）
+      RecommenderBridge.getInstance().flush();
     }
   }
 
@@ -614,13 +616,16 @@ export class NodeRuntime {
           // 去掉 "travel: " 等路由前缀，只保留用户可读部分
           let desc = rawDesc.indexOf(': ') >= 0 ? rawDesc.substring(rawDesc.indexOf(': ') + 2) : rawDesc;
           let altFunc = engine.getRuleFunction(alt.ruleId);
+          // 推导 ActionCatalog 代号（用于 LinUCB 反馈）
+          let inferredCode = NodeRuntime.descToActionCode(desc, altFunc ?? '');
           alternatives.push({
             ruleId: alt.ruleId,
             ruleName: altName,
             confidence: Math.round(alt.confidence * 100),
             actionDesc: desc,
             actionType: alt.action.type ?? 'suggestion',
-            actionFunction: altFunc
+            actionFunction: altFunc,
+            actionCode: inferredCode
           });
           // 也缓存备选推荐（从引擎结果构造）
           // C++ engine type → ActionType 映射
@@ -2823,6 +2828,9 @@ export class NodeRuntime {
     this.emailCapability.setContext(context);
     this.calendarCapability.setContext(context);
 
+    // 初始化 ActionRecommender（MLP + LinUCB），加载持久化 UCB 参数
+    RecommenderBridge.getInstance().init(context.filesDir);
+
     // Wire push token refresh so re-connect and token rotations re-report to gateway
     this.pushCapability.onTokenChanged = (_token: string) => {
       this.reportPushToken();
@@ -4164,6 +4172,68 @@ export class NodeRuntime {
    * 构建推荐选择卡片：显示 top N 推荐，用户点击选择执行
    */
   /**
+   * 从动作描述/函数名推导 ActionCatalog 代号（供 LinUCB 反馈使用）
+   * 尽力匹配，未匹配返回空串（不影响执行逻辑，只影响 LinUCB 学习）
+   */
+  static descToActionCode(desc: string, funcName: string): string {
+    const MAP: Record<string, string> = {
+      // A - 亮码
+      '亮地铁码':'A1','地铁乘车码':'A1','亮公交码':'A2','公交乘车码':'A2',
+      '亮支付码':'A3','付款码':'A3','亮门票':'A4','园区门票':'A4',
+      // B - 日程
+      '今日日程':'B1','查看今日日程':'B1','今日行程':'B1',
+      '明日日程':'B2','查看明日日程':'B2',
+      '下午日程':'B3','查看下午日程':'B3',
+      '设置闹钟':'B4','明日闹钟':'B4','设置明日闹钟':'B4',
+      '出行提醒':'B5','设置出行提醒':'B5',
+      '散场提醒':'B6','设置散场提醒':'B6',
+      '检查行程':'B7','检查行程/车票':'B7','行程/车票':'B7',
+      '检票时间':'B8','提醒检票':'B8','登机提醒':'B8',
+      '下班提醒':'B9',
+      // C - 天气
+      '查看天气':'C1','天气':'C1','穿衣建议':'C1','天气提醒':'C1',
+      // D - 媒体
+      '播放音乐':'D1','听音乐':'D1','音乐':'D1',
+      '白噪音':'D2','播放白噪音':'D2',
+      '播客':'D3','播放播客':'D3','听播客':'D3',
+      '新闻':'D4','查看新闻':'D4','新闻摘要':'D4',
+      // E - 导航
+      '导航回家':'E1','回家路线':'E1','回家导航':'E1',
+      '导航到公司':'E2','去公司':'E2',
+      '导航到餐厅':'E3','附近餐厅':'E3',
+      '导航到店铺':'E4','购物导航':'E4',
+      '导航到候车厅':'E5','导航到登机口':'E5','导航到影厅':'E5','到枢纽':'E5',
+      '导航景点':'E6','景点导航':'E6',
+      '导航':'E7','通用导航':'E7',
+      '停车位':'E8','记录停车':'E8',
+      // F - 交通
+      '到站时间':'F1','查看到站':'F1','公交到站':'F1',
+      '下车站提醒':'F2','防过站':'F2','提醒下车':'F2',
+      '船班':'F3','轮渡时刻':'F3',
+      '场次座位':'F4','查看场次':'F4',
+      // G - 健康
+      '久坐提醒':'G1','久坐':'G1','起身活动':'G1',
+      '补水提醒':'G2','喝水':'G2','补水':'G2',
+      '拉伸提醒':'G3','拉伸':'G3',
+      '查看步数':'G4','步数':'G4',
+      '休息提醒':'G5','休息':'G5','睡眠提醒':'G5',
+      // H - 餐饮
+      '点餐':'H1','点餐建议':'H1','附近美食':'H1',
+      // I - 社交
+      '联系人':'I1','联系人提醒':'I1',
+      // J - 系统
+      '关闭通知':'J1','勿扰':'J1','通知':'J1',
+      '静音确认':'J2','确认静音':'J2',
+      '注意财物':'J3','防盗':'J3','安全提醒':'J3',
+    };
+    // 先按 desc 精确匹配
+    for (const key of Object.keys(MAP)) {
+      if (desc.includes(key) || funcName.includes(key)) return MAP[key];
+    }
+    return '';
+  }
+
+  /**
    * 构建合并卡片：状态信息 + 推荐选项，一张卡片完成
    */
   private buildCombinedStateRecA2UI(stateInfo: string, alternatives: PendingAlternative[], transitionJson?: string): string {
@@ -4210,8 +4280,9 @@ export class NodeRuntime {
       let displayText = safeActionDesc.length > 0 ? safeActionDesc : safeRuleName;
       let emoji = i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉';
       let variant = i === 0 ? '"variant":"primary",' : '';
+      let safeActionCode = (alt.actionCode ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
       children.push(
-        `{"type":"button","text":"${emoji} ${displayText} (${alt.confidence}%)",${variant}"action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"rec_select"}}}}`
+        `{"type":"button","text":"${emoji} ${displayText} (${alt.confidence}%)",${variant}"action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"accept","actionCode":"${safeActionCode}"}}}}`
       );
     }
 
@@ -4263,8 +4334,9 @@ export class NodeRuntime {
       let displayText = safeActionDesc.length > 0 ? safeActionDesc : safeRuleName;
       let emoji = i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉';
       let variant = i === 0 ? '"variant":"primary",' : '';
+      let safeActionCode = (alt.actionCode ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
       children.push(
-        `{"type":"button","text":"${emoji} ${displayText} (${alt.confidence}%)",${variant}"action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"rec_select"}}}}`
+        `{"type":"button","text":"${emoji} ${displayText} (${alt.confidence}%)",${variant}"action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"accept","actionCode":"${safeActionCode}"}}}}`
       );
     }
 
