@@ -1267,16 +1267,25 @@ export class ContextAwarenessService {
   private updatePosture(): void {
     let wasLyingDown = this.isLyingDown;
 
-    // tiltAngle = atan2(z, √(x²+y²))，含义：
-    //  +90°: 手机完全平放，屏幕朝上（桌上）
-    //   0°: 手机竖直（正常手持）
-    // -15°~-80°: 屏幕斜朝下——躺着看手机的典型角度
-    //  -90°: 手机完全面朝下平放（扣着）
-    //
-    // 躺卧识别：tiltAngle 在 [-80°, -15°] 区间
-    // 这覆盖了用户躺卧时手机向自己脸部倾斜的全部场景
+    let x = this.accelerometerData.x;
+    let y = this.accelerometerData.y;
+    let z = this.accelerometerData.z;
     let tilt = this.lastTiltAngle;
-    if (tilt >= -80 && tilt <= -15) {
+
+    // 三种躺卧场景：
+    //
+    // 1. 仰卧（屏幕朝向脸部）：tiltAngle ∈ [-80°, -15°]
+    //    修复原先 -18°~-60° 的盲区
+    let isBackLying = (tilt >= -80 && tilt <= -15);
+
+    // 2. 侧卧（手机水平，重力主要走 X 轴）：
+    //    站立手持时 |y| 大（重力沿手机长轴），侧卧时 |x| 大（重力横向穿过手机）
+    //    同时 |z| < 4（手机接近水平）
+    let isSideLying = (Math.abs(z) < 4) && (Math.abs(x) > Math.abs(y) * 1.2);
+
+    // 3. 俯卧/面朝下平放（已由 PhysicalStateBuilder 处理为 face_down）
+
+    if (isBackLying || isSideLying) {
       this.isLyingDown = true;
     } else {
       this.isLyingDown = false;

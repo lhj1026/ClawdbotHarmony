@@ -71,7 +71,7 @@ import { sensor } from '@kit.SensorServiceKit';
 import { AccessibilityService, ScreenNode, WindowInfo } from '../accessibility/AccessibilityService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.65.4';
+const APP_VERSION = '2.65.5';
 
 interface PendingStateRec {
   ruleId: string;
@@ -475,20 +475,23 @@ export class NodeRuntime {
     }
 
     // tiltAngle = atan2(z, √(x²+y²))
-    // 含义：负值=屏幕朝下（躺卧看手机），正值=屏幕朝上，0=竖直手持
     let tiltAngle = Math.atan2(z, Math.sqrt(x * x + y * y)) * 180 / Math.PI;
 
-    // 判断静止度（计算最近5次magnitude的方差）
+    // 判断静止度
     let isStationary = this.isDeviceStationary();
 
-    // 躺卧判断：tiltAngle 在 [-80°, -15°] + 静止
-    // 覆盖用户躺卧时手机朝向脸部的完整倾斜范围（用户实测 -15°~-60°）
+    // 三种躺卧场景（需要静止）：
+    // 1. 仰卧：tiltAngle ∈ [-80°, -15°]（屏幕斜朝向脸部）
+    let isBackLying = (tiltAngle >= -80 && tiltAngle <= -15) && isStationary;
+    // 2. 侧卧：|z| < 4 且 |x| > |y| × 1.2（重力主要走 X 轴，而非 Y 轴）
+    let isSideLying = (Math.abs(z) < 4) && (Math.abs(x) > Math.abs(y) * 1.2) && isStationary;
+
     let wasLyingDown = this._isLyingDown;
-    this._isLyingDown = (tiltAngle >= -80 && tiltAngle <= -15) && isStationary;
+    this._isLyingDown = isBackLying || isSideLying;
 
     // 状态变化时记录日志
     if (wasLyingDown !== this._isLyingDown) {
-      this.log.info(TAG, `姿势状态变化: ${this._isLyingDown ? '躺下' : '坐/站'} (tiltAngle=${tiltAngle.toFixed(1)}°, 静止=${isStationary})`);
+      this.log.info(TAG, `姿势状态变化: ${this._isLyingDown ? '躺下' : '坐/站'} (tiltAngle=${tiltAngle.toFixed(1)}°, x=${x.toFixed(1)}, y=${y.toFixed(1)}, z=${z.toFixed(1)}, 静止=${isStationary})`);
     }
 
     // 将姿势状态传递给ContextAwarenessService (不传递角度，由CAS的加速度计独家负责tiltAngle)
