@@ -1265,37 +1265,20 @@ export class ContextAwarenessService {
    * 更新用户姿势 (基于手机方向和倾斜角检测用户是否躺着)
    */
   private updatePosture(): void {
-    // 获取加速度计数据判断手机朝向
-    let x = this.accelerometerData.x;
-    let y = this.accelerometerData.y;
-    let z = this.accelerometerData.z;
-
-    // 判断手机屏幕朝向 (基于 z 轴加速度)
-    // z > 6: 屏幕朝上 (桌面或手持，重力向下拉屏幕)
-    // z < -6: 屏幕朝下 (趴床上或面朝下放置)
-    // |z| < 3: 手机水平侧放 (左侧或右侧)
-    let isFaceUp = z > 6;
-    let isFaceDown = z < -6;
-    let isHorizontal = Math.abs(z) < 3;  // 手机接近水平 (侧放)
-
     let wasLyingDown = this.isLyingDown;
 
-    // 躺卧判断逻辑 (基于手机朝向，而非仅倾斜角):
-    // 1. 面朝上 → 桌上或手持 → NOT 躺卧
-    // 2. 水平侧放 (z ≈ 0) → 用户侧躺 → 躺卧
-    // 3. 面朝下且接近平放 → 床上看手机 → 躺卧
-    // 4. 其他角度 → 坐/站
-    if (isFaceUp) {
-      // 面朝上：无论角度，都不算躺卧 (桌上或正常手持)
-      this.isLyingDown = false;
-    } else if (isHorizontal) {
-      // 手机水平侧放 (z ≈ 0)：用户侧躺
-      this.isLyingDown = true;
-    } else if (isFaceDown && Math.abs(this.lastTiltAngle) > 60) {
-      // 面朝下且接近平放 (高倾斜角)：床上看手机
+    // tiltAngle = atan2(z, √(x²+y²))，含义：
+    //  +90°: 手机完全平放，屏幕朝上（桌上）
+    //   0°: 手机竖直（正常手持）
+    // -15°~-80°: 屏幕斜朝下——躺着看手机的典型角度
+    //  -90°: 手机完全面朝下平放（扣着）
+    //
+    // 躺卧识别：tiltAngle 在 [-80°, -15°] 区间
+    // 这覆盖了用户躺卧时手机向自己脸部倾斜的全部场景
+    let tilt = this.lastTiltAngle;
+    if (tilt >= -80 && tilt <= -15) {
       this.isLyingDown = true;
     } else {
-      // 其他情况：坐/站
       this.isLyingDown = false;
     }
 
@@ -1305,8 +1288,7 @@ export class ContextAwarenessService {
 
     // 仅在姿势变化时记录日志和触发提醒
     if (wasLyingDown !== this.isLyingDown) {
-      let orientation = isFaceUp ? '面朝上' : isFaceDown ? '面朝下' : isHorizontal ? '侧放' : '倾斜';
-      this.log.info(TAG, `Posture: ${wasLyingDown ? 'lying' : 'upright'} -> ${this.isLyingDown ? 'lying' : 'upright'} (tilt: ${this.lastTiltAngle.toFixed(1)}°, ${orientation})`);
+      this.log.info(TAG, `Posture: ${wasLyingDown ? 'lying' : 'upright'} -> ${this.isLyingDown ? 'lying' : 'upright'} (tilt: ${this.lastTiltAngle.toFixed(1)}°)`);
 
       // 如果从躺着变为坐立，可能需要检查是否触发早醒提示
       if (wasLyingDown && !this.isLyingDown) {
