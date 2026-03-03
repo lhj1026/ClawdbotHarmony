@@ -14,9 +14,11 @@ const TIME_MAP = {
   lunch: '5', afternoon: '6', evening: '7', night: '8', late_night: '9',
 };
 const LOCATION_MAP = {
-  home: 'A', work: 'B', commute: 'C', restaurant: 'D', gym: 'E',
-  outdoor: 'F', airport: 'G', shopping: 'H', subway: 'I', bus_stop: 'J',
-  ferry: 'K', train_station: 'L', cafe: 'M', cinema: 'N', park: 'O', unknown: 'P',
+  // 0=unknown; 1-9: 基础场景; A-Z: 扩展场景
+  unknown: '0',
+  home: '1', work: '2', commute: '3', restaurant: '4', gym: '5',
+  outdoor: '6', airport: '7', shopping: '8', subway: '9',
+  bus_stop: 'A', ferry: 'B', train_station: 'C', cafe: 'D', cinema: 'E', park: 'F',
 };
 const MOTION_MAP   = { stationary: '1', walking: '2', running: '3', driving: '4' };
 const PHONE_MAP    = {
@@ -94,6 +96,13 @@ const LOC_GROUPS = {
   restaurant: 3, shopping: 3, cafe: 3, cinema: 3,
   gym: 4, outdoor: 4, park: 4, unknown: 0,
 };
+// 位置码 → 槽索引（与 C++ locationIndex 一致）
+function locIndex(locName) {
+  const c = LOCATION_MAP[locName] || '0';
+  if (c >= '1' && c <= '9') return c.charCodeAt(0) - '1'.charCodeAt(0);
+  if (c >= 'A' && c <= 'Z') return 9 + (c.charCodeAt(0) - 'A'.charCodeAt(0));
+  return 35; // unknown
+}
 const PHONE_GROUPS = {
   in_use: 0, holding_lying: 0,
   on_desk: 1, face_up: 1, face_down: 1,
@@ -143,30 +152,38 @@ function test(name, actual, expected) {
   ok ? pass++ : fail++;
 }
 
-// 基础编码
-test('encode: 用户示例 3M11332',
+// 基础编码（新编码: 位置用 1-9,A-Z）
+test('encode: 用户示例 cafe=D',
   encode({ time: 'morning', location: 'cafe', motion: 'stationary', phone: 'in_use', light: 'normal', sound: 'noisy', dayType: 'weekend' }),
-  '3M11332'
+  '3D11332'
 );
-test('encode: 工作日傍晚在家',
+test('encode: 工作日傍晚在家 home=1',
   encode({ time: 'evening', location: 'home', motion: 'stationary', phone: 'in_use', dayType: 'workday' }),
-  '7A11001'
+  '7111001'
 );
-test('encode: 工作日上午公司放桌',
+test('encode: 工作日上午公司放桌 work=2',
   encode({ time: 'forenoon', location: 'work', motion: 'stationary', phone: 'on_desk', dayType: 'workday' }),
-  '4B13001'
+  '4213001'
 );
-test('encode: 早高峰地铁',
+test('encode: 早高峰地铁 subway=9',
   encode({ time: 'morning', location: 'subway', motion: 'walking', phone: 'in_pocket', dayType: 'workday' }),
-  '3I25001'
+  '3925001'
 );
-test('encode: 节假日公园晨跑',
+test('encode: 节假日公园晨跑 park=F',
   encode({ time: 'morning', location: 'park', motion: 'running', phone: 'in_pocket', dayType: 'holiday' }),
-  '3O35003'
+  '3F35003'
+);
+test('encode: bus_stop=A',
+  encode({ time: 'morning', location: 'bus_stop', motion: 'stationary', phone: 'in_use', dayType: 'workday' }),
+  '3A11001'
+);
+test('encode: train_station=C',
+  encode({ time: 'morning', location: 'train_station', motion: 'walking', phone: 'in_use', dayType: 'workday' }),
+  '3C21001'
 );
 
 // 解码
-const dec = decode('3M11332');
+const dec = decode('3D11332');
 test('decode: time',     dec.time,     'morning');
 test('decode: location', dec.location, 'cafe');
 test('decode: motion',   dec.motion,   'stationary');
@@ -175,13 +192,13 @@ test('decode: light',    dec.light,    'normal');
 test('decode: sound',    dec.sound,    'noisy');
 test('decode: dayType',  dec.dayType,  'weekend');
 
-// 通配匹配  (morning=3, work=B, stationary=1, on_desk=3, workday=1 → "3B13001")
+// 通配匹配  (morning=3, work=2, stationary=1, on_desk=3, workday=1 → "3213001")
 const s = { time: 'morning', location: 'work', motion: 'stationary', phone: 'on_desk', dayType: 'workday' };
-test('matches: 精确匹配',    matches(s, '3B13001'), true);
+test('matches: 精确匹配',    matches(s, '3213001'), true);
 test('matches: 全通配',      matches(s, '0000000'), true);
-test('matches: 时间通配',    matches(s, '0B13001'), true);
-test('matches: 位置不匹配',  matches(s, '3A13001'), false);
-test('matches: 工作日通配',  matches(s, '3B1300' + '1'), true);
+test('matches: 时间通配',    matches(s, '0213001'), true);
+test('matches: 位置不匹配',  matches(s, '3113001'), false);
+test('matches: 工作日通配',  matches(s, '3213001'), true);
 
 // 相似度
 const a = { time: 'morning', location: 'work', motion: 'stationary', phone: 'on_desk', dayType: 'workday' };
@@ -202,12 +219,14 @@ console.log(`ℹ️  tile overlap(morning/work vs forenoon/work): ${ov12}/5`);
 console.log(`ℹ️  tile overlap(morning/work vs morning/cafe):  ${ov13}/5`);
 test('tile: morning/work 与 forenoon/work 有时间组重叠', ov12 >= 1, true);
 
-// 地铁 noisy 修饰符验证
+// 地铁 noisy 修饰符验证（subway=9）
 const subway_morning = { time: 'morning', location: 'subway', motion: 'stationary', phone: 'in_pocket', sound: 'noisy', dayType: 'workday' };
-test('subway code 含 sound=noisy(3)',
-  encode(subway_morning)[5],
-  '3'
-);
+test('subway code 位置码=9',   encode(subway_morning)[1], '9');
+test('subway code sound=noisy(3)', encode(subway_morning)[5], '3');
+
+// 扩展预留验证（G-Z 范围）
+test('位置码 A=bus_stop decode', decode('3A11001')?.location, 'bus_stop');
+test('位置码 F=park decode',     decode('3F35003')?.location, 'park');
 
 // ── 结果 ────────────────────────────────────────────────────────────
 

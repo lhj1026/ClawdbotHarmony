@@ -4,16 +4,21 @@
  * StateCode 格式：7位字符串 [T][L][M][P][Li][S][D]
  *
  *   T  时间    1-9  (1=sleeping … 9=late_night)
- *   L  位置    A-P  (A=home … P=unknown)
+ *   L  位置    0,1-9,A-Z  (0=unknown; 1=home…9=subway; A=bus_stop…F=park; G-Z=预留扩展)
  *   M  运动    1-4  (1=stationary … 4=driving)
  *   P  手机    1-8  (1=in_use … 8=unknown)
  *   Li 光线    0-4  (0=未指定, 1=dark … 4=bright)
  *   S  声音    0-4  (0=未指定, 1=quiet … 3=noisy, 4=unknown)
  *   D  日期    0-3  (0=未指定, 1=workday, 2=weekend, 3=holiday)
  *
+ * 位置码（最多支持 35 个：1-9 共9个 + A-Z 共26个）：
+ *   1=home  2=work  3=commute  4=restaurant  5=gym  6=outdoor
+ *   7=airport  8=shopping  9=subway  A=bus_stop  B=ferry
+ *   C=train_station  D=cafe  E=cinema  F=park  G-Z=扩展预留
+ *
  * 示例：
- *   3M11332  →  morning × 咖啡馆 × stationary × in_use × normal × noisy × weekend
- *   7A11001  →  evening × 家 × stationary × in_use × 未指定 × 未指定 × workday
+ *   3D11332  →  morning × 咖啡馆 × stationary × in_use × normal × noisy × weekend
+ *   7111001  →  evening × 家 × stationary × in_use × 未指定 × 未指定 × workday
  */
 #pragma once
 
@@ -44,22 +49,25 @@ enum class TimeSlot : char {
 };
 
 enum class Location : char {
-    Home         = 'A',
-    Work         = 'B',
-    Commute      = 'C',
-    Restaurant   = 'D',
-    Gym          = 'E',
-    Outdoor      = 'F',
-    Airport      = 'G',
-    Shopping     = 'H',
-    Subway       = 'I',
-    BusStop      = 'J',
-    Ferry        = 'K',
-    TrainStation = 'L',
-    Cafe         = 'M',
-    Cinema       = 'N',
-    Park         = 'O',
-    Unknown      = 'P',
+    Unknown      = '0',   // 未知/未指定
+    // 1-9: 基础场景
+    Home         = '1',
+    Work         = '2',
+    Commute      = '3',
+    Restaurant   = '4',
+    Gym          = '5',
+    Outdoor      = '6',
+    Airport      = '7',
+    Shopping     = '8',
+    Subway       = '9',
+    // A-Z: 扩展场景（最多支持到 Z，共 35 个位置）
+    BusStop      = 'A',
+    Ferry        = 'B',
+    TrainStation = 'C',
+    Cafe         = 'D',
+    Cinema       = 'E',
+    Park         = 'F',
+    // G-Z: 预留扩展
 };
 
 enum class Motion : char {
@@ -243,11 +251,14 @@ public:
 
     static Location locationFromName(const std::string& s) {
         static const std::unordered_map<std::string, Location> m = {
-            {"home",A("A")}, {"work",A("B")}, {"commute",A("C")}, {"restaurant",A("D")},
-            {"gym",A("E")},  {"outdoor",A("F")}, {"airport",A("G")}, {"shopping",A("H")},
-            {"subway",A("I")}, {"bus_stop",A("J")}, {"ferry",A("K")},
-            {"train_station",A("L")}, {"cafe",A("M")}, {"cinema",A("N")},
-            {"park",A("O")}, {"unknown",A("P")},
+            {"home",         Location::Home},         {"work",         Location::Work},
+            {"commute",      Location::Commute},      {"restaurant",   Location::Restaurant},
+            {"gym",          Location::Gym},          {"outdoor",      Location::Outdoor},
+            {"airport",      Location::Airport},      {"shopping",     Location::Shopping},
+            {"subway",       Location::Subway},       {"bus_stop",     Location::BusStop},
+            {"ferry",        Location::Ferry},        {"train_station",Location::TrainStation},
+            {"cafe",         Location::Cafe},         {"cinema",       Location::Cinema},
+            {"park",         Location::Park},         {"unknown",      Location::Unknown},
         };
         auto it = m.find(s); return it != m.end() ? it->second : Location::Unknown;
     }
@@ -394,8 +405,9 @@ private:
         return false;
     }
     static bool setLocation(PhysicalState& s, char c) {
-        if (c >= 'A' && c <= 'P') { s.location = static_cast<Location>(c); return true; }
         if (c == '0') { s.location = Location::Unknown; return true; }
+        if (c >= '1' && c <= '9') { s.location = static_cast<Location>(c); return true; }
+        if (c >= 'A' && c <= 'Z') { s.location = static_cast<Location>(c); return true; }
         return false;
     }
     static bool setMotion(PhysicalState& s, char c) {
@@ -442,13 +454,15 @@ private:
  */
 class TileCoder {
 public:
-    // 各套 tiling 的维度
-    static constexpr int T0_DIM = 9 * 16 * 4 * 8 * 3;   // 13824
-    static constexpr int T1_DIM = 4 * 16 * 3;             // 192
-    static constexpr int T2_DIM = 5 * 4 * 8;              // 160
-    static constexpr int T3_DIM = 4 * 4 * 4;              // 64
-    static constexpr int T4_DIM = 5 * 5 * 5;              // 125
-    static constexpr int TOTAL_DIM = T0_DIM + T1_DIM + T2_DIM + T3_DIM + T4_DIM; // 14365
+    // 各套 tiling 的维度（位置槽 36 = 1-9共9 + A-Z共26 + unknown共1）
+    static constexpr int LOC_SLOTS = 36;  // 支持最多36个位置（0,1-9,A-Z）
+    static constexpr int LOC_GROUPS_N = 5; // 位置场景粗分组数
+    static constexpr int T0_DIM = 9 * LOC_SLOTS * 4 * 8 * 3;   // 31104
+    static constexpr int T1_DIM = 4 * LOC_SLOTS * 3;             // 432
+    static constexpr int T2_DIM = LOC_GROUPS_N * 4 * 8;          // 160
+    static constexpr int T3_DIM = 4 * 4 * 4;                     // 64
+    static constexpr int T4_DIM = 5 * 5 * LOC_GROUPS_N;          // 125
+    static constexpr int TOTAL_DIM = T0_DIM + T1_DIM + T2_DIM + T3_DIM + T4_DIM; // 31885
 
     /**
      * 返回激活的 tile 索引列表（共 5 个，对应 5 套 tiling）。
@@ -521,8 +535,10 @@ private:
     }
 
     static int locationIndex(Location l) {
-        int v = static_cast<int>(static_cast<char>(l) - 'A');
-        return (v >= 0 && v < 16) ? v : 15; // 'P'=15=unknown
+        char c = static_cast<char>(l);
+        if (c >= '1' && c <= '9') return c - '1';          // 1-9 → 0-8
+        if (c >= 'A' && c <= 'Z') return 9 + (c - 'A');    // A-Z → 9-34
+        return 35;                                           // '0'=unknown → 35
     }
 
     /** 位置场景粗分组：0=家/室内  1=工作  2=交通  3=娱乐休闲  4=运动/户外 */
