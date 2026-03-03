@@ -71,7 +71,7 @@ import { sensor } from '@kit.SensorServiceKit';
 import { AccessibilityService, ScreenNode, WindowInfo } from '../accessibility/AccessibilityService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.59.6';
+const APP_VERSION = '2.59.7';
 
 interface PendingStateRec {
   ruleId: string;
@@ -480,9 +480,12 @@ export class NodeRuntime {
     // 判断静止度（计算最近5次magnitude的方差）
     let isStationary = this.isDeviceStationary();
 
-    // 姿势判断：屏幕角度 < 50° 且静止 → 躺着
+    // 姿势判断：屏幕角度 < 65° 且静止 → 躺着（放宽阈值覆盖手机有倾斜角的场景）
     let wasLyingDown = this._isLyingDown;
-    this._isLyingDown = screenAngle < 50 && isStationary;
+    this._isLyingDown = screenAngle < 65 && isStationary;
+
+    // 每次采样记录详细数据（调试用）
+    this.log.debug(TAG, `加速度计: x=${x.toFixed(2)} y=${y.toFixed(2)} z=${z.toFixed(2)} screenAngle=${screenAngle.toFixed(1)}° stationary=${isStationary}`);
 
     // 状态变化时记录日志
     if (wasLyingDown !== this._isLyingDown) {
@@ -500,7 +503,7 @@ export class NodeRuntime {
    * 判断设备是否静止（基于最近5次magnitude值的方差）
    */
   private isDeviceStationary(): boolean {
-    if (this._recentMagnitudes.length < 5) {
+    if (this._recentMagnitudes.length < 3) {
       return false;
     }
 
@@ -514,8 +517,8 @@ export class NodeRuntime {
       return acc + (diff * diff);
     }, 0) / this._recentMagnitudes.length;
 
-    // 方差 < 0.5 认为静止
-    return variance < 0.5;
+    // 方差 < 1.5 认为静止（放宽阈值，躺着时手也会有轻微抖动）
+    return variance < 1.5;
   }
 
   /**
