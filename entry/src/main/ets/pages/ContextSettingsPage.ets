@@ -3,6 +3,7 @@
  * 功能：地理围栏管理 / 规则引擎状态 / MAB 统计
  */
 import { router, promptAction } from '@kit.ArkUI';
+import { pasteboard } from '@kit.BasicServicesKit';
 import { LogService } from '../common/LogService';
 import { I18n } from '../common/I18n';
 import { ContextAwarenessService } from '../service/context/ContextAwarenessService';
@@ -631,6 +632,9 @@ struct ContextSettingsPage {
             .padding(16)
             .backgroundColor(Color.White)
             .borderRadius(12)
+            .gesture(LongPressGesture({ duration: 500 }).onAction(() => {
+              this.copyPhysicalStateToClipboard();
+            }))
 
             // ===== 今日行程时间线 =====
             Column() {
@@ -2040,6 +2044,31 @@ struct ContextSettingsPage {
       this.psScenarioName = '';
       this.psScenarioStep = '';
       this.psScenarioCount = 0;
+    }
+  }
+
+  /** 长按复制物理状态到剪切板，格式：时间：清晨，位置：家，运动：静止... */
+  private copyPhysicalStateToClipboard(): void {
+    let parts: string[] = [
+      I18n.t('ps.time') + '：' + this.psTime,
+      I18n.t('ps.location') + '：' + this.psLocation,
+      I18n.t('ps.motion') + '：' + this.psMotion,
+      I18n.t('ps.phone') + '：' + this.psPhone,
+      I18n.t('ps.light') + '：' + this.psLight,
+      I18n.t('ps.sound') + '：' + this.psSound,
+      I18n.t('ps.dayType') + '：' + this.psDayType,
+    ];
+    let text = parts.join('，');
+    try {
+      let pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, text);
+      let systemPasteboard = pasteboard.getSystemPasteboard();
+      systemPasteboard.setData(pasteData).then(() => {
+        promptAction.showToast({ message: '已复制物理状态', duration: 1500 });
+      }).catch(() => {
+        promptAction.showToast({ message: '复制失败', duration: 1500 });
+      });
+    } catch (_e) {
+      promptAction.showToast({ message: '复制失败', duration: 1500 });
     }
   }
 
