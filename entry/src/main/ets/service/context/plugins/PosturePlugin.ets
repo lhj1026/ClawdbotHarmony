@@ -74,19 +74,15 @@ export class PosturePlugin implements DigitalPlugin {
         this.posture = 'face_down';    // near + some light = face down on surface
       }
     } else {
-      // Screen exposed (no proximity)
+      // Screen exposed (proximity=far) — 不可能是口袋
+      // 口袋必须 proximity=near，仅凭黑暗不能判断为口袋
       if (this.ambientLux < 10) {
-        // 暗环境：可能在口袋或桌上
-        // 桌上通常有微弱光线(1-10 lux)，完全黑暗(<1)更可能是口袋
-        if (this.ambientLux < 1) {
-          this.posture = 'in_pocket';  // 完全黑暗 = 口袋
-        } else {
-          this.posture = 'on_desk';    // 微光 = 桌上(暗室)
-        }
+        // 暗室/夜晚：手机可能平放或被用户握着看（躺在床上）
+        this.posture = 'face_up';      // 屏幕朝上，暗室
       } else if (this.ambientLux < 50) {
-        this.posture = 'on_desk';      // dim environment, phone idle
+        this.posture = 'on_desk';      // 微光环境，手机静置
       } else {
-        this.posture = 'in_use';       // bright, screen facing up/user
+        this.posture = 'in_use';       // 正常光线，使用中
       }
     }
   }

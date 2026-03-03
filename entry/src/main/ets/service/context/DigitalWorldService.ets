@@ -306,7 +306,7 @@ export class DigitalWorldService {
       {
         plugin: new AmbientSoundPlugin(),
         privacyLevel: 'critical',
-        enabledByDefault: false,
+        enabledByDefault: true,
         description: '分析环境音判断场景（安静/办公/嘈杂/交通），不保存录音'
       },
       {

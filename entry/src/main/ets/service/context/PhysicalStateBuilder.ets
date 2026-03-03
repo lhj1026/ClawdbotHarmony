@@ -156,9 +156,10 @@ export class PhysicalStateBuilder {
     let proximity = this.trayValue('proximity');
     let ambientLight = this.trayValueNum('ambient_brightness', -1);
 
-    if (ambientLight >= 0 && ambientLight < 1) return 'in_pocket';
+    // 口袋必须 proximity=near；仅凭黑暗不能判断为口袋（可能是暗室躺着看手机）
     if (proximity === 'near' && ambientLight >= 0 && ambientLight < 5) return 'in_pocket';
     if (proximity === 'near' && ambientLight > 5) return 'face_down';
+    if (ambientLight >= 0 && ambientLight < 10) return 'face_up'; // 暗室，屏幕朝上
 
     return 'unknown';
   }
