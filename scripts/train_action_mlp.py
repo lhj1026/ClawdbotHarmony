@@ -19,8 +19,8 @@ DATA_PATH = os.path.join(SCRIPT_DIR, 'training_data.json')
 OUT_PATH  = os.path.join(PROJECT, 'entry/src/main/cpp/context_engine/action_weights.h')
 
 # ── 超参 ────────────────────────────────────────────────────────────
-HIDDEN   = 80
-EPOCHS   = 2000
+HIDDEN   = 128
+EPOCHS   = 300
 LR       = 0.01
 REG      = 1e-4     # L2 正则
 SEED     = 42
@@ -73,13 +73,10 @@ if extra_X:
     Y = np.vstack([Y, Y_oversample])
     print(f"上采样后: {len(X)} 个样本")
 
-# 数据扩增：添加轻微噪声
-N = len(X)
-noise = np.random.randn(N, FEAT_DIM).astype(np.float32) * 0.03
-X_aug = np.clip(X + noise, 0, 1)
-X_all = np.vstack([X, X_aug])
-Y_all = np.vstack([Y, Y])
-print(f"扩增后样本数: {len(X_all)}")
+# 状态对模式：样本已经很多（1800+上采样），跳过噪声扩增
+X_all = X
+Y_all = Y
+print(f"最终样本数: {len(X_all)}")
 
 # ── 初始化权重（Xavier）────────────────────────────────────────────
 def xavier(fan_in, fan_out):
@@ -123,7 +120,7 @@ def adam_update(p, g, m, v, t):
     p -= LR * mh / (np.sqrt(vh) + eps_adam)
     return p, m, v
 
-BATCH = min(32, len(X_all))
+BATCH = min(128, len(X_all))
 best_loss = float('inf')
 best_W1 = W1.copy(); best_b1 = b1.copy()
 best_W2 = W2.copy(); best_b2 = b2.copy()

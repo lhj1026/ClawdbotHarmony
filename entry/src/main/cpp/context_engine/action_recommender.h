@@ -24,6 +24,7 @@
 #include <cmath>
 #include <algorithm>
 #include <fstream>
+#include <chrono>
 
 namespace context_engine {
 
@@ -31,32 +32,88 @@ namespace context_engine {
 // 常量
 // ============================================================
 
-// ── 特征向量维度（92维，含预留槽）──────────────────────────────────
-// 扩展规则：在预留槽内直接分配，不改变已有偏移，无需重训
+// ── 特征向量维度（状态对编码，185维）──────────────────────────────
 //
-//   Dim  | Used | Reserved | 说明
-//  ------|------|----------|----------------------------------
-//  time  |   9  |    3     | 新时段（如 nap=10）用 idx 9-11
-//  loc   |  15  |   21     | G-Z 已预留，idx 24-34 可用
-//  motion|   4  |    4     | cycling=5, transit=6 用 idx 4-7
-//  phone |   8  |    4     | 新姿态用 idx 8-11
-//  light |   5  |    3     | 用 idx 5-7
-//  sound |   5  |    3     | 用 idx 5-7
-//  dayType|  4  |    4     | travel=5, sick=6 用 idx 4-7
+//   [当前状态 92维] | [上一状态 92维] | [在当前状态时长 1维]
+//
+//   单状态 92维布局（偏移从 0 或 92 开始）：
+//   Dim     | Used | Reserved | 偏移(在单状态内)
+//  ---------|------|----------|-----------------
+//  time     |   9  |    3     | 0
+//  location |  15  |   21     | 12   (G-Z 预留)
+//  motion   |   4  |    4     | 48
+//  phone    |   8  |    4     | 56
+//  light    |   5  |    3     | 68
+//  sound    |   5  |    3     | 76
+//  dayType  |   4  |    4     | 84
+//  total    |  50  |   42     | = 92
+//
+//   time_norm (1维，偏移184):
+//     0.0 = 刚到(<5min)  0.33 = 稳定(5-30min)  0.67 = 久留(30-120min)  1.0 = 超长(>2h)
 
-constexpr int ACT_FEAT_DIM = 92;   // 状态特征维度（含预留）
-constexpr int ACT_HIDDEN   = 80;   // MLP 隐藏层
-constexpr int ACT_COUNT    = 64;   // 动作总槽数（40已定义 + 24预留）
-constexpr int ACT_DEFINED  = 40;   // 当前已定义动作数
+constexpr int ACT_SINGLE_DIM = 92;            // 单状态编码维度
+constexpr int ACT_FEAT_DIM   = 185;           // 92(curr) + 92(prev) + 1(time)
+constexpr int ACT_HIDDEN     = 128;           // MLP 隐藏层
+constexpr int ACT_COUNT      = 64;            // 动作总槽数（40已定义 + 24预留）
+constexpr int ACT_DEFINED    = 40;            // 当前已定义动作数
 
-// 特征向量各维度偏移（已固化，永不改变）
+// 单状态内各维度偏移（永不改变）
 constexpr int OFF_TIME    = 0;   // 12 dims (9 used)
-constexpr int OFF_LOC     = 12;  // 36 dims (15+1 used, G-Z reserved)
+constexpr int OFF_LOC     = 12;  // 36 dims
 constexpr int OFF_MOTION  = 48;  // 8 dims  (4 used)
 constexpr int OFF_PHONE   = 56;  // 12 dims (8 used)
 constexpr int OFF_LIGHT   = 68;  // 8 dims  (5 used)
 constexpr int OFF_SOUND   = 76;  // 8 dims  (5 used)
 constexpr int OFF_DAYTYPE = 84;  // 8 dims  (4 used)
+
+// ============================================================
+// 状态历史记录（环形缓冲区）
+// ============================================================
+
+/** 简单时钟（秒），可替换为系统时间 */
+inline double nowSeconds() {
+    auto tp = std::chrono::system_clock::now().time_since_epoch();
+    return std::chrono::duration<double>(tp).count();
+}
+
+struct StateHistory {
+    static const int MAX = 8;
+
+    struct Entry {
+        PhysicalState state;
+        double timestamp = 0.0;
+    };
+
+    Entry entries[MAX];
+    int   head  = 0;
+    int   count = 0;
+
+    /** 记录一个新状态 */
+    void push(const PhysicalState& s) {
+        entries[head] = { s, nowSeconds() };
+        head  = (head + 1) % MAX;
+        if (count < MAX) ++count;
+    }
+
+    /** 上一个状态（若无返回 nullptr） */
+    const PhysicalState* prev() const {
+        if (count < 2) return nullptr;
+        int idx = (head - 2 + MAX) % MAX;
+        return &entries[idx].state;
+    }
+
+    /** 当前状态在此状态的持续时长（归一化 0~1）
+     *  0.0=<5min  0.33=5-30min  0.67=30-120min  1.0=>2h */
+    float timeNorm() const {
+        if (count == 0) return 0.0f;
+        int currIdx = (head - 1 + MAX) % MAX;
+        double elapsed = nowSeconds() - entries[currIdx].timestamp;
+        if (elapsed < 300)   return 0.0f;
+        if (elapsed < 1800)  return 0.33f;
+        if (elapsed < 7200)  return 0.67f;
+        return 1.0f;
+    }
+};
 
 // ============================================================
 // 状态特征向量
@@ -65,62 +122,81 @@ constexpr int OFF_DAYTYPE = 84;  // 8 dims  (4 used)
 struct ActFeature {
     float x[ACT_FEAT_DIM] = {};
 
-    /** 从 PhysicalState 编码（与 StateCode 枚举值完全对应） */
+    /** 单状态编码（不含历史，prev 全零，time=0）*/
     static ActFeature from(const PhysicalState& s) {
         ActFeature f;
+        encodeSingle(s, f.x, 0);
+        // f.x[184] = 0.0f  (刚到，默认)
+        return f;
+    }
 
-        // Time: '1'-'9' → idx 0-8
+    /** 状态对编码（curr + prev + time_norm）
+     *  @param curr     当前状态
+     *  @param prev     上一状态
+     *  @param timeNorm 在当前状态的时长归一化 (0.0~1.0)
+     */
+    static ActFeature fromPair(const PhysicalState& curr,
+                               const PhysicalState& prev,
+                               float timeNorm) {
+        ActFeature f;
+        encodeSingle(curr, f.x, 0);                 // 偏移 0-91
+        encodeSingle(prev, f.x, ACT_SINGLE_DIM);    // 偏移 92-183
+        f.x[ACT_SINGLE_DIM * 2] = timeNorm;         // 偏移 184
+        return f;
+    }
+
+private:
+    /** 将单个 PhysicalState 编码到 x[offset..offset+92) */
+    static void encodeSingle(const PhysicalState& s, float* x, int offset) {
+        // Time: '1'-'9' → 0-8
         {
             char c = static_cast<char>(s.time);
             int i = (c >= '1' && c <= '9') ? (c - '1') : 0;
-            f.x[OFF_TIME + i] = 1.0f;
+            x[offset + OFF_TIME + i] = 1.0f;
         }
         // Location: '0'→35, '1'-'9'→0-8, 'A'-'Z'→9-34
         {
             char c = static_cast<char>(s.location);
-            int i;
-            if      (c == '0')                   i = 35;
-            else if (c >= '1' && c <= '9')        i = c - '1';
-            else if (c >= 'A' && c <= 'Z')        i = 9 + (c - 'A');
-            else                                   i = 35;
-            f.x[OFF_LOC + i] = 1.0f;
+            int i = (c == '0') ? 35 :
+                    (c >= '1' && c <= '9') ? (c - '1') :
+                    (c >= 'A' && c <= 'Z') ? 9 + (c - 'A') : 35;
+            x[offset + OFF_LOC + i] = 1.0f;
         }
         // Motion: '0'→3, '1'-'4'→0-3
         {
             char c = static_cast<char>(s.motion);
             int i = (c >= '1' && c <= '4') ? (c - '1') : 3;
-            f.x[OFF_MOTION + i] = 1.0f;
+            x[offset + OFF_MOTION + i] = 1.0f;
         }
         // Phone: '0'→7, '1'-'8'→0-7
         {
             char c = static_cast<char>(s.phone);
             int i = (c >= '1' && c <= '8') ? (c - '1') : 7;
-            f.x[OFF_PHONE + i] = 1.0f;
+            x[offset + OFF_PHONE + i] = 1.0f;
         }
         // Light: '0'-'4'→0-4
         {
             char c = static_cast<char>(s.light);
             int i = (c >= '0' && c <= '4') ? (c - '0') : 0;
-            f.x[OFF_LIGHT + i] = 1.0f;
+            x[offset + OFF_LIGHT + i] = 1.0f;
         }
         // Sound: '0'-'4'→0-4
         {
             char c = static_cast<char>(s.sound);
             int i = (c >= '0' && c <= '4') ? (c - '0') : 0;
-            f.x[OFF_SOUND + i] = 1.0f;
+            x[offset + OFF_SOUND + i] = 1.0f;
         }
         // DayType: '0'-'3'→0-3
         {
             char c = static_cast<char>(s.dayType);
             int i = (c >= '0' && c <= '3') ? (c - '0') : 0;
-            f.x[OFF_DAYTYPE + i] = 1.0f;
+            x[offset + OFF_DAYTYPE + i] = 1.0f;
         }
-        return f;
     }
 };
 
 // ============================================================
-// Mini MLP（92 → 80 → 64）
+// Mini MLP（185 → 128 → 64）
 // ============================================================
 
 struct ActionMLP {
@@ -294,9 +370,18 @@ public:
      * @param s     当前物理状态
      * @param topK  返回条数（默认3）
      */
-    std::vector<Recommendation> recommend(const PhysicalState& s, int topK = 3) const {
+    std::vector<Recommendation> recommend(const PhysicalState& s, int topK = 3) {
         std::lock_guard<std::mutex> lock(mu_);
-        const ActFeature feat = ActFeature::from(s);
+        // 更新状态历史
+        history_.push(s);
+        // 构建状态对特征（有历史则用 fromPair，否则用单状态）
+        ActFeature feat;
+        const PhysicalState* prev = history_.prev();
+        if (prev) {
+            feat = ActFeature::fromPair(s, *prev, history_.timeNorm());
+        } else {
+            feat = ActFeature::from(s);
+        }
 
         // MLP 前向推理
         float mlp[ACT_COUNT];
@@ -335,7 +420,14 @@ public:
     void reward(const PhysicalState& s, int actIdx, float r) {
         if (actIdx < 0 || actIdx >= ACT_COUNT) return;
         std::lock_guard<std::mutex> lock(mu_);
-        const ActFeature feat = ActFeature::from(s);
+        // 反馈时也用状态对特征（与推荐时保持一致）
+        ActFeature feat;
+        const PhysicalState* prev = history_.prev();
+        if (prev) {
+            feat = ActFeature::fromPair(s, *prev, history_.timeNorm());
+        } else {
+            feat = ActFeature::from(s);
+        }
         arms_[actIdx].update(feat, r);
     }
 
@@ -389,9 +481,10 @@ public:
 private:
     ActionMLP              mlp_;
     std::array<UCBArm, ACT_COUNT> arms_;
+    StateHistory           history_;   // 状态历史（状态对特征的数据源）
     float                  mlpWeight_;
     float                  ucbAlpha_;
-    mutable std::mutex     mu_;
+    std::mutex             mu_;        // 注意：reward() 改为非 const，去掉 mutable
 
     void loadPretrainedWeights() {
 #ifdef HAVE_ACTION_WEIGHTS
