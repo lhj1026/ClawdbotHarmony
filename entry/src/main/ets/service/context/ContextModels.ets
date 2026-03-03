@@ -693,8 +693,9 @@ export type MotionCategory =
 export type PhoneCategory =
   | 'in_use'      // 亮屏 + 距离传感器=远 + 环境光 > 50 lux
   | 'on_desk'     // 平放 + 屏幕朝上 + 未充电
-  | 'in_pocket'   // 环境光 < 1 lux 或 距离=近+暗
+  | 'in_pocket'   // 距离=近 + 环境光 < 5 lux
   | 'face_down'   // 距离=近 + 环境光 > 5 lux
+  | 'face_up'     // 距离=远 + 暗室（躺床上看手机等场景）
   | 'charging'    // 充电中 (覆盖其他姿态)
   | 'unknown';    // 无传感器数据
 
