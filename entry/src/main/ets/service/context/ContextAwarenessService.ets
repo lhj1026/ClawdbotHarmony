@@ -1058,6 +1058,12 @@ export class ContextAwarenessService {
       }
     }
     
+    // 躺卧覆盖：躺着时翻身等动作不能被误判成步行
+    // isLyingDown 由加速度计实时维护，翻身时方差飙升容易触发 walking 误判
+    if (this.isLyingDown && (newState === 'walking' || newState === 'running')) {
+      newState = 'stationary';
+    }
+
     // 车载蓝牙覆盖：连接车载BT时，stationary/walking → driving
     let btInVehicle = this.tray.get('bt_in_vehicle');
     if (btInVehicle && btInVehicle.value === 'true' && (newState === 'stationary' || newState === 'walking')) {
