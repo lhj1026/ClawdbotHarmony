@@ -665,7 +665,8 @@ static napi_value RecommenderInit(napi_env env, napi_callback_info info) {
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     if (argc >= 1) {
         g_save_path = napiGetString(env, args[0]);
-        std::lock_guard<std::mutex> lk(g_rec_mu);
+        // 注意：getRecommender() 内部已持有 g_rec_mu，此处不可再加锁（否则死锁）
+        // load() 内部也有 mu_ 保护，线程安全
         getRecommender().load(g_save_path);  // 如果文件不存在静默忽略
     }
     return nullptr;
@@ -744,8 +745,7 @@ static napi_value RecommenderReward(napi_env env, napi_callback_info info) {
     int actIdx = context_engine::actionIndex(actionCode);
     if (actIdx >= 0) {
         getRecommender().reward(state, actIdx, static_cast<float>(rewardVal));
-        // 自动保存
-        std::lock_guard<std::mutex> lk(g_rec_mu);
+        // 自动保存（NAPI 回调均在 JS 线程，g_reward_count 无竞争）
         ++g_reward_count;
         if (!g_save_path.empty() && g_reward_count % SAVE_INTERVAL == 0) {
             getRecommender().save(g_save_path);
