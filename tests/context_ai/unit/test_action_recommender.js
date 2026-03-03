@@ -24,12 +24,12 @@ const b1 = extractArray('ACT_B1');       // 64
 const W2_flat = extractArray('ACT_W2');  // 40×64=2560
 const b2 = extractArray('ACT_B2');       // 40
 
-const IN=71, H=64, OUT=40;
+const IN=92, H=80, OUT=64;
 const W1 = Array.from({length:H}, (_,i) => W1_flat.slice(i*IN, (i+1)*IN));
 const W2 = Array.from({length:OUT}, (_,i) => W2_flat.slice(i*H, (i+1)*H));
 
-// ── 编码与推理 ───────────────────────────────────────────────────────
-const OFFSETS = {time:0, location:9, motion:45, phone:49, light:57, sound:62, dayType:67};
+// ── 编码与推理（偏移与 action_recommender.h 一致）────────────────────
+const OFFSETS = {time:0, location:12, motion:48, phone:56, light:68, sound:76, dayType:84};
 
 function charToIdx(dim, c) {
   if (dim==='time')    return (c>='1'&&c<='9') ? c.charCodeAt(0)-49 : 0;

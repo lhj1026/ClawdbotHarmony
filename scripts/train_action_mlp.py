@@ -19,7 +19,7 @@ DATA_PATH = os.path.join(SCRIPT_DIR, 'training_data.json')
 OUT_PATH  = os.path.join(PROJECT, 'entry/src/main/cpp/context_engine/action_weights.h')
 
 # ── 超参 ────────────────────────────────────────────────────────────
-HIDDEN   = 64
+HIDDEN   = 80
 EPOCHS   = 2000
 LR       = 0.01
 REG      = 1e-4     # L2 正则
@@ -51,11 +51,20 @@ extra_X, extra_Y = [], []
 for act_idx in range(ACT_DIM):
     cnt = act_counts[act_idx]
     if cnt == 0: continue
-    repeat = max(1, int(median_count / cnt)) - 1  # 稀有动作额外重复几次
+    # 计算重复次数：ceil(median/cnt) - 1，至少给稀有动作1次额外拷贝
+    repeat = max(0, int(np.ceil(median_count / cnt)) - 1)
+    # 高置信度样本（>0.8）额外加1次，确保强规则不被稀释
+    high_conf_mask = Y[:, act_idx] >= 0.8
+    if high_conf_mask.sum() > 0:
+        extra_X.append(np.repeat(X[high_conf_mask], max(1, repeat+1), axis=0))
+        extra_Y.append(np.repeat(Y[high_conf_mask], max(1, repeat+1), axis=0))
+        if repeat == 0:  # cnt≈median但有高置信样本，也要加
+            repeat = 0   # 后面普通repeat跳过，高conf已处理
     if repeat > 0:
-        mask = Y[:, act_idx] > 0
-        extra_X.append(np.repeat(X[mask], repeat, axis=0))
-        extra_Y.append(np.repeat(Y[mask], repeat, axis=0))
+        mask = (Y[:, act_idx] > 0) & ~high_conf_mask
+        if mask.sum() > 0:
+            extra_X.append(np.repeat(X[mask], repeat, axis=0))
+            extra_Y.append(np.repeat(Y[mask], repeat, axis=0))
 
 if extra_X:
     X_oversample = np.vstack(extra_X)

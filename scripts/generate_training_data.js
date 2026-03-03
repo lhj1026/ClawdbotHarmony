@@ -59,8 +59,8 @@ const ACT_INDEX = Object.fromEntries(ACTIONS.map((a, i) => [a.code, i]));
 
 // ── 特征编码（71维 one-hot）───────────────────────────────────────
 // 布局：time[9] location[36] motion[4] phone[8] light[5] sound[5] dayType[4]
-const FEAT_DIM = 71;
-const OFFSETS = { time:0, location:9, motion:45, phone:49, light:57, sound:62, dayType:67 };
+const FEAT_DIM = 92;
+const OFFSETS = { time:0, location:12, motion:48, phone:56, light:68, sound:76, dayType:84 };
 
 function charToIdx(dim, c) {
   switch (dim) {
@@ -188,7 +188,8 @@ while ((m = ROW_RE.exec(content)) !== null) {
   if (recs.length === 0) continue;
 
   const x = encodeState(stateCode);
-  const y = new Array(40).fill(0);
+  const ACT_DIM_TOTAL = 64;  // 40个已定义 + 24个预留槽
+  const y = new Array(ACT_DIM_TOTAL).fill(0);
   for (const { idx, pct } of recs) {
     y[idx] = Math.max(y[idx], pct / 100.0);
   }
@@ -201,8 +202,11 @@ if (unresolved.size > 0) {
 }
 
 const output = {
-  meta: { feat_dim: FEAT_DIM, act_dim: ACTIONS.length, samples: samples.length,
-          offsets: OFFSETS, generated: new Date().toISOString() },
+  meta: { feat_dim: FEAT_DIM, act_dim: 64, act_used: ACTIONS.length,
+          offsets: OFFSETS,
+          dims: { time:12, location:36, motion:8, phone:12, light:8, sound:8, dayType:8 },
+          note: 'feat_dim=92(71used+21reserved), act_dim=64(40used+24reserved)',
+          generated: new Date().toISOString() },
   actions: ACTIONS.map((a, i) => ({ ...a, idx: i })),
   samples,
 };

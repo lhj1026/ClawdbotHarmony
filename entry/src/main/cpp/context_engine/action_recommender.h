@@ -31,18 +31,32 @@ namespace context_engine {
 // 常量
 // ============================================================
 
-constexpr int ACT_FEAT_DIM = 71;   // 状态特征维度
-constexpr int ACT_HIDDEN   = 64;   // MLP 隐藏层
-constexpr int ACT_COUNT    = 40;   // 动作总数
+// ── 特征向量维度（92维，含预留槽）──────────────────────────────────
+// 扩展规则：在预留槽内直接分配，不改变已有偏移，无需重训
+//
+//   Dim  | Used | Reserved | 说明
+//  ------|------|----------|----------------------------------
+//  time  |   9  |    3     | 新时段（如 nap=10）用 idx 9-11
+//  loc   |  15  |   21     | G-Z 已预留，idx 24-34 可用
+//  motion|   4  |    4     | cycling=5, transit=6 用 idx 4-7
+//  phone |   8  |    4     | 新姿态用 idx 8-11
+//  light |   5  |    3     | 用 idx 5-7
+//  sound |   5  |    3     | 用 idx 5-7
+//  dayType|  4  |    4     | travel=5, sick=6 用 idx 4-7
 
-// 特征向量各维度偏移
-constexpr int OFF_TIME    = 0;   // 9 dims
-constexpr int OFF_LOC     = 9;   // 36 dims
-constexpr int OFF_MOTION  = 45;  // 4 dims
-constexpr int OFF_PHONE   = 49;  // 8 dims
-constexpr int OFF_LIGHT   = 57;  // 5 dims
-constexpr int OFF_SOUND   = 62;  // 5 dims
-constexpr int OFF_DAYTYPE = 67;  // 4 dims
+constexpr int ACT_FEAT_DIM = 92;   // 状态特征维度（含预留）
+constexpr int ACT_HIDDEN   = 80;   // MLP 隐藏层
+constexpr int ACT_COUNT    = 64;   // 动作总槽数（40已定义 + 24预留）
+constexpr int ACT_DEFINED  = 40;   // 当前已定义动作数
+
+// 特征向量各维度偏移（已固化，永不改变）
+constexpr int OFF_TIME    = 0;   // 12 dims (9 used)
+constexpr int OFF_LOC     = 12;  // 36 dims (15+1 used, G-Z reserved)
+constexpr int OFF_MOTION  = 48;  // 8 dims  (4 used)
+constexpr int OFF_PHONE   = 56;  // 12 dims (8 used)
+constexpr int OFF_LIGHT   = 68;  // 8 dims  (5 used)
+constexpr int OFF_SOUND   = 76;  // 8 dims  (5 used)
+constexpr int OFF_DAYTYPE = 84;  // 8 dims  (4 used)
 
 // ============================================================
 // 状态特征向量
@@ -106,7 +120,7 @@ struct ActFeature {
 };
 
 // ============================================================
-// Mini MLP（71 → 64 → 40）
+// Mini MLP（92 → 80 → 64）
 // ============================================================
 
 struct ActionMLP {
