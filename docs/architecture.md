@@ -305,3 +305,156 @@ entry/src/main/cpp/
 
 - **v2.58.17**: Multi-card A2UI, combined state+rec card, action plugin system, source dedup
 - **RULES_VERSION 4**: 22 rules, low battery 30%, tiered T0/T1/T2
+
+---
+
+## 动作推荐系统（ActionRecommender）/ Action Recommendation System
+
+### 架构概览
+
+```
+PhysicalState (当前)  ──┐
+PhysicalState (上一个) ──┤ ActFeature::fromPair()
+time_in_state (归一化) ──┘
+        │
+        ▼
+  特征向量 185维
+  [curr_state 92] | [prev_state 92] | [time_norm 1]
+        │
+        ├──▶ ActionMLP (185→128→64)  ──▶ prior概率 (权重 0.6)
+        │
+        └──▶ LinUCB (40臂, 185维)   ──▶ UCB分数  (权重 0.4)
+                    │
+                    ▼
+           combined = 0.6×mlp + 0.4×tanh(ucb)
+                    │
+                    ▼
+              Top-3 推荐动作
+                    │
+              用户接受/拒绝
+                    │
+                    ▼
+        reward(state, actionCode, r)
+         → UCBArm.update(feat, r)
+         → debounced save to ucb_state.bin
+```
+
+### 状态对编码（State Pair Feature）
+
+状态链中"从哪来"是最强的推荐信号：
+- 刚从公司→家：推"导航回家"优先于"休息提醒"
+- 早高峰从家→地铁：推"查看到站时间"优先于"查看日程"
+- 机场候机且刚从通勤来：推"检查行程/车票"概率更高
+
+**单状态编码（92维）：**
+
+| 维度     | 偏移 | 总槽数 | 已用 | 预留 |
+|----------|------|--------|------|------|
+| time     | 0    | 12     | 9    | 3    |
+| location | 12   | 36     | 15   | 21   |
+| motion   | 48   | 8      | 4    | 4    |
+| phone    | 56   | 12     | 8    | 4    |
+| light    | 68   | 8      | 5    | 3    |
+| sound    | 76   | 8      | 5    | 3    |
+| dayType  | 84   | 8      | 4    | 4    |
+| **合计** |      | **92** | 50   | 42   |
+
+**状态对特征（185维）：**
+```
+x[0..91]   = 当前状态编码（92维 one-hot）
+x[92..183] = 上一状态编码（92维 one-hot）
+x[184]     = time_norm
+             0.0 = 刚到(<5min)
+             0.33 = 稳定(5-30min)
+             0.67 = 久留(30-120min)
+             1.0  = 超长(>2h)
+```
+
+**StateHistory 环形缓冲区（C++）：**
+```cpp
+// ActionRecommender 内维护 StateHistory history_
+// recommend(s) 时自动调用 history_.push(s)
+// 取 history_.prev() 构建状态对特征
+// history_.timeNorm() 计算时长分段
+```
+
+### 训练数据生成（离线）
+
+**数据来源：** 推荐矩阵 218行 × 合成过渡 = ~1800个状态对样本
+
+**过渡合成规则（TRANSITION_PROBS）：**
+```
+home        ← commute(50%) / outdoor(20%) / restaurant(15%) / work(15%)
+work        ← commute(60%) / home(20%) / restaurant(10%) / outdoor(10%)
+commute     ← home(55%) / work(45%)
+restaurant  ← work(40%) / outdoor(25%) / home(20%) / shopping(15%)
+airport     ← commute(50%) / home(30%) / work(20%)
+subway      ← home(50%) / work(50%)
+cafe        ← work(50%) / outdoor(30%) / home(20%)
+...
+```
+
+**训练流水线：**
+```bash
+node scripts/generate_training_data.js   # → training_data.json (1806 samples)
+python3 scripts/train_action_mlp.py      # → action_weights.h  (185→128→64)
+node tests/.../test_action_recommender.js  # 7/7 pass
+```
+
+### 动作目录（ActionCatalog）
+
+40个标准动作，64槽（24预留），格式 `[Cat][N]`：
+
+| 分类 | 范围 | 说明 |
+|------|------|------|
+| A - 亮码 | A1-A4 | 地铁码/公交码/支付码/门票 |
+| B - 日程 | B1-B9 | 今日/明日日程、闹钟、提醒 |
+| C - 天气 | C1    | 天气查询 |
+| D - 媒体 | D1-D4 | 音乐/白噪音/播客/新闻 |
+| E - 导航 | E1-E8 | 回家/公司/餐厅/枢纽/停车 |
+| F - 交通 | F1-F4 | 到站时间/防过站/船班/场次 |
+| G - 健康 | G1-G5 | 久坐/补水/拉伸/步数/休息 |
+| H - 餐饮 | H1    | 点餐建议 |
+| I - 社交 | I1    | 联系人提醒 |
+| J - 系统 | J1-J3 | 关闭通知/静音/注意财物 |
+| K-Z      | 预留  | 未来扩展 |
+
+**扩展规则（无破坏性）：**
+- 加新动作：填 `ACTIONS` 数组 + 矩阵加行 → 重训（30秒）
+- 加新位置（G-Z）：直接用 location 预留槽，零改动
+- 加新 motion/phone 类型：用对应维度 reserved 槽，零改动
+
+### UI 反馈链路
+
+```
+A2UI 卡片展示
+  → recordShown(stateCode, [A1,B7,E1])   ← 记录快照，开始超时计时
+
+用户点击动作按钮
+  → context_feedback(accept, actionCode=B7)
+  → handleA2UIAction → reward(state, B7, 1.0)
+
+用户关闭卡片（× 按钮）
+  → context_feedback(reject)
+  → reward(state, A1, 0.0) + reward(state, B7, 0.0) + reward(state, E1, 0.0)
+
+卡片展示 30s 无操作后自动消失
+  → checkPreviousTimeout() → reward(state, *, 0.15)  ← 弱负反馈
+
+App 退后台
+  → RecommenderBridge.flush() → save ucb_state.bin
+```
+
+### 相关文件
+
+| 文件 | 说明 |
+|------|------|
+| `entry/src/main/cpp/context_engine/action_recommender.h` | C++ MLP+LinUCB+StateHistory |
+| `entry/src/main/cpp/context_engine/action_weights.h` | 预训练权重（自动生成） |
+| `entry/src/main/ets/service/context/RecommenderBridge.ets` | ArkTS 桥接层 |
+| `scripts/generate_training_data.js` | 状态对训练数据生成 |
+| `scripts/train_action_mlp.py` | MLP 训练脚本 |
+| `scripts/training_data.json` | 训练数据（~1800 样本） |
+| `docs/ps-recommendation-matrix.md` | 推荐矩阵（218行，StateCode主键） |
+| `docs/action-catalog.json` | 标准动作目录 |
+| `tests/context_ai/unit/test_action_recommender.js` | 7场景推理测试 |
