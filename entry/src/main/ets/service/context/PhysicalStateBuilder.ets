@@ -87,17 +87,17 @@ export class PhysicalStateBuilder {
       }
     }
 
-    // 无围栏但在移动 → 通勤
+    // 无围栏但在移动 → 在途
     if (motionState === 'driving' || motionState === 'transit') {
-      return 'commute';
+      return 'en_route';
     }
     if (motionState === 'walking' || motionState === 'cycling') {
-      // 步行/骑车且无围栏 → 可能是通勤或户外
+      // 步行/骑车且无围栏 → 可能在途或户外
       let wifiSsid = this.trayValue('wifiSsid');
       if (wifiSsid.length === 0) {
         return 'outdoor';
       }
-      return 'commute';
+      return 'en_route';
     }
 
     // 无 WiFi + 有 GPS → 户外
@@ -141,40 +141,71 @@ export class PhysicalStateBuilder {
     let isLyingDown = this.trayValue('isLyingDown') === 'true';
     let isHolding = this.trayValue('isHolding') === 'true';
 
+    // 运动中(走路/跑步/开车/公交)时人不可能躺着 → isLyingDown 实际是口袋倾斜
+    let motionState = this.trayValue('motionState');
+    let isMoving = motionState === 'walking' || motionState === 'running'
+      || motionState === 'driving' || motionState === 'transit'
+      || motionState === 'cycling';
+
+    // proximity 提前声明（方式1和方式2都需要）
+    let proximity = this.trayValue('proximity');
+    let ambientLight = this.trayValueNum('ambient_brightness', -1);
+
     // 方式 1: PosturePlugin 的 phone_posture 直接映射 (主要来源)
     let posture = this.trayValue('phone_posture');
     if (posture.length > 0 && posture !== 'unknown') {
+      // 关键规则：运动中(走路/跑步/开车)时，手机不可能平放在桌上
+      // 如果运动状态非静止，且 PosturePlugin 判断为平放 → 纠正为携带状态
+      if (isMoving && (posture === 'on_desk' || posture === 'flat' || posture === 'face_up')) {
+        // 运动 + 平放判断 → 实际在口袋或手中
+        if (proximity === 'near') return 'in_pocket';
+        return 'in_use';  // 手中握持使用
+      }
+
       switch (posture) {
         case 'in_use':
-          // 手握 + 躺卧 → 组合状态
+          // 运动中 + isLyingDown → 口袋（不是躺卧）
+          if (isLyingDown && isMoving) return 'in_pocket';
           if (isLyingDown) return 'holding_lying';
+          // PosturePlugin 仅凭光线判断 in_use，需交叉验证加速度计
+          // isHolding=false 表示手机平放 → 实际在桌上，非手握使用
+          if (!isHolding) return 'on_desk';
           return 'in_use';
         case 'on_desk':
         case 'flat':
+          // 交叉验证：PosturePlugin 凭暗光判断在桌上，但加速度计显示手握 → 实际在使用
+          if (isHolding) return 'in_use';
           return 'on_desk';
         case 'in_pocket': return 'in_pocket';
         case 'face_down': return 'face_down';
         case 'face_up':
-          // 暗室 + 手握 + 躺卧 → 手握躺卧（暗室看手机）
-          if (isLyingDown && isHolding) return 'holding_lying';
-          // 暗室 + 非手握 → 平放暗室（放床头/桌上）
+          // 暗室 + 手握 + 躺卧 + 非运动 → 手握躺卧（暗室看手机）
+          if (isLyingDown && isHolding && !isMoving) return 'holding_lying';
+          // 运动中 + 暗 → 口袋
+          if (isMoving) return 'in_pocket';
           return 'face_up';
         default: break;
       }
     }
 
     // 方式 2: 从 proximity + ambient_brightness 推断 (备用)
-    let proximity = this.trayValue('proximity');
-    let ambientLight = this.trayValueNum('ambient_brightness', -1);
+
+    // 运动中 + proximity=near → 口袋（放宽亮度要求）
+    if (proximity === 'near' && isMoving) return 'in_pocket';
 
     // 口袋必须 proximity=near；仅凭黑暗不能判断为口袋（可能是暗室躺着看手机）
     if (proximity === 'near' && ambientLight >= 0 && ambientLight < 5) return 'in_pocket';
     if (proximity === 'near' && ambientLight > 5) return 'face_down';
     if (ambientLight >= 0 && ambientLight < 10) {
+      // 暗室 + 运动中 → 口袋
+      if (isMoving) return 'in_pocket';
       // 暗室：区分手握躺卧 vs 平放
       if (isLyingDown && isHolding) return 'holding_lying';
       return 'face_up';
     }
+
+    // 运动中 + isLyingDown → 口袋（加速度计倾斜被误判为躺卧）
+    if (isMoving && isLyingDown) return 'in_pocket';
 
     // 加速度计兜底：即使 PosturePlugin 未知，若能确定躺卧+握持也给出状态
     if (isLyingDown && isHolding) return 'holding_lying';

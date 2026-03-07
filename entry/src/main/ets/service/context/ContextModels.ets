@@ -592,6 +592,7 @@ export interface TimelineEntry {
   latitude: number;              // GPS 纬度 (0 = 未知)
   longitude: number;             // GPS 经度 (0 = 未知)
   geocodeLabel: string;          // 逆地理编码地名 (道路名/区域名)
+  scenarioTitle: string;         // 匹配的场景标题 (如 "工作日早起", 空=无匹配)
 }
 
 // ==================== 传感器录制/回放 ====================
@@ -670,7 +671,7 @@ export type TimeSlot =
 export type LocationCategory =
   | 'home'        // WiFi geofence = home
   | 'work'        // WiFi geofence = work
-  | 'commute'     // 无围栏 + 移动中 (driving/transit/walking)
+  | 'en_route'    // 无围栏 + 移动中 (driving/transit/walking) — 在途
   | 'restaurant'  // WiFi geofence = restaurant
   | 'gym'         // WiFi geofence = gym
   | 'transit_hub' // WiFi geofence = transit (机场/火车站)

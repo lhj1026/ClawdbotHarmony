@@ -266,7 +266,7 @@ struct DailyTimelinePage {
                       .fontWeight(FontWeight.Medium)
                       .fontColor('#1A1A1A')
 
-                    // Motion state
+                    // Motion state + scenario title
                     Row({ space: 6 }) {
                       Circle()
                         .width(8)
@@ -275,6 +275,11 @@ struct DailyTimelinePage {
                       Text(this.getMotionLabel(entry.motionState))
                         .fontSize(12)
                         .fontColor(this.getMotionColor(entry.motionState))
+                      if (entry.scenarioTitle.length > 0) {
+                        Text('| ' + entry.scenarioTitle)
+                          .fontSize(11)
+                          .fontColor('#FF9800')
+                      }
                     }
                     .margin({ top: 4 })
 

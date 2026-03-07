@@ -4,6 +4,7 @@ cmake_minimum_required(VERSION 3.5.0)
 add_library(motion_detector SHARED
     motion_detector_napi.cpp
     sampling_strategy_napi.cpp
+    motion_classifier_napi.cpp
 )
 
 target_include_directories(motion_detector PRIVATE

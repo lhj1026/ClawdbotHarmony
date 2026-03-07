@@ -124,6 +124,7 @@ export struct ChatPage {
   private identityListener: ((identity: AgentIdentity | undefined) => void) | undefined = undefined;
   private a2uiListener: ((type: string, content: string) => void) | undefined = undefined;
   private a2uiInjectFn: ((content: string) => void) | undefined = undefined;
+  private a2uiResetFn: (() => void) | undefined = undefined;
   private canvasControllerFn: ((url: string) => void) | undefined = undefined;
   private approvalTimers: Map<string, number> = new Map();
   private feishuConnected: boolean = false;
@@ -295,6 +296,7 @@ export struct ChatPage {
       this.a2uiListener = undefined;
     }
     this.a2uiInjectFn = undefined;
+    this.a2uiResetFn = undefined;
     if (this.identityListener) {
       NodeRuntime.getInstance().removeIdentityListener(this.identityListener);
       this.identityListener = undefined;
@@ -575,7 +577,7 @@ export struct ChatPage {
                 showTimestamp: this.shouldShowTimestamp(index),
                 onImageClick: (path: string): void => { this.previewImagePath = path; },
                 onButtonClick: (action: string): void => { this.handleButtonAction(action); },
-                onA2UIReady: (inject: (content: string) => void): void => { this.a2uiInjectFn = inject; },
+                onA2UIReady: (inject: (content: string) => void, reset: () => void): void => { this.a2uiInjectFn = inject; this.a2uiResetFn = reset; },
                 onA2UIAction: (json: string): void => { NodeRuntime.getInstance().sendA2UIAction(json); },
                 onCanvasReady: (ctrl: webview.WebviewController): void => { NodeRuntime.getInstance().setInlineCanvasController(ctrl); },
                 onCanvasAction: (_json: string): void => { /* future use */ },
@@ -2351,12 +2353,8 @@ Respond ONLY with the JSON array.`;
     this.log.info('ChatPage', `A2UI event: type=${type} contentLen=${content.length}`);
     if (type === 'push') {
       // A2UI JSONL push
-      // First try to find the gw assistant message (normal chat flow)
       let idx = this.findGwAssistantIndex();
       if (idx < 0) {
-        // No gwAssistantMsgId — find the LAST assistant message
-        // This handles unsolicited context recommendations where the text message
-        // was just added by handleUnsolicitedAgentEvent
         for (let i = this.messages.length - 1; i >= 0; i--) {
           if (this.messages[i].role === 'assistant') {
             idx = i;
@@ -2366,7 +2364,6 @@ Respond ONLY with the JSON array.`;
         }
       }
       if (idx < 0) {
-        // Still not found — create a new message
         let msg = new ChatMessage('assistant', '');
         this.messages.push(msg);
         idx = this.messages.length - 1;
@@ -2377,18 +2374,30 @@ Respond ONLY with the JSON array.`;
       msg.a2uiContent = msg.a2uiContent.length > 0 ? msg.a2uiContent + '\n' + content : content;
       if (this.a2uiInjectFn) {
         this.a2uiInjectFn(content);
+      } else {
+        // WebView 不存在，通过 splice 触发 ArkUI 创建
+        this.messages.splice(idx, 1, msg);
       }
       this.scrollToEnd();
     } else if (type === 'reset') {
-      // 清空 A2UI 内容 — 通过替换消息对象触发 UI 刷新
-      let idx = this.findGwAssistantIndex();
-      if (idx >= 0) {
-        let msg = this.messages[idx];
-        msg.a2uiContent = '';
-        // ArkUI @Observed 需要数组变更才能触发子组件刷新
-        this.messages.splice(idx, 1, msg);
+      // 清空 A2UI 内容
+      if (this.a2uiResetFn) {
+        // WebView 存在 → 通过 JS 清空内容，保持 WebView 存活
+        this.a2uiResetFn();
+        let idx = this.findGwAssistantIndex();
+        if (idx >= 0) {
+          this.messages[idx].a2uiContent = '';
+        }
+      } else {
+        // WebView 不存在 → 清空数据并 splice 触发 UI 刷新
+        let idx = this.findGwAssistantIndex();
+        if (idx >= 0) {
+          let msg = this.messages[idx];
+          msg.a2uiContent = '';
+          this.messages.splice(idx, 1, msg);
+        }
       }
-      this.a2uiInjectFn = undefined;
+      // 不清除 a2uiInjectFn/a2uiResetFn — WebView 保持存活
     } else if (type === 'canvas.present') {
       // Inline canvas: prepare a slot in the current assistant message
       let idx = this.findGwAssistantIndex();

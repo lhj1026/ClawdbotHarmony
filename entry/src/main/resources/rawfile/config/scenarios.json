@@ -299,7 +299,7 @@
         {
           "condition": {
             "time": "morning",
-            "location": "commute",
+            "location": "en_route",
             "motion": "driving",
             "phone": "*",
             "light": "normal",
@@ -335,7 +335,7 @@
         {
           "condition": {
             "time": "morning",
-            "location": "commute",
+            "location": "en_route",
             "motion": "driving",
             "phone": "*",
             "light": "normal",
@@ -387,7 +387,7 @@
         {
           "condition": {
             "time": "morning",
-            "location": "commute",
+            "location": "en_route",
             "motion": "driving",
             "phone": "*",
             "light": "normal",
@@ -475,7 +475,7 @@
         {
           "condition": {
             "time": "morning",
-            "location": "commute",
+            "location": "en_route",
             "motion": "transit",
             "phone": "in_use|in_pocket",
             "light": "*",
@@ -545,7 +545,7 @@
         {
           "condition": {
             "time": "morning",
-            "location": "commute",
+            "location": "en_route",
             "motion": "cycling",
             "phone": "in_pocket",
             "light": "bright",
@@ -615,7 +615,7 @@
         {
           "condition": {
             "time": "evening",
-            "location": "commute",
+            "location": "en_route",
             "motion": "driving",
             "phone": "*",
             "light": "dim|dark",
@@ -703,7 +703,7 @@
         {
           "condition": {
             "time": "evening",
-            "location": "commute",
+            "location": "en_route",
             "motion": "transit",
             "phone": "in_use",
             "light": "dark|dim",
@@ -768,7 +768,7 @@
         {
           "condition": {
             "time": "late_night",
-            "location": "commute",
+            "location": "en_route",
             "motion": "driving",
             "phone": "*",
             "light": "dark",
@@ -1903,7 +1903,7 @@
         {
           "condition": {
             "time": "*",
-            "location": "commute|outdoor",
+            "location": "en_route|outdoor",
             "motion": "cycling",
             "phone": "in_pocket",
             "light": "bright",
@@ -2217,7 +2217,7 @@
         {
           "condition": {
             "time": "*",
-            "location": "commute",
+            "location": "en_route",
             "motion": "driving",
             "phone": "*",
             "light": "normal",
@@ -2479,7 +2479,7 @@
         {
           "condition": {
             "time": "*",
-            "location": "commute",
+            "location": "en_route",
             "motion": "transit",
             "phone": "in_use",
             "light": "normal",
@@ -2544,7 +2544,7 @@
         {
           "condition": {
             "time": "*",
-            "location": "commute",
+            "location": "en_route",
             "motion": "driving",
             "phone": "in_use",
             "light": "*",

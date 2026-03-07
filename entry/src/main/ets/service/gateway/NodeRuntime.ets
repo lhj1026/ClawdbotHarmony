@@ -64,7 +64,8 @@ import { HomeScene } from '../context/scenes/HomeScene';
 import { WorkScene } from '../context/scenes/WorkScene';
 import { SmartActionPlugin } from '../context/actions/SmartActionPlugin';
 import { GeofenceSuggestion } from '../context/LocationDiscoveryService';
-import { ActionType, Geofence, GeofenceCategory, LearnedPlaceSignals, UserAction } from '../context/ContextModels';
+import { ActionType, Geofence, GeofenceCategory, LearnedPlaceSignals, UserAction, PhysicalState, ScenarioMatchResult, ScenarioState } from '../context/ContextModels';
+import { PhysicalStateBuilder } from '../context/PhysicalStateBuilder';
 import { FederatedSync } from '../context/FederatedSync';
 import { PushCapability } from './PushCapability';
 import { TravelInfoService, FlightInfo, TrainInfo } from '../context/TravelInfoService';
@@ -221,6 +222,10 @@ export class NodeRuntime {
   private _pendingStateRec: PendingStateRec | null = null;
   private _pendingRecContext: PendingRecContext | null = null;  // LinUCB 反馈上下文
   private _lastKnownStateCode: string = '';                     // 最近一次评估的7位状态码
+  private _prevBestScenarioId: string = '';                     // 上一次最佳活跃场景 ID
+  private _prevBestScenarioName: string = '';                   // 上一次最佳活跃场景名称
+  private _prevStateCode: string = '';                          // 上一次状态码
+  private _prevStateLabel: string = '';                         // 上一次状态标签
   // A2UI 状态卡片去重：记录上次显示的状态文本
   private _lastStateCardText: string = '';
   private _lastStateCardTime: number = 0;
@@ -738,42 +743,8 @@ export class NodeRuntime {
       } catch (_e) { /* 静默跳过 */ }
       // ────────────────────────────────────────────────────────────
 
-      // 获取转移路径信息
-      let transitionJson = '';
-      try {
-        transitionJson = ContextEngineService.getInstance().getTransitionInfo();
-      } catch (e) {
-        // Transition info not available — ignore
-      }
-
-      // 一张合并卡片：状态 + 推荐选项
-      let a2uiJsonl: string;
-      if (stateInfo.length > 0 && alternatives.length > 0) {
-        a2uiJsonl = this.buildCombinedStateRecA2UI(stateInfo, alternatives, transitionJson);
-      } else if (alternatives.length > 1) {
-        a2uiJsonl = this.buildRecommendationSelectionA2UI(alternatives, transitionJson);
-      } else {
-        a2uiJsonl = this.buildContextRecommendationA2UI(ruleId, ruleName, rec.reason, confidence);
-      }
-
-      let chatText = stateInfo.length > 0
-        ? `🔍 检测到状态变化\n${stateInfo}`
-        : `💡 ${alternatives.length}个推荐`;
-
-      let event: GatewayChatEvent = {
-        runId: `ctx-${Date.now()}`,
-        sessionKey: '',
-        seq: 0,
-        state: 'final',
-        message: {
-          role: 'assistant',
-          content: [{ type: 'text', text: chatText }],
-        },
-      };
-      this.dispatchChatEvent(event);
-      this.dispatchA2UI('push', a2uiJsonl);
-
-      // Also send system notification if in background
+      // A2UI 卡片由 stateChangeListener 统一处理，此处不再重复生成
+      // 只发送通知（后台时）
       if (!this._isInForeground) {
         NotificationHelper.getInstance().send('💡 ' + I18n.t('context.notification.title'), rec.reason).catch(() => { /* ignore */ });
       }
@@ -812,6 +783,37 @@ export class NodeRuntime {
     cas.addA2UIListener((type: string, content: string) => {
       this.log.info(TAG, `ContextA2UI: type=${type} contentLen=${content.length}`);
       this.dispatchA2UI(type, content);
+    });
+
+    // 状态变化监听：每当 PhysicalState 变化时更新 A2UI 卡片（原地替换）
+    cas.addStateChangeListener((ps: PhysicalState, prevPS: PhysicalState | undefined) => {
+      this.log.info(TAG, `[StateChange] ${PhysicalStateBuilder.fingerprint(ps)}`);
+
+      // 获取场景和推荐数据
+      let currentScenarios = cas.getLastScenarioResults();
+      let prevScenarios = cas.getPrevScenarioResults();
+      let currentStateCode = this.buildStateCodeFromPhysical(ps);
+      this._lastKnownStateCode = currentStateCode;
+
+      // ActionRecommender top 3
+      let recItems: RecommendItem[] = [];
+      try {
+        recItems = RecommenderBridge.getInstance().predict(currentStateCode, 3);
+      } catch (_e) { /* ignore */ }
+
+      // 清除旧卡片 → 推送新卡片（原地更新）
+      let a2uiJsonl = this.buildScenarioRecA2UI(
+        ps, prevPS, currentScenarios, prevScenarios, recItems, []
+      );
+      this.dispatchA2UI('reset', '');
+      this.dispatchA2UI('push', a2uiJsonl);
+
+      // 记录展示
+      if (recItems.length > 0) {
+        RecommenderBridge.getInstance().recordShown(currentStateCode, recItems);
+        let actionCodes = recItems.map((item: RecommendItem) => item.code).filter((c: string) => c.length >= 2);
+        this._pendingRecContext = { stateCode: currentStateCode, actionCodes };
+      }
     });
 
     this.log.info(TAG, '情景智能监听器注册完成');
@@ -1593,6 +1595,33 @@ export class NodeRuntime {
           let a2uiJsonl = this.buildContextRecommendationA2UI(
             this._lastRecRuleId, this._lastRecRuleName, this._lastRecReason, this._lastRecConfidence);
           this.dispatchA2UI('push', a2uiJsonl);
+        }
+      } else if (feedback === 'custom_action') {
+        // 用户自定义操作
+        let customInput = (ctx['custom_action_input'] ?? '') as string;
+        this.dispatchA2UI('reset', '');
+        this._pendingStateRec = null;
+        if (customInput.length > 0) {
+          this.log.info(TAG, `Custom action: ${customInput}`);
+          // 将自定义操作作为用户消息发送给 AI 处理
+          let harmonyKey = 'agent:main:harmony:default';
+          let event: GatewayChatEvent = {
+            runId: `custom-${Date.now()}`, sessionKey: harmonyKey, seq: 0, state: 'final',
+            message: { role: 'user', content: [{ type: 'text', text: customInput }] },
+          };
+          this.dispatchChatEvent(event);
+          this.sendFeedbackResponse(`📝 已收到自定义操作: ${customInput}`);
+
+          // 记录 LinUCB 反馈: 用户未选择任何推荐 → 对展示的推荐给 TIMEOUT 反馈
+          if (this._pendingRecContext) {
+            let rec = RecommenderBridge.getInstance();
+            for (const code of this._pendingRecContext.actionCodes) {
+              rec.reward(this._pendingRecContext.stateCode, code, FeedbackType.TIMEOUT);
+            }
+            this._pendingRecContext = null;
+          }
+        } else {
+          this.sendFeedbackResponse('⚠️ 请输入自定义操作内容');
         }
       } else if (feedback === 'dismiss') {
         // Dismiss — 关闭卡片
@@ -4139,6 +4168,165 @@ export class NodeRuntime {
   }
 
   /**
+   * 从 PhysicalState 构建 7 字符状态码 (用于 ActionRecommender)
+   */
+  private buildStateCodeFromPhysical(ps: PhysicalState): string {
+    const TIME_MAP: Record<string, string> = {
+      'sleeping': '1', 'dawn': '2', 'morning': '3', 'forenoon': '4',
+      'lunch': '5', 'afternoon': '6', 'evening': '7', 'night': '8', 'late_night': '9'
+    };
+    const LOC_MAP: Record<string, string> = {
+      'home': '1', 'work': '2', 'en_route': '3', 'restaurant': '4',
+      'gym': '5', 'outdoor': '6', 'transit_hub': '7', 'shopping': '8', 'cafe': 'D'
+    };
+    const MOT_MAP: Record<string, string> = {
+      'stationary': '1', 'walking': '2', 'running': '3', 'driving': '4',
+      'cycling': '2', 'transit': '1'
+    };
+    const PHN_MAP: Record<string, string> = {
+      'in_use': '1', 'holding_lying': '2', 'on_desk': '3', 'face_up': '4',
+      'in_pocket': '5', 'face_down': '6', 'charging': '7'
+    };
+    const LIT_MAP: Record<string, string> = { 'dark': '1', 'dim': '2', 'normal': '3', 'bright': '4' };
+    const SND_MAP: Record<string, string> = { 'silent': '1', 'quiet': '2', 'normal': '3', 'noisy': '4' };
+    const DAY_MAP: Record<string, string> = { 'workday': '1', 'weekend': '2', 'holiday': '3' };
+
+    return (TIME_MAP[ps.time] ?? '0') + (LOC_MAP[ps.location] ?? '0') +
+      (MOT_MAP[ps.motion] ?? '0') + (PHN_MAP[ps.phone] ?? '0') +
+      (LIT_MAP[ps.light] ?? '0') + (SND_MAP[ps.sound] ?? '0') +
+      (DAY_MAP[ps.dayType] ?? '0');
+  }
+
+  /**
+   * 构建场景推荐 A2UI 卡片：
+   *   1. 上一个场景 → 当前场景 (状态转移)
+   *   2. Top 3 ActionRecommender 推荐 (可选择)
+   *   3. 自定义操作输入框
+   */
+  private buildScenarioRecA2UI(
+    currentPS: PhysicalState | undefined,
+    prevPS: PhysicalState | undefined,
+    currentScenarios: ScenarioMatchResult[],
+    prevScenarios: ScenarioMatchResult[],
+    recItems: RecommendItem[],
+    ruleAlternatives: PendingAlternative[]
+  ): string {
+    let children: string[] = [];
+
+    // 如果 currentPS 未传入，实时构建
+    if (!currentPS) {
+      currentPS = PhysicalStateBuilder.getInstance().build();
+    }
+    let currentStateCode = this.buildStateCodeFromPhysical(currentPS);
+
+    // 获取当前活跃场景（持续状态，非仅转移事件）
+    let cas = ContextAwarenessService.getInstance();
+    let activeScenarios = cas.getScenarioMatcher().getActiveStates();
+    // 按 confidence 降序
+    activeScenarios.sort((a, b) => b.confidence - a.confidence);
+    let bestActive = activeScenarios.length > 0 ? activeScenarios[0] : undefined;
+
+    // ── 1. 当前状态区 ──
+    // 当前状态标签: 场景名 + 7-tuple 描述
+    let currScenarioLabel = '';
+    let currScenarioCode = '';
+    if (bestActive) {
+      currScenarioLabel = bestActive.scenario.name;
+      currScenarioCode = bestActive.scenario.id;
+    }
+    let currStateLabel = this.physicalStateLabel(currentPS);
+
+    // 当前状态标题行 + 详情
+    if (currScenarioLabel.length > 0) {
+      // 有场景：标题=场景名，详情=7-tuple
+      let safeLabel = currScenarioLabel.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      children.push(`{"type":"text","text":"📍 ${safeLabel}","style":{"fontSize":16,"fontWeight":"bold","color":"#4CAF50"}}`);
+      let detail = `${I18n.t('ps.time.' + currentPS.time)} · ${I18n.t('ps.location.' + currentPS.location)} · ${I18n.t('ps.motion.' + currentPS.motion)} · ${I18n.t('ps.phone.' + currentPS.phone)}`;
+      let safeDetail = detail.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      children.push(`{"type":"text","text":"${safeDetail}","style":{"fontSize":13,"color":"#666"}}`);
+    } else {
+      // 无场景：只显示7-tuple详情作为标题，不重复
+      let detail = `${I18n.t('ps.time.' + currentPS.time)} · ${I18n.t('ps.location.' + currentPS.location)} · ${I18n.t('ps.motion.' + currentPS.motion)} · ${I18n.t('ps.phone.' + currentPS.phone)}`;
+      let safeDetail = detail.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      children.push(`{"type":"text","text":"📍 ${safeDetail}","style":{"fontSize":16,"fontWeight":"bold","color":"#4CAF50"}}`);
+    }
+
+    // 上一个状态
+    if (this._prevStateCode.length > 0) {
+      let prevDisplay = this._prevBestScenarioName.length > 0
+        ? this._prevBestScenarioName
+        : this._prevStateLabel;
+      let safePrev = prevDisplay.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      children.push(`{"type":"text","text":"⬆️ 上一个: ${safePrev}","style":{"fontSize":13,"color":"#888"}}`);
+    }
+
+    // 更新 "上一个" 追踪（下次显示时使用）
+    this._prevStateCode = currentStateCode;
+    this._prevStateLabel = currStateLabel;
+    this._prevBestScenarioId = currScenarioCode;
+    this._prevBestScenarioName = currScenarioLabel;
+
+    // ── 2. 推荐操作区 ──
+    children.push(`{"type":"text","text":"── 💡 推荐操作 ──","style":{"fontSize":14,"color":"#888","textAlign":"center"}}`);
+
+    // 优先用 ActionRecommender 结果，fallback 到规则引擎 alternatives
+    if (recItems.length > 0) {
+      for (let i = 0; i < recItems.length && i < 3; i++) {
+        let item = recItems[i];
+        let emoji = i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉';
+        let variant = i === 0 ? '"variant":"primary",' : '';
+        let safeName = item.name.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        let safeCode = item.code.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        let pct = Math.round(item.score * 100);
+        children.push(
+          `{"type":"button","text":"${emoji} ${safeName} (${pct}%)",${variant}"action":{"event":{"name":"context_feedback","context":{"feedback":"accept","actionCode":"${safeCode}","ruleName":"${safeName}"}}}}`
+        );
+      }
+    } else if (ruleAlternatives.length > 0) {
+      for (let i = 0; i < ruleAlternatives.length && i < 3; i++) {
+        let alt = ruleAlternatives[i];
+        let emoji = i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉';
+        let variant = i === 0 ? '"variant":"primary",' : '';
+        let safeDesc = alt.actionDesc.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        let safeRuleId = alt.ruleId.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        let safeRuleName = alt.ruleName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        let safeActionCode = (alt.actionCode ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        children.push(
+          `{"type":"button","text":"${emoji} ${safeDesc} (${alt.confidence}%)",${variant}"action":{"event":{"name":"context_feedback","context":{"ruleId":"${safeRuleId}","ruleName":"${safeRuleName}","feedback":"accept","actionCode":"${safeActionCode}"}}}}`
+        );
+      }
+    }
+
+    // ── 3. 自定义操作输入 ──
+    children.push(`{"type":"input","id":"custom_action_input","placeholder":"输入自定义操作...","style":{"fontSize":14}}`);
+    children.push(
+      `{"type":"button","text":"📤 提交自定义操作","variant":"secondary","action":{"event":{"name":"context_feedback","context":{"feedback":"custom_action"}}}}`
+    );
+
+    // 忽略按钮
+    children.push(
+      `{"type":"button","text":"🙈 忽略","variant":"borderless","action":{"event":{"name":"context_feedback","context":{"feedback":"dismiss"}}}}`
+    );
+
+    // 时间戳
+    let now = new Date();
+    let ts = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0') + ':' + now.getSeconds().toString().padStart(2, '0');
+    children.push(`{"type":"text","text":"🕐 更新于 ${ts}","style":{"fontSize":11,"color":"#BBB","textAlign":"right"}}`);
+
+    return `{"type":"form","id":"ctx_scenario_${Date.now()}","children":[${children.join(',')}]}`;
+  }
+
+  /**
+   * 将 PhysicalState 转换为简短中文标签 (无场景匹配时的 fallback)
+   */
+  private physicalStateLabel(ps: PhysicalState): string {
+    let time = I18n.t('ps.time.' + ps.time);
+    let loc = I18n.t('ps.location.' + ps.location);
+    let motion = I18n.t('ps.motion.' + ps.motion);
+    return `${time}·${loc}·${motion}`;
+  }
+
+  /**
    * Build A2UI JSONL for a context recommendation card using simplified format.
    * Shows: rule name, recommendation, confidence, and feedback buttons.
    */
@@ -5136,8 +5324,8 @@ export class NodeRuntime {
     }
 
     this.log.info(TAG, 'Fetching memories from server...');
-    let resJson = await this.operatorSession.request('memory.list', '{}', 15000);
-    this.log.info(TAG, `memory.list response: ${resJson.substring(0, 500)}`);
+    let resJson = await this.operatorSession.request('memory.search', '{"query":"*"}', 15000);
+    this.log.info(TAG, `memory.search response: ${resJson.substring(0, 500)}`);
     return resJson;
   }
 
@@ -5648,7 +5836,7 @@ export class NodeRuntime {
       'lunch': '5', 'afternoon': '6', 'evening': '7', 'night': '8', 'late_night': '9'
     };
     const LOC_MAP: Record<string, string> = {
-      'home': '1', 'work': '2', 'commute': '3', 'restaurant': '4',
+      'home': '1', 'work': '2', 'en_route': '3', 'restaurant': '4',
       'gym': '5', 'outdoor': '6', 'airport': '7', 'shopping': '8',
       'subway': '9', 'bus_stop': 'A', 'ferry': 'B', 'train_station': 'C',
       'cafe': 'D', 'cinema': 'E', 'park': 'F', 'transit_hub': '7'

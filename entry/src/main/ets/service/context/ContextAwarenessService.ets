@@ -81,6 +81,12 @@ interface GlobalWithRuntime {
   nodeRuntime?: NodeRuntimeInterface;
 }
 
+/** Z轴采样点 */
+interface ZAxisSamplePoint {
+  value: number;
+  timestamp: number;
+}
+
 /** 围栏置信度排序辅助 */
 interface GeofenceConfEntry {
   gf: Geofence;
@@ -153,6 +159,7 @@ export class ContextAwarenessService {
   private currentContext: EnvironmentContext | undefined;
   private lastLocation: LocationState | undefined;
   private lastMotionState: MotionState = 'unknown';
+  private lastGeofence: string = '';  // 前一个围栏（用于驾驶vs乘车推断）
   
   // 状态历史 (用于规则判断)
   private prevMotionState: MotionState = 'unknown';
@@ -194,6 +201,13 @@ export class ContextAwarenessService {
   private static readonly DRIVING_EXIT_DWELL_MS = 30 * 1000;  // driving退出需30秒dwell
   private static readonly DRIVING_INERTIA_MS = 90 * 1000;     // 驾车惯性90秒
   private static readonly GEOFENCE_DEPARTURE_COOLDOWN_MS = 3 * 60 * 1000;  // 围栏离开冷却3分钟
+
+  // Z轴振幅和频率特征（用于走路vs驾车区分）
+  private zAxisHistory: Array<ZAxisSamplePoint> = [];
+  private static readonly Z_AXIS_HISTORY_SIZE = 1000;  // 5秒@200Hz
+  private zAxisFrequency: number = 0;  // Hz
+  private zAxisAmplitude: number = 0;  // g
+  private zAxisVariance: number = 0;   // 规律性指标
 
   // 驾车惯性
   private lastHighSpeedTime: number = 0;
@@ -247,6 +261,9 @@ export class ContextAwarenessService {
   private suggestionStateLoaded: boolean = false;
   // A2UI 监听器 (本地UI分发)
   private a2uiListeners: ((type: string, content: string) => void)[] = [];
+  // 状态变化监听器 (每次 PhysicalState 变化时触发)
+  private stateChangeListeners: ((ps: PhysicalState, prevPS: PhysicalState | undefined) => void)[] = [];
+  private lastPhysicalFingerprint: string = '';
   // 新地点自动发现
   private newPlaceDetectionStart: number = 0;
   private newPlaceLastLat: number = 0;
@@ -306,7 +323,9 @@ export class ContextAwarenessService {
   // ==================== 7-Tuple 物理状态 & 场景匹配 ====================
   private psBuilder: PhysicalStateBuilder = PhysicalStateBuilder.getInstance();
   private scenarioMatcher: ScenarioMatcher = ScenarioMatcher.getInstance();
+  private prevPhysicalState: PhysicalState | undefined;
   private lastPhysicalState: PhysicalState | undefined;
+  private prevScenarioResults: ScenarioMatchResult[] = [];
   private lastScenarioResults: ScenarioMatchResult[] = [];
 
   // ==================== 分层传感器 (Sensor Tier System) ====================
@@ -473,6 +492,9 @@ export class ContextAwarenessService {
       this.isRunning = true;
       this.log.info(TAG, 'Context Awareness Service started (multi-tier sensing enabled)');
 
+      // 立即推送初始状态到时间线（解决"今日行程显示不及时"问题）
+      this.pushTimelineEvent();
+
       // 初始化 + 启动数字世界感知（非关键路径，失败不影响规则评估）
       try {
         await this.digitalWorld.init(this.context as common.UIAbilityContext);
@@ -568,6 +590,7 @@ export class ContextAwarenessService {
 
       // 立即触发评估
       this.refreshTray().then(() => {
+        this.buildPhysicalStateAndDetectChange();
         let snapshot = this.augmentSnapshot(this.tray.getSnapshot());
         this.evaluateAndDeliver(snapshot);
       });
@@ -620,6 +643,7 @@ export class ContextAwarenessService {
 
             // 立即触发评估
             this.refreshTray().then(() => {
+              this.buildPhysicalStateAndDetectChange();
               let snapshot = this.augmentSnapshot(this.tray.getSnapshot());
               this.evaluateAndDeliver(snapshot);
             });
@@ -636,6 +660,7 @@ export class ContextAwarenessService {
         if (!matched && this.exploreMode) {
           this.log.info(TAG, `[Explore-DBG] WiFi connected to unmatched "${ssid}", triggering explore evaluation`);
           this.refreshTray().then(() => {
+            this.buildPhysicalStateAndDetectChange();
             let snapshot = this.augmentSnapshot(this.tray.getSnapshot());
             this.evaluateAndDeliver(snapshot);
           });
@@ -845,14 +870,31 @@ export class ContextAwarenessService {
     this.updatePosture();
     this.updateHoldingState();  // 更新手握状态
 
-    this.accelHistory.push({
+    let accelSample: AccelSample = {
       magnitude: magnitude,
       gravityAngle: gravityAngle,
       timestamp: this.accelerometerData.timestamp
-    });
+    };
+    this.accelHistory.push(accelSample);
 
     if (this.accelHistory.length > ContextAwarenessService.ACCEL_HISTORY_SIZE) {
       this.accelHistory.shift();
+    }
+
+    // 记录 Z 轴值用于频率分析
+    let zSample: ZAxisSamplePoint = {
+      value: z,
+      timestamp: this.accelerometerData.timestamp
+    };
+    this.zAxisHistory.push(zSample);
+
+    if (this.zAxisHistory.length > ContextAwarenessService.Z_AXIS_HISTORY_SIZE) {
+      this.zAxisHistory.shift();
+    }
+
+    // 更新 Z 轴特征（每10个样本计算一次，约2秒）
+    if (this.zAxisHistory.length % 10 === 0) {
+      this.updateZAxisFeatures();
     }
   }
 
@@ -981,6 +1023,170 @@ export class ContextAwarenessService {
   }
 
   /**
+   * 更新 Z 轴振幅、频率和方差特征
+   * 用于区分走路 vs 驾车
+   *   - 走路: 高频(1.5-2.5Hz) + 大幅度(>0.4g)
+   *   - 驾车: 低频(<0.8Hz) 或无规律
+   *   - 静止: 极小幅度(<0.2g)
+   */
+  private updateZAxisFeatures(): void {
+    if (this.zAxisHistory.length < 50) return;  // 需要至少 250ms 数据@200Hz
+
+    // 取最近 2-3 秒的数据
+    let recentMs = Date.now() - 2500;
+    let recent = this.zAxisHistory.filter(s => s.timestamp >= recentMs);
+
+    if (recent.length < 10) return;
+
+    let values = recent.map(s => s.value);
+
+    // 1. 计算振幅（峰值-谷值）/ 9.8 转换为 g
+    let max = Math.max(...values);
+    let min = Math.min(...values);
+    this.zAxisAmplitude = (max - min) / 9.8;
+
+    // 2. 计算方差（规律性指标）
+    let mean = values.reduce((a, b) => a + b, 0) / values.length;
+    let varianceSum = values.reduce((sum, v) => sum + (v - mean) ** 2, 0);
+    this.zAxisVariance = varianceSum / values.length;
+
+    // 3. 频率估计（自相关，找第一个负峰）
+    this.zAxisFrequency = this.estimateFrequencyByAutocorr(recent);
+
+    // 记录到 DataTray 用于调试
+    this.recordedPut('zAxisAmplitude', this.zAxisAmplitude.toFixed(3), 0.8, 'accelerometer');
+    this.recordedPut('zAxisFrequency', this.zAxisFrequency.toFixed(2), 0.8, 'accelerometer');
+    this.recordedPut('zAxisVariance', this.zAxisVariance.toFixed(3), 0.8, 'accelerometer');
+  }
+
+  /**
+   * 通过自相关估计 Z 轴主频率
+   * 原理：找到第一个负峰对应的 lag，转换为 Hz
+   * 走路频率: ~1.5-2.5 Hz (200Hz采样 → lag 80-130)
+   * 驾车频率: ~0.2-0.5 Hz (200Hz采样 → lag 400+) 或无规律
+   */
+  private estimateFrequencyByAutocorr(samples: Array<ZAxisSamplePoint>): number {
+    if (samples.length < 50) return 0;
+
+    let values = samples.map(s => s.value);
+    let mean = values.reduce((a, b) => a + b, 0) / values.length;
+    let centered = values.map(v => v - mean);
+
+    // 采样间隔（假设200Hz，即5ms）
+    let dt = samples.length > 1
+      ? (samples[samples.length - 1].timestamp - samples[0].timestamp) / (samples.length - 1)
+      : 5;
+
+    // 自相关：寻找第一个负峰（一个完整周期）
+    let bestLag = 0;
+    let bestCorr = 0;
+
+    // 只搜索 10 ~ 200 lag（对应 0.5Hz ~ 20Hz）
+    for (let lag = 10; lag < Math.min(200, values.length / 2); lag++) {
+      let corr = 0;
+      for (let i = 0; i < values.length - lag; i++) {
+        corr += centered[i] * centered[i + lag];
+      }
+      // 第一个明显的负值 = 半个周期
+      if (corr < -0.1 * centered.length && bestLag === 0) {
+        bestLag = lag * 2;  // 乘以2得到完整周期
+        bestCorr = corr;
+        break;
+      }
+    }
+
+    if (bestLag === 0) return 0;  // 无规律
+
+    // lag → 频率 (Hz)
+    let frequency = (1000 / dt) / bestLag;
+    return Math.max(0, Math.min(frequency, 50));  // 限制在合理范围
+  }
+
+  /**
+   * 判断一个地点是否是交通枢纽（公交站、地铁站、机场等）
+   * 如果是，则从该地点出发检测到的"驾驶"更可能是"乘车"
+   */
+  private isTransitHub(geofenceId: string): boolean {
+    if (!geofenceId || geofenceId.length === 0) return false;
+    
+    let lower = geofenceId.toLowerCase();
+    return lower.includes('transit') ||
+           lower.includes('station') ||
+           lower.includes('metro') ||
+           lower.includes('subway') ||
+           lower.includes('bus') ||
+           lower.includes('airport') ||
+           lower.includes('railway') ||
+           lower.includes('train') ||
+           lower.includes('ferry');
+  }
+
+  /**
+   * 推断驾驶 vs 乘车
+   * 如果前一个地点是交通枢纽，当前检测到"驾驶"运动，很可能是乘车而非自己驾驶
+   * 返回 'driving' / 'transit' / 'unknown'
+   */
+  private inferDrivingVsTransit(detectedMotion: MotionState, currentGeofence: string, gpsSpeed: number): MotionState {
+    if (detectedMotion !== 'driving') {
+      return detectedMotion;  // 非驾驶状态，直接返回
+    }
+
+    // 检查前一个围栏是否是交通枢纽
+    if (this.lastGeofence && this.isTransitHub(this.lastGeofence)) {
+      // 从交通枢纽出发，检测到驾驶 → 更可能是乘车
+      // 但需要排除：实际上自己开车离开停车场的情况
+      
+      // 启发式判断：
+      // 1. 如果还没离开很远（GPS精度可能有偏），推断为乘车
+      // 2. 如果是机场/火车站且GPS速度稳定，很可能是公交/地铁
+      
+      let currentIsTransitHub = currentGeofence && this.isTransitHub(currentGeofence);
+      
+      // 如果前后都是交通枢纽或从枢纽刚出来 → 乘车可能性大
+      if (currentIsTransitHub || (Date.now() - this.geofenceDepartureTime < 5 * 60 * 1000)) {
+        return 'transit';  // 推断为乘车
+      }
+      
+      // 其他情况无法确定 → 返回 'driving' 让规则引擎处理
+    }
+
+    return detectedMotion;
+  }
+
+  /**
+   * 使用 Z 轴特征辅助判断运动状态
+   * 特别是在 GPS 速度不可靠时
+   * 返回基于 Z 轴的建议状态，或 'unknown' 表示无法判断
+   */
+  private classifyByZAxisFeatures(): MotionState {
+    // 静止：极小幅度
+    if (this.zAxisAmplitude < 0.2) {
+      return 'stationary';
+    }
+
+    // 走路特征：高频 + 大幅度
+    if (this.zAxisFrequency >= 1.2 && this.zAxisFrequency <= 2.5 && this.zAxisAmplitude >= 0.35) {
+      return 'walking';
+    }
+
+    // 驾车特征：低频 + 中等幅度 或 无规律
+    if (this.zAxisAmplitude >= 0.15 && this.zAxisAmplitude < 0.35) {
+      // 低频或无规律 → 驾车或颠簸
+      if (this.zAxisFrequency < 0.8 || this.zAxisFrequency === 0) {
+        return 'driving';
+      }
+    }
+
+    // 高幅度低频 → 驾车（颠簸）
+    if (this.zAxisAmplitude >= 0.4 && this.zAxisFrequency < 1.0) {
+      return 'driving';
+    }
+
+    // 无法判定
+    return 'unknown';
+  }
+
+  /**
    * 基于加速度计数据和GPS速度综合判断运动状态
    * 解决：开车/高铁匀速时加速度小但速度快的问题
    */
@@ -1036,7 +1242,13 @@ export class ContextAwarenessService {
         this.lastHighSpeedTime = Date.now();
         this.drivingInertiaStepBase = this.stepCount;
       } else {
-        newState = magnitude > 12 ? 'running' : 'walking';
+        // GPS速度不可靠时用 Z 轴特征辅助
+        let zAxisClassify = this.classifyByZAxisFeatures();
+        if (zAxisClassify !== 'unknown') {
+          newState = zAxisClassify;
+        } else {
+          newState = magnitude > 12 ? 'running' : 'walking';
+        }
       }
     } else {
       // GPS速度极低：驾车惯性保护（红灯/短暂停车）
@@ -1047,21 +1259,34 @@ export class ContextAwarenessService {
       if (recentlyDriving && stepsSinceHighSpeed < 20) {
         newState = 'driving';  // 红灯/短暂停车，维持驾车
       } else {
-        // 使用滑动窗口多数投票代替单次 magnitude 判断，减少频繁跳变
-        newState = this.classifyWithSmoothing();
+        // GPS 不可用时，用 Z 轴特征优先判断
+        let zAxisClassify = this.classifyByZAxisFeatures();
+        if (zAxisClassify !== 'unknown') {
+          newState = zAxisClassify;
+        } else {
+          // 否则使用滑动窗口多数投票
+          newState = this.classifyWithSmoothing();
+        }
       }
     }
     
-    // 躺卧覆盖：躺着时翻身等动作不能被误判成步行
-    // isLyingDown 由加速度计实时维护，翻身时方差飙升容易触发 walking 误判
-    if (this.isLyingDown && (newState === 'walking' || newState === 'running')) {
-      newState = 'stationary';
-    }
-
     // 车载蓝牙覆盖：连接车载BT时，stationary/walking → driving
     let btInVehicle = this.tray.get('bt_in_vehicle');
     if (btInVehicle && btInVehicle.value === 'true' && (newState === 'stationary' || newState === 'walking')) {
       newState = 'driving';
+    }
+
+    // 躺卧覆盖：躺着时翻身等动作不能被误判成步行
+    // 仅在已知围栏内(home/work等室内)才应用 — 排除驾车场景：
+    //   手机在车载支架上（横屏/倾斜）满足 isSideLying 条件导致 isLyingDown 误判，
+    //   如果无条件覆盖 walking→stationary，会阻止 GPS 更新速度，永远检测不到 driving。
+    //   离开围栏后 WiFi 断连清除了 geofence，此时不应用覆盖，让 walking 状态
+    //   触发高频 GPS → 检测到速度 → 识别为 driving。
+    let geofenceSlot = this.tray.get('geofence');
+    let inGeofence = geofenceSlot && geofenceSlot.value !== null && geofenceSlot.value.length > 0;
+    let hasVehicleSignal = gpsSpeed > 1.5 || (btInVehicle && btInVehicle.value === 'true');
+    if (this.isLyingDown && inGeofence && !hasVehicleSignal && (newState === 'walking' || newState === 'running')) {
+      newState = 'stationary';
     }
 
     // Dwell 逻辑：新候选状态须持续一段时间才生效，防止短暂波动
@@ -1103,6 +1328,17 @@ export class ContextAwarenessService {
       this.motionStepCountStart = 0;
     }
 
+    // 驾驶 vs 乘车推断（使用地理围栏辅助）
+    let currentGeofence = this.tray.get('geofence')?.value ?? '';
+    if (newState === 'driving') {
+      newState = this.inferDrivingVsTransit(newState, currentGeofence, gpsSpeed) as MotionState;
+    }
+
+    // 更新前一个围栏（用于下次推断）
+    if (currentGeofence.length > 0 && currentGeofence !== this.lastGeofence) {
+      this.lastGeofence = currentGeofence;
+    }
+
     this.recordedPut('motionState', newState, 0.9, 'accelerometer');
     this.recordedPut('gpsSpeed', gpsSpeed.toFixed(2), 0.85, 'gps');
 
@@ -1132,6 +1368,9 @@ export class ContextAwarenessService {
       this.prevMotionState = this.lastMotionState;
       this.lastMotionState = newState;
       this.adjustLocationInterval(newState);
+
+      // 立即推送时间线事件，不等待周期性评估（解决"今日行程显示不及时"问题）
+      this.pushTimelineEvent();
     }
   }
   
@@ -1186,8 +1425,22 @@ export class ContextAwarenessService {
         newActivityState = 'driving';
         break;
         
+      case 'transit':
+        // 乘车时的活动状态同驾车
+        newActivityState = 'driving';
+        break;
+        
+      case 'cycling':
+        // 骑车时的活动状态
+        newActivityState = 'active';
+        break;
+        
       case 'pickup':
         // 拿起手机不改变活动状态
+        return;
+        
+      case 'putdown':
+        // 放下手机不改变活动状态
         return;
         
       default:
@@ -1245,8 +1498,23 @@ export class ContextAwarenessService {
     let motionState: string = this.lastMotionState;
     let lat: number = this.lastLocation ? this.lastLocation.latitude : 0;
     let lng: number = this.lastLocation ? this.lastLocation.longitude : 0;
+
+    // 获取当前最佳活跃场景标题
+    let scenarioTitle = '';
+    let activeScenarios = this.scenarioMatcher.getActiveStates();
+    if (activeScenarios.length > 0) {
+      // 取最高置信度的场景
+      let best = activeScenarios[0];
+      for (let i = 1; i < activeScenarios.length; i++) {
+        if (activeScenarios[i].confidence > best.confidence) {
+          best = activeScenarios[i];
+        }
+      }
+      scenarioTitle = `${best.scenario.id} ${best.scenario.name}`;
+    }
+
     DailyTimelineService.getInstance().pushStateChange(
-      geofenceId, geofenceLabel, geofenceIcon, motionState, lat, lng
+      geofenceId, geofenceLabel, geofenceIcon, motionState, lat, lng, scenarioTitle
     );
   }
 
@@ -1272,16 +1540,21 @@ export class ContextAwarenessService {
     let z = this.accelerometerData.z;
     let tilt = this.lastTiltAngle;
 
-    // 躺卧判断：两种场景
+    // 躺卧判断：必须 tiltAngle 为负值（屏幕朝上/朝脸）
     //
-    // 1. 仰卧（屏幕斜朝向脸部）：tiltAngle ∈ [-80°, -15°]
-    //    覆盖了原先 -18°~-60° 的盲区
-    let isBackLying = (tilt >= -80 && tilt <= -15);
+    // tiltAngle = atan2(z, sqrt(x²+y²))
+    //   躺着看手机：z<0 → tilt 为负（-15°~-80°）
+    //   坐立手握：  z<0 但 y 有明显负分量（重力沿手机长轴）→ tilt 可能微负但 |y|>5
+    //   关键区分：坐立时 |y| 大（手机竖着），躺着时 |y| 小（手机横着/斜着）
+    //
+    // 1. 仰卧（屏幕斜朝向脸部）：tiltAngle ∈ [-80°, -15°] 且 |y| < 6
+    //    |y|<6 排除坐立手握（坐立时 y ≈ -7~-9.8）
+    let isBackLying = (tilt >= -80 && tilt <= -15) && (Math.abs(y) < 6);
 
-    // 2. 侧卧 / 近水平握持（手机接近水平 + 手握）：
-    //    侧卧时手机 z 轴分量很小（手机几乎水平）；站立时极少水平握持
-    //    |z| < 4.5 ≈ tiltAngle 在 [-27°, +27°] 之内（足够宽松覆盖各种侧卧角度）
-    let isSideLying = (Math.abs(z) < 4.5) && this.isHoldingPhone;
+    // 2. 侧卧（手机接近水平 + 手握）：
+    //    侧卧时 z 分量小且 y 分量也小（手机近乎水平）
+    //    坐立竖握时 |y| > 5，排除坐立场景
+    let isSideLying = (Math.abs(z) < 4.5) && (Math.abs(y) < 5) && this.isHoldingPhone;
 
     if (isBackLying || isSideLying) {
       this.isLyingDown = true;
@@ -1456,6 +1729,12 @@ export class ContextAwarenessService {
         newAccelInterval = ContextAwarenessService.ACCEL_RUNNING;
         break;
       case 'driving':
+        newGpsInterval = ContextAwarenessService.GPS_DRIVING;
+        newWifiInterval = ContextAwarenessService.WIFI_DRIVING;
+        newAccelInterval = ContextAwarenessService.ACCEL_DRIVING;
+        break;
+      case 'transit':
+        // 乘车的GPS频率应该和驾车类似（乘客也在运动中）
         newGpsInterval = ContextAwarenessService.GPS_DRIVING;
         newWifiInterval = ContextAwarenessService.WIFI_DRIVING;
         newAccelInterval = ContextAwarenessService.ACCEL_DRIVING;
@@ -1826,33 +2105,7 @@ export class ContextAwarenessService {
     this.detectBtChangesAndTrackConnections();
 
     // ==================== 7-Tuple 物理状态 & 场景匹配 ====================
-    // 传感器 → 7-tuple 状态
-    let ps = this.psBuilder.build();
-    this.lastPhysicalState = ps;
-
-    // 状态链 → 场景匹配
-    let scenarioResults = this.scenarioMatcher.match(ps);
-    this.lastScenarioResults = scenarioResults;
-
-    // 注入 ps_* 字段到 DataTray (供 C++ RL 引擎读取)
-    this.recordedPut('ps_time', ps.time, 1.0, 'physical_state');
-    this.recordedPut('ps_location', ps.location, 1.0, 'physical_state');
-    this.recordedPut('ps_motion', ps.motion, 1.0, 'physical_state');
-    this.recordedPut('ps_phone', ps.phone, 1.0, 'physical_state');
-    this.recordedPut('ps_light', ps.light, 1.0, 'physical_state');
-    this.recordedPut('ps_sound', ps.sound, 1.0, 'physical_state');
-    this.recordedPut('ps_dayType', ps.dayType, 1.0, 'physical_state');
-
-    // 注入最佳场景匹配信息
-    if (scenarioResults.length > 0) {
-      let best = scenarioResults[0];
-      this.recordedPut('ps_scenario', best.scenarioId, 1.0, 'scenario');
-      this.recordedPut('ps_scenarioCategory', best.category, 1.0, 'scenario');
-      this.recordedPut('ps_chainPosition', `${best.currentStep}/${best.totalSteps}`, 1.0, 'scenario');
-      this.recordedPut('ps_scenarioConfidence', best.confidence.toFixed(2), 1.0, 'scenario');
-    }
-
-    this.log.info(TAG, `[PS] ${PhysicalStateBuilder.fingerprint(ps)} | scenarios=${scenarioResults.length} active=${this.scenarioMatcher.getActiveCount()}`);
+    this.buildPhysicalStateAndDetectChange();
 
     let snapshot = this.tray.getSnapshot();
     await this.evaluateAndDeliver(snapshot);
@@ -3101,6 +3354,9 @@ export class ContextAwarenessService {
     let eventType = event.type === 'enter' ? 'geofence_enter' : 'geofence_exit';
     this.engine.pushEvent(eventType);
 
+    // 立即推送时间线事件（解决"今日行程显示不及时"问题）
+    this.pushTimelineEvent();
+
     // GPS 高精度进入围栏时，学习 WiFi/BT 信号
     if (event.type === 'enter') {
       this.locationFusion.learnSignals(event.geofence.id, event.location);
@@ -3111,6 +3367,7 @@ export class ContextAwarenessService {
 
     // 刷新托盘 + 通过 C++ 规则引擎评估
     await this.refreshTray();
+    this.buildPhysicalStateAndDetectChange();
     let snapshot = this.tray.getSnapshot();
     this.log.info(TAG, `Geofence trigger evaluate: geofence=${snapshot.geofence ?? 'none'}`);
     await this.evaluateAndDeliver(snapshot);
@@ -3658,8 +3915,86 @@ export class ContextAwarenessService {
     }
   }
   
+  // ==================== 物理状态构建 & 状态变化检测 ====================
+
+  /**
+   * 构建 7-tuple 物理状态 → 场景匹配 → 检测状态变化 → 触发监听器
+   * 从 periodicEvaluate 和事件驱动路径统一调用
+   */
+  buildPhysicalStateAndDetectChange(): void {
+    if (!this.isRunning) return;
+    try {
+      // 传感器 → 7-tuple 状态
+      this.log.debug(TAG, '[PS-DBG] step1: build');
+      let ps = this.psBuilder.build();
+      this.log.debug(TAG, `[PS-DBG] step2: built ${PhysicalStateBuilder.fingerprint(ps)}`);
+      // 保存前一轮状态（用于状态转移显示）
+      this.prevPhysicalState = this.lastPhysicalState;
+      this.prevScenarioResults = this.lastScenarioResults;
+      this.lastPhysicalState = ps;
+
+      // 状态链 → 场景匹配
+      this.log.debug(TAG, `[PS-DBG] step3: match (matcherType=${typeof this.scenarioMatcher}, matchFn=${typeof this.scenarioMatcher?.match}, initialized=${this.scenarioMatcher?.getScenarioCount()})`);
+      let scenarioResults = this.scenarioMatcher.match(ps);
+      this.log.debug(TAG, `[PS-DBG] step4: matched ${scenarioResults.length}`);
+      this.lastScenarioResults = scenarioResults;
+
+      // 注入 ps_* 字段到 DataTray (供规则引擎读取)
+      this.recordedPut('ps_time', ps.time, 1.0, 'physical_state');
+      this.recordedPut('ps_location', ps.location, 1.0, 'physical_state');
+      this.recordedPut('ps_motion', ps.motion, 1.0, 'physical_state');
+      this.recordedPut('ps_phone', ps.phone, 1.0, 'physical_state');
+      this.recordedPut('ps_light', ps.light, 1.0, 'physical_state');
+      this.recordedPut('ps_sound', ps.sound, 1.0, 'physical_state');
+      this.recordedPut('ps_dayType', ps.dayType, 1.0, 'physical_state');
+
+      // 注入最佳场景匹配信息
+      if (scenarioResults.length > 0) {
+        let best = scenarioResults[0];
+        this.recordedPut('ps_scenario', best.scenarioId, 1.0, 'scenario');
+        this.recordedPut('ps_scenarioCategory', best.category, 1.0, 'scenario');
+        this.recordedPut('ps_chainPosition', `${best.currentStep}/${best.totalSteps}`, 1.0, 'scenario');
+        this.recordedPut('ps_scenarioConfidence', best.confidence.toFixed(2), 1.0, 'scenario');
+      }
+
+      this.log.info(TAG, `[PS] ${PhysicalStateBuilder.fingerprint(ps)} | scenarios=${scenarioResults.length} active=${this.scenarioMatcher.getActiveCount()}`);
+
+      // 检测状态变化 → 通知状态变化监听器
+      this.log.debug(TAG, '[PS-DBG] step5: getActiveStates');
+      let activeStates = this.scenarioMatcher.getActiveStates();
+      this.log.debug(TAG, `[PS-DBG] step6: activeStates=${activeStates.length}`);
+      let fpParts: string[] = [];
+      for (let i = 0; i < activeStates.length; i++) {
+        let st = activeStates[i];
+        fpParts.push(st.scenario.id + ':' + st.confidence.toFixed(1));
+      }
+      let scenarioFp = fpParts.length > 0 ? fpParts.join(',') : '(none)';
+      let currentFingerprint = PhysicalStateBuilder.fingerprint(ps) + '|' + scenarioFp;
+      this.log.debug(TAG, `[PS-DBG] step7: fp=${currentFingerprint}`);
+      if (currentFingerprint !== this.lastPhysicalFingerprint) {
+        this.log.info(TAG, `[PS] State changed: ${this.lastPhysicalFingerprint} → ${currentFingerprint}`);
+        this.lastPhysicalFingerprint = currentFingerprint;
+        for (let j = 0; j < this.stateChangeListeners.length; j++) {
+          try {
+            this.stateChangeListeners[j](ps, this.prevPhysicalState);
+          } catch (e) {
+            this.log.warn(TAG, `stateChangeListener error: ${(e as Error).message}`);
+          }
+        }
+      }
+    } catch (err) {
+      this.log.warn(TAG, `buildPhysicalStateAndDetectChange error: ${(err as Error).message}`);
+    }
+  }
+
+  // ==================== 状态变化监听 ====================
+
+  addStateChangeListener(listener: (ps: PhysicalState, prevPS: PhysicalState | undefined) => void): void {
+    this.stateChangeListeners.push(listener);
+  }
+
   // ==================== A2UI 本地分发 ====================
-  
+
   addA2UIListener(listener: (type: string, content: string) => void): void {
     this.a2uiListeners.push(listener);
   }
@@ -4650,9 +4985,19 @@ export class ContextAwarenessService {
     return this.lastPhysicalState;
   }
 
+  /** 获取前一轮 PhysicalState 7-tuple */
+  getPrevPhysicalState(): PhysicalState | undefined {
+    return this.prevPhysicalState;
+  }
+
   /** 获取最新场景匹配结果 */
   getLastScenarioResults(): ScenarioMatchResult[] {
     return this.lastScenarioResults;
+  }
+
+  /** 获取前一轮场景匹配结果 */
+  getPrevScenarioResults(): ScenarioMatchResult[] {
+    return this.prevScenarioResults;
   }
 
   /** 获取 ScenarioMatcher 活跃场景数 */

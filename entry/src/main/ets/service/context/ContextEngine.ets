@@ -127,7 +127,7 @@ export interface ContextSnapshot {
   hasUpcomingFlight?: string;   // "true"/"false"
   // 7-Tuple 物理状态 (PhysicalState)
   ps_time?: string;             // TimeSlot: sleeping/dawn/morning/forenoon/lunch/afternoon/evening/night/late_night
-  ps_location?: string;         // LocationCategory: home/work/commute/restaurant/gym/transit_hub/shopping/outdoor/cafe/unknown
+  ps_location?: string;         // LocationCategory: home/work/en_route/restaurant/gym/transit_hub/shopping/outdoor/cafe/unknown
   ps_motion?: string;           // MotionCategory: stationary/walking/running/cycling/driving/transit/unknown
   ps_phone?: string;            // PhoneCategory: in_use/holding_lying/on_desk/face_up/in_pocket/face_down/charging/unknown
   ps_light?: string;            // LightCategory: dark/dim/normal/bright

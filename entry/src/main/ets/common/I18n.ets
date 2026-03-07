@@ -899,7 +899,7 @@ function buildZh(): Map<string, string> {
   // LocationCategory
   m.set('ps.location.home', '家');
   m.set('ps.location.work', '公司');
-  m.set('ps.location.commute', '通勤');
+  m.set('ps.location.en_route', '在途');
   m.set('ps.location.restaurant', '餐厅');
   m.set('ps.location.gym', '健身房');
   m.set('ps.location.transit_hub', '交通枢纽');
@@ -1837,7 +1837,7 @@ function buildEn(): Map<string, string> {
   m.set('ps.time.late_night', 'Late Night');
   m.set('ps.location.home', 'Home');
   m.set('ps.location.work', 'Work');
-  m.set('ps.location.commute', 'Commute');
+  m.set('ps.location.en_route', 'En Route');
   m.set('ps.location.restaurant', 'Restaurant');
   m.set('ps.location.gym', 'Gym');
   m.set('ps.location.transit_hub', 'Transit Hub');

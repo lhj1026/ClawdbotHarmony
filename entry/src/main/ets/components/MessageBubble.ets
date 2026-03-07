@@ -18,7 +18,7 @@ export struct MessageBubble {
   @Prop showTimestamp: boolean = true;
   onImageClick: (path: string) => void = () => {};
   onButtonClick: (action: string) => void = () => {};
-  onA2UIReady: (inject: (content: string) => void) => void = () => {};
+  onA2UIReady: (inject: (content: string) => void, reset: () => void) => void = () => {};
   onA2UIAction: (json: string) => void = () => {};
   onCanvasReady: (ctrl: webview.WebviewController) => void = () => {};
   onCanvasAction: (json: string) => void = () => {};
@@ -478,13 +478,20 @@ export struct MessageBubble {
         // Inject accumulated A2UI content
         let escaped = this.escapeForJS(this.message.a2uiContent);
         ctrl.runJavaScript(`window.a2ui.push('${escaped}')`);
-        // Provide injection function to ChatPage for live updates
-        this.onA2UIReady((content: string) => {
-          let c = this.a2uiController;
-          if (!c) return;
-          let esc = this.escapeForJS(content);
-          c.runJavaScript(`window.a2ui.push('${esc}')`);
-        });
+        // Provide injection + reset functions to ChatPage for live updates
+        this.onA2UIReady(
+          (content: string) => {
+            let c = this.a2uiController;
+            if (!c) return;
+            let esc = this.escapeForJS(content);
+            c.runJavaScript(`window.a2ui.push('${esc}')`);
+          },
+          () => {
+            let c = this.a2uiController;
+            if (!c) return;
+            c.runJavaScript(`window.a2ui.reset()`);
+          }
+        );
       })
       .onConsole((event) => {
         if (event && event.message) {

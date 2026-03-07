@@ -70,13 +70,25 @@ export class ScenarioMatcher {
     let results: ScenarioMatchResult[] = [];
 
     // 1. 推进已有活跃场景链
-    this.advanceActiveChains(ps, now, results);
+    try {
+      this.advanceActiveChains(ps, now, results);
+    } catch (e) {
+      log.warn(TAG, `advanceActiveChains error: ${(e as Error).message}`);
+    }
 
     // 2. 检测新场景 (从 Step 0 开始匹配)
-    this.detectNewScenarios(ps, now, results);
+    try {
+      this.detectNewScenarios(ps, now, results);
+    } catch (e) {
+      log.warn(TAG, `detectNewScenarios error: ${(e as Error).message}`);
+    }
 
     // 3. 清理超时的活跃场景
-    this.cleanupTimeouts(now);
+    try {
+      this.cleanupTimeouts(now);
+    } catch (e) {
+      log.warn(TAG, `cleanupTimeouts error: ${(e as Error).message}`);
+    }
 
     return results;
   }
@@ -129,8 +141,8 @@ export class ScenarioMatcher {
     });
 
     // 移除已完成的链
-    for (let id of toRemove) {
-      this.activeStates.delete(id);
+    for (let ri = 0; ri < toRemove.length; ri++) {
+      this.activeStates.delete(toRemove[ri]);
     }
   }
 
@@ -138,16 +150,17 @@ export class ScenarioMatcher {
    * 检测新场景 (从 Step 0 开始)
    */
   private detectNewScenarios(ps: PhysicalState, now: number, results: ScenarioMatchResult[]): void {
-    for (let scenario of this.scenarios) {
+    for (let si = 0; si < this.scenarios.length; si++) {
+      let scenario = this.scenarios[si];
       if (!scenario.enabled) continue;
       if (this.activeStates.has(scenario.id)) continue; // 已在跟踪
 
       if (scenario.steps.length === 0) continue;
 
       let step0 = scenario.steps[0];
-      let match = this.matchStep(step0, ps);
+      let stepMatch = this.matchStep(step0, ps);
 
-      if (match > 0) {
+      if (stepMatch > 0) {
         // 检查数字条件
         if (!this.checkDigitalConditions(step0)) continue;
 
@@ -157,7 +170,7 @@ export class ScenarioMatcher {
           currentStep: 0,
           startTime: now,
           stepEntryTime: now,
-          confidence: match,
+          confidence: stepMatch,
         };
         this.activeStates.set(scenario.id, state);
 
@@ -169,11 +182,11 @@ export class ScenarioMatcher {
           category: scenario.category,
           currentStep: 0,
           totalSteps: scenario.steps.length,
-          confidence: match,
+          confidence: stepMatch,
           actions: actions,
         });
 
-        log.info(TAG, `New scenario detected: ${scenario.id} "${scenario.name}" conf=${match.toFixed(2)}`);
+        log.info(TAG, `New scenario detected: ${scenario.id} "${scenario.name}" conf=${stepMatch.toFixed(2)}`);
       }
     }
   }
@@ -190,8 +203,8 @@ export class ScenarioMatcher {
         toRemove.push(scenarioId);
       }
     });
-    for (let id of toRemove) {
-      this.activeStates.delete(id);
+    for (let ri = 0; ri < toRemove.length; ri++) {
+      this.activeStates.delete(toRemove[ri]);
     }
   }
 
@@ -242,8 +255,8 @@ export class ScenarioMatcher {
     // A|B 多值匹配
     if (pattern.indexOf('|') >= 0) {
       let values = pattern.split('|');
-      for (let v of values) {
-        if (v === actual) return true;
+      for (let vi = 0; vi < values.length; vi++) {
+        if (values[vi] === actual) return true;
       }
       return false;
     }
@@ -258,7 +271,8 @@ export class ScenarioMatcher {
     if (!step.digitalConditions) return true;
 
     let keys = Object.keys(step.digitalConditions);
-    for (let key of keys) {
+    for (let ki = 0; ki < keys.length; ki++) {
+      let key = keys[ki];
       let condStr = step.digitalConditions[key];
       let parts = condStr.split(' ');
       if (parts.length < 2) continue;
@@ -328,7 +342,8 @@ export class ScenarioMatcher {
   /** 获取各类别场景统计 */
   getCategoryStats(): Record<string, number> {
     let stats: Record<string, number> = {};
-    for (let s of this.scenarios) {
+    for (let si = 0; si < this.scenarios.length; si++) {
+      let s = this.scenarios[si];
       let count = stats[s.category] ?? 0;
       stats[s.category] = count + 1;
     }

@@ -66,7 +66,8 @@ export class DailyTimelineService {
    */
   pushStateChange(geofenceId: string, geofenceLabel: string,
                   geofenceIcon: string, motionState: string,
-                  latitude: number, longitude: number): void {
+                  latitude: number, longitude: number,
+                  scenarioTitle: string = ''): void {
     let now = Date.now();
 
     // 检查日期变化 (午夜翻转)
@@ -119,6 +120,7 @@ export class DailyTimelineService {
       latitude: latitude,
       longitude: longitude,
       geocodeLabel: '',
+      scenarioTitle: scenarioTitle,
     };
 
     this.entries.push(entry);
@@ -204,6 +206,7 @@ export class DailyTimelineService {
         latitude: e.latitude,
         longitude: e.longitude,
         geocodeLabel: e.geocodeLabel,
+        scenarioTitle: e.scenarioTitle,
       };
       result.push(copy);
     }
@@ -247,6 +250,7 @@ export class DailyTimelineService {
           latitude: current.latitude,
           longitude: current.longitude,
           geocodeLabel: current.geocodeLabel,
+          scenarioTitle: next.scenarioTitle.length > 0 ? next.scenarioTitle : current.scenarioTitle,
         };
       } else {
         merged.push(current);
@@ -292,6 +296,7 @@ export class DailyTimelineService {
             latitude: (obj['latitude'] as number) ?? 0,
             longitude: (obj['longitude'] as number) ?? 0,
             geocodeLabel: (obj['geocodeLabel'] as string) ?? '',
+            scenarioTitle: (obj['scenarioTitle'] as string) ?? '',
           };
           this.entries.push(entry);
         }
