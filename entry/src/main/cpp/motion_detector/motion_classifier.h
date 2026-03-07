@@ -137,35 +137,50 @@ public:
     
     /**
      * 根据 Z 轴特征分类运动状态
+     *
+     * 驾驶 vs 乘车区分原理：
+     *   驾驶（DRIVING）：方向盘微振动 + 路面不规则颠簸 → Z轴方差较大
+     *   乘车（TRANSIT）：被动乘坐公交/地铁/高铁 → Z轴更平稳，方差较小
+     *
+     * 方差阈值 TRANSIT_VARIANCE_THRESHOLD 单位为 (m/s²)²，
+     * 约对应 0.005 g² — 可根据实测数据调整。
      */
+    static constexpr double TRANSIT_VARIANCE_THRESHOLD = 0.5;  // (m/s²)²
+
     static EnhancedMotionState classifyByZAxis(const ZAxisFeatures& features) {
         if (!features.isValid) {
             return EnhancedMotionState::UNKNOWN;
         }
-        
+
         // 静止：极小幅度
-        if (features.amplitude < 0.2) {
+        if (features.amplitude < 0.15) {
             return EnhancedMotionState::STATIONARY;
         }
-        
-        // 走路特征：高频 + 大幅度
-        if (features.frequency >= 1.2 && features.frequency <= 2.5 && 
+
+        // 走路特征：高频 + 大幅度（步伐周期 1.2-2.5 Hz）
+        if (features.frequency >= 1.2 && features.frequency <= 2.5 &&
             features.amplitude >= 0.35) {
             return EnhancedMotionState::WALKING;
         }
-        
-        // 驾车特征：低频 + 中等幅度
-        if (features.amplitude >= 0.15 && features.amplitude < 0.35) {
-            if (features.frequency < 0.8 || features.frequency == 0) {
+
+        // 车辆运动范围：中等幅度 + 低频
+        // 通过 Z 轴方差区分驾驶（高频微振动）与乘车（平稳）
+        if (features.amplitude >= 0.1 && features.amplitude < 0.40) {
+            if (features.frequency < 1.0) {
+                // 方差低 → 平稳乘车（公交/地铁/高铁）
+                // 方差高 → 驾驶（路面颠簸 + 方向盘微振动）
+                if (features.variance < TRANSIT_VARIANCE_THRESHOLD) {
+                    return EnhancedMotionState::TRANSIT;
+                }
                 return EnhancedMotionState::DRIVING;
             }
         }
-        
-        // 高幅度低频 → 驾车（颠簸）
-        if (features.amplitude >= 0.4 && features.frequency < 1.0) {
+
+        // 高幅度低频 → 驾车（颠簸路面）
+        if (features.amplitude >= 0.40 && features.frequency < 1.0) {
             return EnhancedMotionState::DRIVING;
         }
-        
+
         return EnhancedMotionState::UNKNOWN;
     }
     
@@ -325,5 +340,68 @@ inline EnhancedMotionState stringToEnhancedState(const std::string& str) {
     if (str == "putdown") return EnhancedMotionState::PUTDOWN;
     return EnhancedMotionState::UNKNOWN;
 }
+
+// ============================================================
+// 时序防抖平滑器 (3 秒确认机制)
+// ============================================================
+
+/**
+ * MotionSmoother — 对 EnhancedMotionState 进行时序平滑
+ *
+ * 原理：同一状态须持续 DEBOUNCE_MS 毫秒后才正式切换，
+ * 消除短暂误分类抖动（如红灯短暂静止被判为 STATIONARY）。
+ *
+ * 使用方式：
+ *   smoother.smooth(rawState, timestampMs) → 平滑后状态
+ */
+class MotionSmoother {
+public:
+    static constexpr int64_t DEBOUNCE_MS = 3000;  // 3 秒
+
+    MotionSmoother()
+        : confirmed_(EnhancedMotionState::UNKNOWN),
+          candidate_(EnhancedMotionState::UNKNOWN),
+          candidateStartMs_(0) {}
+
+    /**
+     * 输入原始分类状态，返回经防抖平滑后的状态。
+     * @param rawState    当前帧分类结果
+     * @param timestampMs 当前帧时间戳（毫秒）
+     */
+    EnhancedMotionState smooth(EnhancedMotionState rawState, int64_t timestampMs) {
+        // 候选状态发生切换时重置计时器
+        if (rawState != candidate_) {
+            candidate_ = rawState;
+            candidateStartMs_ = timestampMs;
+        }
+
+        // 候选持续足够长时间 → 正式确认
+        if (candidate_ != confirmed_ && timestampMs > 0 &&
+            (timestampMs - candidateStartMs_) >= DEBOUNCE_MS) {
+            confirmed_ = candidate_;
+        }
+
+        // 初始期（confirmed_=UNKNOWN）先返回候选值，避免空白状态
+        if (confirmed_ == EnhancedMotionState::UNKNOWN &&
+            candidate_ != EnhancedMotionState::UNKNOWN) {
+            return candidate_;
+        }
+        return confirmed_;
+    }
+
+    EnhancedMotionState getConfirmed() const { return confirmed_; }
+    EnhancedMotionState getCandidate() const { return candidate_; }
+
+    void reset() {
+        confirmed_ = EnhancedMotionState::UNKNOWN;
+        candidate_ = EnhancedMotionState::UNKNOWN;
+        candidateStartMs_ = 0;
+    }
+
+private:
+    EnhancedMotionState confirmed_;
+    EnhancedMotionState candidate_;
+    int64_t             candidateStartMs_;
+};
 
 }  // namespace motion_detector

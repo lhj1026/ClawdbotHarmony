@@ -538,9 +538,16 @@ export class ContextEngineService {
       if (snapshot.ps_scenarioCategory !== undefined) snapshotRecord['ps_scenarioCategory'] = snapshot.ps_scenarioCategory;
       if (snapshot.heart_rate_status !== undefined) snapshotRecord['heart_rate_status'] = snapshot.heart_rate_status;
       if (snapshot.wearing_state !== undefined) snapshotRecord['wearing_state'] = snapshot.wearing_state;
+      // 置信度阈值：低于 70 分（0-100 → 0.7）的匹配归入未知，不输出
+      const CONFIDENCE_THRESHOLD = 0.7;
+
       let filtered: MatchResult[] = [];
       for (let i = 0; i < results.length; i++) {
         let result = results[i];
+        if (result.confidence < CONFIDENCE_THRESHOLD) {
+          log.debug(TAG, `Rule ${result.ruleId} confidence too low: ${(result.confidence * 100).toFixed(0)}/100`);
+          continue;
+        }
         if (!this.isExcluded(result.ruleId, snapshotRecord)) {
           filtered.push(result);
           if (filtered.length >= maxResults) break;

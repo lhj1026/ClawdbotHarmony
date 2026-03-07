@@ -52,11 +52,14 @@ export class SceneRouter {
 
       try {
         let match = plugin.detectScene(snapshot);
-        if (match !== null && match.confidence > 0) {
+        // 置信度低于 70/100 不触发场景，归入未知
+        if (match !== null && match.confidence >= 0.7) {
           let recs = plugin.getRecommendations(match, snapshot);
           if (recs.length > 0) {
             results.push({ match, recommendations: recs, plugin });
           }
+        } else if (match !== null) {
+          this.log.debug(TAG, `场景 ${plugin.id} 置信度不足: ${(match.confidence * 100).toFixed(0)}/100`);
         }
       } catch (err) {
         this.log.warn(TAG, `场景 ${plugin.id} 检测失败: ${(err as Error).message}`);

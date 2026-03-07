@@ -19,27 +19,57 @@ export class WorkScene implements ScenePlugin {
     if (wifiGf !== 'work') return null;
 
     let hour = parseInt(snapshot.hour ?? '12');
+    let motion = snapshot.motionState ?? '';
+    let isStationary = (motion === 'stationary' || motion === '');
+    let isMoving = (motion === 'walking' || motion === 'driving' || motion === 'cycling');
+
+    // 围栏变化信号：刚从另一个已知地点（如 home）转移过来
+    let recentGeofenceChange = (snapshot.wifiLost === 'true');
+    let cameFromHome = recentGeofenceChange && (snapshot.wifiLostCategory === 'home');
 
     let phase: WorkPhase;
     let stateDesc: string;
+    let confidence: number;
 
     if (hour >= 7 && hour < 10) {
       phase = 'arrive';
       stateDesc = '🏢 到公司了，开始新的一天';
-    } else if (hour >= 11 && hour < 13) {
+      // 运动转移场景：有围栏变化事件才给高置信度
+      // 从家过来 → 强通勤信号；无围栏变化 → 正常到达
+      if (cameFromHome) {
+        confidence = 0.92;
+      } else if (recentGeofenceChange) {
+        confidence = 0.85;
+      } else {
+        confidence = 0.80;
+      }
+    } else if (hour >= 11 && hour < 14) {
       phase = 'lunch_break';
       stateDesc = '🍱 午休时间';
+      confidence = isStationary ? 0.82 : 0.75;
     } else if (hour >= 17) {
+      // 离开场景：需要有运动信号（正在走动/驾车）才触发为下班场景
+      // 纯静止 + 下班时间 → 降低置信度（可能还在加班）
       phase = 'leave';
       stateDesc = '🏢 下班时间到了';
+      if (isMoving) {
+        // 检测到移动 → 正在离开，强信号
+        confidence = 0.88;
+      } else if (isStationary) {
+        // 静止但已到下班时间 → 置信度略低（可能还在工作）
+        confidence = 0.72;
+      } else {
+        confidence = 0.78;
+      }
     } else {
       phase = 'arrive';
       stateDesc = '🏢 在公司';
+      confidence = 0.80;
     }
 
     return {
       sceneId: this.id, sceneName: this.name,
-      priority: 2, confidence: 0.8,
+      priority: 2, confidence,
       stateDescription: stateDesc, emoji: this.emoji,
       metadata: { 'phase': phase }
     };

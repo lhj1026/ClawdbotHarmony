@@ -48,13 +48,16 @@ struct MotionConfig {
     double stationaryThreshold = 10.5;    // < 此值为静止
     double walkingThreshold = 12.0;       // < 此值为步行
     double runningThreshold = 15.0;       // < 此值为跑步
-    
+
     // GPS速度阈值 (m/s)
     double drivingSpeedThreshold = 5.0;   // > 此值为驾驶
     double highSpeedThreshold = 20.0;     // > 此值为高速驾驶
-    
+
     // 历史窗口大小
     int historySize = 5;
+
+    // 防抖：同一状态需持续此毫秒数才切换（消除短暂抖动）
+    int64_t debounceMs = 3000;
 };
 
 // ============================================================
@@ -63,10 +66,13 @@ struct MotionConfig {
 
 class MotionDetector {
 public:
-    MotionDetector() : lastState_(MotionState::UNKNOWN), config_() {}
-    
-    explicit MotionDetector(const MotionConfig& config) 
-        : lastState_(MotionState::UNKNOWN), config_(config) {}
+    MotionDetector()
+        : lastState_(MotionState::UNKNOWN), config_(),
+          candidateState_(MotionState::UNKNOWN), candidateStartMs_(0) {}
+
+    explicit MotionDetector(const MotionConfig& config)
+        : lastState_(MotionState::UNKNOWN), config_(config),
+          candidateState_(MotionState::UNKNOWN), candidateStartMs_(0) {}
     
     /**
      * 检测运动状态
@@ -126,12 +132,30 @@ public:
             result.confidence = 0.5;
         }
         
-        // 检查状态变化
-        result.stateChanged = (result.state != lastState_);
-        if (result.stateChanged) {
-            lastState_ = result.state;
+        // ── 时序防抖 (3 秒平滑) ──────────────────────────────────────
+        // 候选状态发生变化时重置计时器；只有候选状态持续 debounceMs
+        // 才真正切换已确认状态，消除短暂抖动（如红灯等待、室内慢走）。
+        int64_t nowMs = accel.timestamp;
+        MotionState rawState = result.state;
+
+        if (rawState != candidateState_) {
+            candidateState_ = rawState;
+            candidateStartMs_ = nowMs;
         }
-        
+
+        result.stateChanged = false;
+        if (candidateState_ != lastState_ && nowMs > 0 &&
+            (nowMs - candidateStartMs_) >= config_.debounceMs) {
+            // 候选状态已持续足够长时间，正式切换
+            lastState_ = candidateState_;
+            result.stateChanged = true;
+        }
+
+        // 输出已确认状态；初始期间（lastState_=UNKNOWN）先输出候选值避免空白
+        result.state = (lastState_ != MotionState::UNKNOWN)
+                       ? lastState_
+                       : candidateState_;
+
         return result;
     }
     
@@ -163,6 +187,8 @@ public:
     
     void reset() {
         lastState_ = MotionState::UNKNOWN;
+        candidateState_ = MotionState::UNKNOWN;
+        candidateStartMs_ = 0;
         magnitudeHistory_.clear();
     }
 
@@ -180,6 +206,8 @@ private:
     }
     
     MotionState lastState_;
+    MotionState candidateState_;   // 待确认候选状态
+    int64_t     candidateStartMs_; // 候选状态首次出现时间戳 (ms)
     MotionConfig config_;
     std::vector<double> magnitudeHistory_;
 };

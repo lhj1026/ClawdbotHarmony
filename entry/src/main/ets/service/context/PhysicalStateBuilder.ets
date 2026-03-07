@@ -24,6 +24,12 @@ export class PhysicalStateBuilder {
   private static instance: PhysicalStateBuilder | null = null;
   private tray: SensorDataTray = DataTray;
 
+  // ── 主导状态算法：保留最近 10 次采样，60% 多数才确认 ──────────
+  // 防止传感器短暂波动导致运动状态频繁切换
+  private motionHistory: string[] = [];
+  private static readonly MOTION_HISTORY_SIZE: number = 10;
+  private static readonly MOTION_DOMINANT_RATIO: number = 0.6;
+
   static getInstance(): PhysicalStateBuilder {
     if (!PhysicalStateBuilder.instance) {
       PhysicalStateBuilder.instance = new PhysicalStateBuilder();
@@ -117,17 +123,51 @@ export class PhysicalStateBuilder {
     let transportMode = this.trayValue('transportMode');
 
     // transportMode 优先（如果有更精确的分类）
-    if (transportMode === 'cycling') return 'cycling';
-
-    switch (motionState) {
-      case 'stationary': return 'stationary';
-      case 'walking': return 'walking';
-      case 'running': return 'running';
-      case 'cycling': return 'cycling';
-      case 'driving': return 'driving';
-      case 'transit': return 'transit';
-      default: return 'unknown';
+    let rawMotion: MotionCategory;
+    if (transportMode === 'cycling') {
+      rawMotion = 'cycling';
+    } else {
+      switch (motionState) {
+        case 'stationary': rawMotion = 'stationary'; break;
+        case 'walking':    rawMotion = 'walking';    break;
+        case 'running':    rawMotion = 'running';    break;
+        case 'cycling':    rawMotion = 'cycling';    break;
+        case 'driving':    rawMotion = 'driving';    break;
+        case 'transit':    rawMotion = 'transit';    break;
+        default:           rawMotion = 'unknown';    break;
+      }
     }
+
+    // ── 主导状态算法：10 次采样 × 60% 多数才确认 ──────────────
+    // 将原始分类加入历史窗口
+    this.motionHistory.push(rawMotion);
+    if (this.motionHistory.length > PhysicalStateBuilder.MOTION_HISTORY_SIZE) {
+      this.motionHistory.shift();
+    }
+
+    let totalSamples = this.motionHistory.length;
+    // 历史不足 3 帧时直接返回原始值（启动暖机阶段）
+    if (totalSamples < 3) {
+      return rawMotion;
+    }
+
+    // 统计每种状态出现次数
+    let counts: Record<string, number> = {};
+    for (let s of this.motionHistory) {
+      counts[s] = (counts[s] ?? 0) + 1;
+    }
+
+    // 超过 60% 才确认为主导状态（'unknown' 不参与主导竞争，留作兜底）
+    let candidates: MotionCategory[] = ['stationary', 'walking', 'running', 'cycling', 'driving', 'transit'];
+    for (let s of candidates) {
+      let cnt = counts[s] ?? 0;
+      if (cnt / totalSamples >= PhysicalStateBuilder.MOTION_DOMINANT_RATIO) {
+        return s;
+      }
+    }
+
+    // 无主导状态 → 不确定，返回 unknown
+    return 'unknown';
   }
 
   // ==================== Dim 4: Phone ====================

@@ -30,42 +30,72 @@ export class HomeScene implements ScenePlugin {
     let hour = parseInt(snapshot.hour ?? '12');
     let isCharging = snapshot.isCharging === 'true';
     let battery = parseInt(snapshot.batteryLevel ?? '50');
+    let motion = snapshot.motionState ?? '';
+    let isStationary = (motion === 'stationary' || motion === '');
 
     let phase: HomePhase;
     let priority = 2;
     let stateDesc = '';
 
-    if (tod === 'night' && isCharging) {
+    // ── 时间窗口：每个子场景限定明确时间区间 ─────────────────────
+    // 睡前/充电：22:00+ 且正在充电（需 stationary）
+    if (hour >= 22 && isCharging && isStationary) {
       phase = 'bedtime';
       priority = 3;
       stateDesc = '🌙 夜深了，手机在充电';
-    } else if (tod === 'morning' || (hour >= 6 && hour < 9)) {
+    // 早晨：6:00-9:00（需 stationary，避免出门途中误触）
+    } else if (hour >= 6 && hour < 9 && isStationary) {
       phase = 'morning';
       priority = 2;
       stateDesc = `☀️ 早上好！电量 ${battery}%`;
-    } else if (hour >= 11 && hour < 13) {
+    // 午餐：11:30-13:30（需 stationary）
+    } else if (hour >= 11 && hour < 14 && isStationary) {
       phase = 'lunch';
       priority = 2;
       stateDesc = '🍚 午饭时间';
-    } else if (hour >= 17 && hour < 19) {
+    // 晚餐：17:00-19:30（需 stationary）
+    } else if (hour >= 17 && hour < 20 && isStationary) {
       phase = 'dinner';
       priority = 2;
       stateDesc = '🍽️ 晚餐时间';
-    } else if (tod === 'evening') {
+    // 傍晚/居家：19:30-22:00
+    } else if ((tod === 'evening' || tod === 'night') && hour < 22) {
       phase = 'evening';
       priority = 2;
       stateDesc = '🏠 在家放松时间';
     } else {
+      // 默认：到家（不限 motionState，允许刚到家的短暂走动）
       phase = 'arrive';
       priority = 1;
       stateDesc = '🏠 到家了';
+    }
+
+    // ── 动态置信度（0-100 → 0-1） ─────────────────────────────────
+    // 家+静止类场景：stationary 时置信度高（85/100）；
+    // 运动状态与预期矛盾（如 driving）时降到 60 以下，低于阈值不触发。
+    let confidence: number;
+    if (phase === 'arrive') {
+      // 到家场景：任何运动状态均合理
+      confidence = 0.82;
+    } else if (isStationary) {
+      // 静止状态与家+静止场景完全匹配
+      confidence = 0.85;
+    } else if (motion === 'walking') {
+      // 家中走动：轻微不匹配，仍可接受
+      confidence = 0.75;
+    } else if (motion === 'unknown') {
+      // 传感器暂时不确定
+      confidence = 0.72;
+    } else {
+      // 驾车/跑步等：与静止家庭场景严重矛盾，低于阈值
+      confidence = 0.55;
     }
 
     return {
       sceneId: this.id,
       sceneName: this.name,
       priority,
-      confidence: 0.8,
+      confidence,
       stateDescription: stateDesc,
       emoji: this.emoji,
       metadata: { 'phase': phase }
