@@ -1,22 +1,22 @@
 /**
- * action_recommender.h — 状态→动作推荐器（MLP + LinUCB）
+ * action_recommender.h — 状态→动作推荐器
  *
- * 功能：
- *   1. MLP 分类器（71→64→40）：从物理状态预测动作概率（先验知识）
- *   2. LinUCB（40臂上下文 Bandit）：基于用户反馈的在线个性化学习
+ * V1 (legacy): MLP(185→128→64) + LinUCB, one-hot encoding, state pair
+ * V2 (new):    MLP(60→64→64) + LinUCB, attribute encoding, state chain
  *
- * 使用流程：
- *   ActionRecommender rec;
- *   auto top3 = rec.recommend(physicalState);     // 推荐
- *   rec.reward(physicalState, top3[0].idx, 1.0f); // 用户接受 → 正反馈
- *   rec.reward(physicalState, top3[1].idx, 0.0f); // 用户拒绝 → 负反馈
- *
- * 特征向量（71维 one-hot）：
- *   time[9] + location[36] + motion[4] + phone[8] + light[5] + sound[5] + dayType[4]
+ * V2 improvements:
+ *   - 19-dim semantic attribute encoding per state (vs 92-dim one-hot)
+ *     including 8-dim location (5 category + 3 instance attributes)
+ *   - State chain input with pooling (up to 6 steps, vs 2 states)
+ *   - Extension-friendly: new locations/motions just add attribute rows
+ *   - 60-dim input = [current(19) + mean(19) + delta(19) + time(3)]
  */
 #pragma once
 
 #include "state_code.h"
+#include "state_attributes.h"
+#include "pretrained_weights_v2.h"
+#include "scenario_distiller.h"
 #include <array>
 #include <vector>
 #include <string>
@@ -54,7 +54,6 @@ namespace context_engine {
 constexpr int ACT_SINGLE_DIM = 92;            // 单状态编码维度
 constexpr int ACT_FEAT_DIM   = 185;           // 92(curr) + 92(prev) + 1(time)
 constexpr int ACT_HIDDEN     = 128;           // MLP 隐藏层
-constexpr int ACT_COUNT      = 64;            // 动作总槽数（40已定义 + 24预留）
 constexpr int ACT_DEFINED    = 40;            // 当前已定义动作数
 
 // 单状态内各维度偏移（永不改变）
@@ -505,6 +504,420 @@ private:
             mlp_.b2[i] = 0.0f;
         }
 #endif
+    }
+};
+
+// ============================================================
+// V2: Attribute-Encoded Chain Recommender (60 → 64 → 64)
+// ============================================================
+
+/** Mini MLP for V2: 60 → 64 → 64 */
+struct ActionMLPv2 {
+    static constexpr int IN  = SA_CHAIN_DIM;  // 51
+    static constexpr int HID = 64;
+    static constexpr int OUT = ACT_COUNT;     // 64
+
+    float W1[HID][IN];
+    float b1[HID];
+    float W2[OUT][HID];
+    float b2[OUT];
+
+    void forward(const ChainFeature& feat, float out[OUT]) const {
+        float h[HID];
+        for (int j = 0; j < HID; ++j) {
+            float z = b1[j];
+            for (int k = 0; k < IN; ++k) z += W1[j][k] * feat.x[k];
+            h[j] = z > 0.0f ? z : 0.0f;  // ReLU
+        }
+        float maxLogit = -1e9f;
+        for (int i = 0; i < OUT; ++i) {
+            float z = b2[i];
+            for (int j = 0; j < HID; ++j) z += W2[i][j] * h[j];
+            out[i] = z;
+            if (z > maxLogit) maxLogit = z;
+        }
+        float sum = 0.0f;
+        for (int i = 0; i < OUT; ++i) {
+            out[i] = std::exp(out[i] - maxLogit);
+            sum += out[i];
+        }
+        for (int i = 0; i < OUT; ++i) out[i] /= sum;
+    }
+
+    void initRandom() {
+        auto rnd = [](){ return static_cast<float>(rand()) / RAND_MAX - 0.5f; };
+        float scaleIn = 1.0f / IN;
+        for (int j = 0; j < HID; ++j) {
+            for (int k = 0; k < IN; ++k) W1[j][k] = scaleIn * rnd();
+            b1[j] = 0.0f;
+        }
+        float scaleHid = 1.0f / HID;
+        for (int i = 0; i < OUT; ++i) {
+            for (int j = 0; j < HID; ++j) W2[i][j] = scaleHid * rnd();
+            b2[i] = 0.0f;
+        }
+    }
+};
+
+/** LinUCB arm for V2: 60-dim context */
+struct UCBArmV2 {
+    // Diagonal approximation only (full 60x60 matrix is small enough but
+    // diagonal gives good results and is 10x faster for update/score)
+    float diag_A[SA_CHAIN_DIM];   // diagonal of A
+    float b[SA_CHAIN_DIM];
+    int   n = 0;
+
+    UCBArmV2() {
+        for (int i = 0; i < SA_CHAIN_DIM; ++i) { diag_A[i] = 1.0f; b[i] = 0.0f; }
+    }
+
+    float score(const ChainFeature& feat, float alpha) const {
+        float xTtheta = 0.0f;
+        float xTAinvx = 0.0f;
+        for (int i = 0; i < SA_CHAIN_DIM; ++i) {
+            float aii_inv = 1.0f / (diag_A[i] + 1e-6f);
+            xTtheta += feat.x[i] * b[i] * aii_inv;
+            xTAinvx += feat.x[i] * feat.x[i] * aii_inv;
+        }
+        return xTtheta + alpha * std::sqrt(xTAinvx + 1e-6f);
+    }
+
+    void update(const ChainFeature& feat, float reward) {
+        for (int i = 0; i < SA_CHAIN_DIM; ++i) {
+            diag_A[i] += feat.x[i] * feat.x[i];
+            b[i] += reward * feat.x[i];
+        }
+        ++n;
+    }
+};
+
+/** Online SGD trainer for MLP V2 (distillation from LLM labels) */
+struct MLPTrainerV2 {
+    float learningRate = 0.01f;
+
+    /**
+     * Train one step: given chain feature and target action distribution.
+     * @param mlp      the MLP to update in-place
+     * @param feat     60-dim input
+     * @param target   target probability distribution over ACT_COUNT actions
+     *                 (e.g., from LLM: [0,0,...,0.8,0.15,0.05,...])
+     */
+    void trainStep(ActionMLPv2& mlp, const ChainFeature& feat, const float target[ACT_COUNT]) {
+        constexpr int IN = ActionMLPv2::IN;
+        constexpr int HID = ActionMLPv2::HID;
+        constexpr int OUT = ActionMLPv2::OUT;
+
+        // Forward pass (store intermediates)
+        float h[HID], h_pre[HID];
+        for (int j = 0; j < HID; ++j) {
+            float z = mlp.b1[j];
+            for (int k = 0; k < IN; ++k) z += mlp.W1[j][k] * feat.x[k];
+            h_pre[j] = z;
+            h[j] = z > 0.0f ? z : 0.0f;
+        }
+
+        float logits[OUT], pred[OUT];
+        float maxL = -1e9f;
+        for (int i = 0; i < OUT; ++i) {
+            float z = mlp.b2[i];
+            for (int j = 0; j < HID; ++j) z += mlp.W2[i][j] * h[j];
+            logits[i] = z;
+            if (z > maxL) maxL = z;
+        }
+        float sum = 0.0f;
+        for (int i = 0; i < OUT; ++i) {
+            pred[i] = std::exp(logits[i] - maxL);
+            sum += pred[i];
+        }
+        for (int i = 0; i < OUT; ++i) pred[i] /= sum;
+
+        // Backward: dL/dlogits = pred - target (cross-entropy gradient)
+        float dLogits[OUT];
+        for (int i = 0; i < OUT; ++i) dLogits[i] = pred[i] - target[i];
+
+        // Update W2, b2
+        float dH[HID] = {};
+        for (int i = 0; i < OUT; ++i) {
+            for (int j = 0; j < HID; ++j) {
+                dH[j] += mlp.W2[i][j] * dLogits[i];
+                mlp.W2[i][j] -= learningRate * dLogits[i] * h[j];
+            }
+            mlp.b2[i] -= learningRate * dLogits[i];
+        }
+
+        // ReLU backward
+        for (int j = 0; j < HID; ++j) {
+            if (h_pre[j] <= 0.0f) dH[j] = 0.0f;
+        }
+
+        // Update W1, b1
+        for (int j = 0; j < HID; ++j) {
+            for (int k = 0; k < IN; ++k) {
+                mlp.W1[j][k] -= learningRate * dH[j] * feat.x[k];
+            }
+            mlp.b1[j] -= learningRate * dH[j];
+        }
+    }
+};
+
+// ============================================================
+// ActionRecommenderV2: Main V2 interface
+// ============================================================
+
+class ActionRecommenderV2 {
+public:
+    struct Recommendation {
+        int   idx;
+        float score;
+        float mlp_prob;
+        float ucb_score;
+        const char* code;
+        const char* name;
+    };
+
+    explicit ActionRecommenderV2(float mlpWeight = 0.6f, float ucbAlpha = 0.3f)
+        : mlpWeight_(mlpWeight), ucbAlpha_(ucbAlpha)
+    {
+        loadDistilledWeights();
+    }
+
+    /**
+     * Push new state and get recommendations.
+     * State chain is maintained internally.
+     * @param instAttr  Instance attributes from geofence (familiarity, ownership, routineLevel)
+     */
+    /**
+     * 三层推荐架构:
+     *   Tier 1: ScenarioDistiller 链匹配 (confidence > 0.55 → 加权混合)
+     *   Tier 2: MLP(distilled) 泛化推理
+     *   Tier 3: LinUCB 在线个性化
+     *
+     * 融合公式:
+     *   score[i] = scenarioW * scenario[i]
+     *            + mlpW * mlp[i]
+     *            + ucbW * tanh(ucb[i])
+     *
+     * 当场景匹配时 scenarioW=0.4, mlpW=0.35, ucbW=0.25
+     * 当无匹配时   scenarioW=0,   mlpW=0.6,  ucbW=0.4
+     */
+    std::vector<Recommendation> recommend(const PhysicalState& s, int topK = 3,
+                                           const LocInstanceAttr& instAttr = {}) {
+        std::lock_guard<std::mutex> lock(mu_);
+        chain_.push(s, instAttr);
+        lastFeat_ = ChainFeature::build(chain_);
+
+        // Tier 2: MLP prediction
+        float mlp[ACT_COUNT];
+        mlp_.forward(lastFeat_, mlp);
+
+        // Tier 1: Scenario chain matching
+        auto match = distiller_.match(chain_);
+        lastMatchConf_ = match.confidence;
+
+        // Compute fusion weights
+        float sW, mW, uW;
+        if (match.confidence >= ScenarioDistiller::MATCH_THRESHOLD && match.actionDist) {
+            // Scenario matched — blend all three
+            sW = 0.4f * match.confidence;  // scale by confidence
+            mW = mlpWeight_ * (1.0f - sW);
+            uW = (1.0f - mlpWeight_) * (1.0f - sW);
+        } else {
+            // No match — original MLP + UCB
+            sW = 0.0f;
+            mW = mlpWeight_;
+            uW = 1.0f - mlpWeight_;
+        }
+
+        std::vector<std::pair<float,int>> scored(ACT_COUNT);
+        for (int i = 0; i < ACT_COUNT; ++i) {
+            float ucb = arms_[i].score(lastFeat_, ucbAlpha_);
+            float scenarioScore = (sW > 0.0f && match.actionDist) ? match.actionDist[i] : 0.0f;
+            float combined = sW * scenarioScore + mW * mlp[i] + uW * std::tanh(ucb);
+            scored[i] = { combined, i };
+        }
+
+        std::partial_sort(scored.begin(), scored.begin() + topK, scored.end(),
+            [](const auto& a, const auto& b){ return a.first > b.first; });
+
+        std::vector<Recommendation> result;
+        for (int k = 0; k < topK && k < ACT_COUNT; ++k) {
+            auto [score, idx] = scored[k];
+            result.push_back({
+                idx, score, mlp[idx], arms_[idx].score(lastFeat_, ucbAlpha_),
+                actionMeta(idx).code, actionMeta(idx).name
+            });
+        }
+        return result;
+    }
+
+    /** User feedback (online learning via LinUCB) */
+    void reward(const PhysicalState& s, int actIdx, float r) {
+        if (actIdx < 0 || actIdx >= ACT_COUNT) return;
+        std::lock_guard<std::mutex> lock(mu_);
+        // Use stored feature from last recommend() call
+        arms_[actIdx].update(lastFeat_, r);
+    }
+
+    /** LLM distillation: train MLP with LLM-generated target distribution
+     *  Also learns the pattern in ScenarioDistiller for future fast-path matching */
+    void trainFromLLM(const float target[ACT_COUNT]) {
+        std::lock_guard<std::mutex> lock(mu_);
+        trainer_.trainStep(mlp_, lastFeat_, target);
+        // Learn new pattern in distiller (handles dedup internally)
+        distiller_.learnPattern(chain_, target);
+    }
+
+    /** Train with explicit chain feature (for batch/offline training) */
+    void trainFromLLMWithFeature(const ChainFeature& feat, const float target[ACT_COUNT]) {
+        std::lock_guard<std::mutex> lock(mu_);
+        trainer_.trainStep(mlp_, feat, target);
+    }
+
+    /** Get combined confidence (for LLM gating)
+     *  Returns max of: scenario match confidence, MLP top probability
+     *  High value = confident, no need for LLM */
+    float topConfidence() const {
+        std::lock_guard<std::mutex> lock(mu_);
+        float mlp[ACT_COUNT];
+        mlp_.forward(lastFeat_, mlp);
+        float maxP = 0.0f;
+        for (int i = 0; i < ACT_COUNT; ++i) {
+            if (mlp[i] > maxP) maxP = mlp[i];
+        }
+        // Scenario match confidence boosts overall confidence
+        return std::max(maxP, lastMatchConf_);
+    }
+
+    /** Reset LinUCB to initial state (keeps distilled MLP weights) */
+    void reset() {
+        std::lock_guard<std::mutex> lock(mu_);
+        for (auto& arm : arms_) arm = UCBArmV2{};
+        loadDistilledWeights();  // reload distilled, not random
+        chain_ = StateChain{};
+        lastMatchConf_ = 0.0f;
+    }
+
+    /** Get state chain as formatted string (for LLM prompt) */
+    std::string getChainDescription() const {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (chain_.count == 0) return "[]";
+
+        std::string result = "[";
+        for (int i = 0; i < chain_.count; ++i) {
+            const auto& e = chain_.at(i);
+            if (i > 0) result += ",";
+            result += "{\"step\":";
+            result += std::to_string(i + 1);
+            result += ",\"time\":\"";
+            result += StateCode::timeName(e.state.time);
+            result += "\",\"location\":\"";
+            result += StateCode::locationName(e.state.location);
+            result += "\",\"motion\":\"";
+            result += StateCode::motionName(e.state.motion);
+            result += "\",\"phone\":\"";
+            result += StateCode::phoneName(e.state.phone);
+            result += "\",\"light\":\"";
+            result += StateCode::lightName(e.state.light);
+            result += "\",\"sound\":\"";
+            result += StateCode::soundName(e.state.sound);
+            result += "\",\"dayType\":\"";
+            result += StateCode::dayTypeName(e.state.dayType);
+            result += "\",\"code\":\"";
+            result += StateCode::encode(e.state);
+            result += "\"}";
+        }
+        result += "]";
+        return result;
+    }
+
+    /** Serialize V2 state (LinUCB arms + MLP weights) */
+    bool save(const std::string& path) const {
+        std::lock_guard<std::mutex> lock(mu_);
+        std::ofstream f(path, std::ios::binary);
+        if (!f) return false;
+        uint32_t magic = 0x56324152;  // "V2AR"
+        uint32_t version = 2;         // v2: includes distiller learned patterns
+        f.write(reinterpret_cast<const char*>(&magic), 4);
+        f.write(reinterpret_cast<const char*>(&version), 4);
+        // MLP weights
+        f.write(reinterpret_cast<const char*>(&mlp_), sizeof(mlp_));
+        // LinUCB arms
+        for (const auto& arm : arms_) {
+            f.write(reinterpret_cast<const char*>(&arm), sizeof(arm));
+        }
+        return f.good();
+    }
+
+    /** Save learned scenario patterns (separate file) */
+    bool saveLearnedPatterns(const std::string& path) const {
+        std::lock_guard<std::mutex> lock(mu_);
+        return distiller_.saveLearned(path);
+    }
+
+    bool load(const std::string& path) {
+        std::lock_guard<std::mutex> lock(mu_);
+        std::ifstream f(path, std::ios::binary);
+        if (!f) return false;
+        uint32_t magic, version;
+        f.read(reinterpret_cast<char*>(&magic), 4);
+        f.read(reinterpret_cast<char*>(&version), 4);
+        if (magic != 0x56324152 || (version != 1 && version != 2)) return false;
+        f.read(reinterpret_cast<char*>(&mlp_), sizeof(mlp_));
+        for (auto& arm : arms_) {
+            f.read(reinterpret_cast<char*>(&arm), sizeof(arm));
+        }
+        return f.good();
+    }
+
+    /** Load learned scenario patterns */
+    bool loadLearnedPatterns(const std::string& path) {
+        std::lock_guard<std::mutex> lock(mu_);
+        return distiller_.loadLearned(path);
+    }
+
+    /** Stats for diagnostics */
+    struct ArmStats { int idx; const char* code; int updates; };
+    std::vector<ArmStats> stats() const {
+        std::lock_guard<std::mutex> lock(mu_);
+        std::vector<ArmStats> out;
+        for (int i = 0; i < ACT_COUNT; ++i) {
+            if (arms_[i].n > 0) {
+                out.push_back({ i, actionMeta(i).code, arms_[i].n });
+            }
+        }
+        return out;
+    }
+
+    /** Distiller diagnostics */
+    int scenarioBuiltinCount() const { return distiller_.builtinCount(); }
+    int scenarioLearnedCount() const { return distiller_.learnedCount(); }
+    float lastScenarioConfidence() const { return lastMatchConf_; }
+
+    /** Access distiller for direct pattern learning (used by NAPI) */
+    ScenarioDistiller& distiller() { return distiller_; }
+
+private:
+    ActionMLPv2            mlp_;
+    MLPTrainerV2           trainer_;
+    ScenarioDistiller      distiller_;     // Tier 1: scenario chain matching
+    std::array<UCBArmV2, ACT_COUNT> arms_;
+    StateChain             chain_;
+    ChainFeature           lastFeat_;
+    float                  mlpWeight_;
+    float                  ucbAlpha_;
+    float                  lastMatchConf_ = 0.0f; // last scenario match confidence
+    mutable std::mutex     mu_;
+
+    /** Load distilled MLP weights from pretrained_weights_v2.h */
+    void loadDistilledWeights() {
+        constexpr int IN  = ActionMLPv2::IN;
+        constexpr int HID = ActionMLPv2::HID;
+        constexpr int OUT = ActionMLPv2::OUT;
+        // Copy from static arrays generated by distill_scenarios.py
+        std::copy(DISTILLED_W1, DISTILLED_W1 + HID * IN, &mlp_.W1[0][0]);
+        std::copy(DISTILLED_B1, DISTILLED_B1 + HID, mlp_.b1);
+        std::copy(DISTILLED_W2, DISTILLED_W2 + OUT * HID, &mlp_.W2[0][0]);
+        std::copy(DISTILLED_B2, DISTILLED_B2 + OUT, mlp_.b2);
     }
 };
 

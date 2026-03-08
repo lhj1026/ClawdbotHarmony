@@ -18,6 +18,7 @@ import { TrayStatus } from '../service/context/DataTray';
 import { DailyTimelineService } from '../service/context/DailyTimelineService';
 import { TimelineEntry } from '../service/context/ContextModels';
 import { PhysicalStateBuilder } from '../service/context/PhysicalStateBuilder';
+import { RecommenderBridgeV2, RecommendItem } from '../service/context/RecommenderBridge';
 
 interface CategoryData {
   keys: string[];
@@ -184,6 +185,11 @@ struct ContextSettingsPage {
   @State psScenarioName: string = '';
   @State psScenarioStep: string = '';
   @State psScenarioCount: number = 0;
+  // V2 Recommender display
+  @State v2Recs: RecommendItem[] = [];
+  @State v2Confidence: number = 0;
+  @State v2Chain: string = '';
+  @State v2StateCode: string = '';
 
   private getKeyLabel(key: string): string {
     if (I18n.lang === 'en') {
@@ -596,6 +602,98 @@ struct ContextSettingsPage {
             .gesture(LongPressGesture({ duration: 500 }).onAction(() => {
               this.copyPhysicalStateToClipboard();
             }))
+
+            // ===== V2 MLP 推荐模型 =====
+            Column() {
+              Row() {
+                Text('\u{1F9E0} V2 MLP ' + I18n.t('ctx.recommender.title'))
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor('#1A1A1A')
+                  .layoutWeight(1)
+                Text(Math.round(this.v2Confidence * 100).toString() + '%')
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(this.v2Confidence > 0.6 ? '#4CAF50' : this.v2Confidence > 0.3 ? '#FF9800' : '#999999')
+              }
+              .width('100%')
+
+              // State code
+              if (this.v2StateCode.length > 0) {
+                Text('State: ' + this.v2StateCode)
+                  .fontSize(11)
+                  .fontColor('#999999')
+                  .width('100%')
+                  .margin({ top: 4 })
+              }
+
+              // Chain description
+              if (this.v2Chain.length > 0) {
+                Text('Chain: ' + this.v2Chain)
+                  .fontSize(11)
+                  .fontColor('#666699')
+                  .width('100%')
+                  .margin({ top: 2 })
+                  .maxLines(2)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+              }
+
+              // Top-5 recommendations
+              if (this.v2Recs.length > 0) {
+                Column({ space: 4 }) {
+                  ForEach(this.v2Recs, (item: RecommendItem, idx: number) => {
+                    Row() {
+                      Text((idx + 1).toString())
+                        .fontSize(12)
+                        .fontWeight(FontWeight.Bold)
+                        .fontColor(idx === 0 ? '#FF6B00' : '#999999')
+                        .width(18)
+                      Text(item.code)
+                        .fontSize(12)
+                        .fontWeight(FontWeight.Bold)
+                        .fontColor('#007AFF')
+                        .width(32)
+                      Text(item.name)
+                        .fontSize(13)
+                        .fontColor('#1A1A1A')
+                        .layoutWeight(1)
+                      // Score bar
+                      Stack() {
+                        Row()
+                          .width(Math.round(item.score * 60).toString() + 'vp')
+                          .height(6)
+                          .backgroundColor(idx === 0 ? '#FF6B00' : '#007AFF')
+                          .borderRadius(3)
+                      }
+                      .width(60)
+                      .height(6)
+                      .backgroundColor('#E8E8E8')
+                      .borderRadius(3)
+                      .alignContent(Alignment.Start)
+                      Text((item.score * 100).toFixed(1) + '%')
+                        .fontSize(10)
+                        .fontColor('#999999')
+                        .width(42)
+                        .textAlign(TextAlign.End)
+                    }
+                    .width('100%')
+                    .height(24)
+                    .alignItems(VerticalAlign.Center)
+                  }, (item: RecommendItem, idx: number) => item.code + idx.toString())
+                }
+                .width('100%')
+                .margin({ top: 8 })
+              } else {
+                Text(I18n.t('ctx.recommender.noData'))
+                  .fontSize(13)
+                  .fontColor('#BBBBBB')
+                  .margin({ top: 8 })
+              }
+            }
+            .width('100%')
+            .padding(16)
+            .backgroundColor(Color.White)
+            .borderRadius(12)
 
             // ===== 今日行程时间线 =====
             Column() {
@@ -1810,6 +1908,18 @@ struct ContextSettingsPage {
         this.psScenarioStep = '';
       }
       this.psScenarioCount = cas.getActiveScenarioCount();
+
+      // V2 Recommender predictions
+      let stateCode = this.buildStateCode(ps);
+      this.v2StateCode = stateCode;
+      try {
+        let v2 = RecommenderBridgeV2.getInstance();
+        this.v2Recs = v2.predict(stateCode, 5);
+        this.v2Confidence = v2.getTopConfidence();
+        this.v2Chain = v2.getChainDescription();
+      } catch (_e2) {
+        this.v2Recs = [];
+      }
     } catch (_e) {
       this.psTime = '--';
       this.psLocation = '--';
@@ -1822,6 +1932,28 @@ struct ContextSettingsPage {
       this.psScenarioStep = '';
       this.psScenarioCount = 0;
     }
+  }
+
+  private buildStateCode(ps: PhysicalState): string {
+    const TM: Record<string, string> = {
+      'sleeping':'1','dawn':'2','morning':'3','forenoon':'4',
+      'lunch':'5','afternoon':'6','evening':'7','night':'8','late_night':'9'
+    };
+    const LM: Record<string, string> = {
+      'home':'1','work':'2','commute':'3','restaurant':'4','gym':'5',
+      'outdoor':'6','airport':'7','shopping':'8','subway':'9',
+      'bus_stop':'A','ferry':'B','train_station':'C','cafe':'D','cinema':'E','park':'F'
+    };
+    const MM: Record<string, string> = {'stationary':'1','walking':'2','running':'3','driving':'4'};
+    const PM: Record<string, string> = {
+      'in_use':'1','holding_lying':'2','on_desk':'3','face_up':'4',
+      'in_pocket':'5','face_down':'6','charging':'7','unknown':'8'
+    };
+    const LiM: Record<string, string> = {'dark':'1','dim':'2','normal':'3','bright':'4'};
+    const SM: Record<string, string> = {'quiet':'1','normal':'2','noisy':'3','unknown':'4'};
+    const DM: Record<string, string> = {'workday':'1','weekend':'2','holiday':'3'};
+    return (TM[ps.time]??'0')+(LM[ps.location]??'0')+(MM[ps.motion]??'0')+
+      (PM[ps.phone]??'0')+(LiM[ps.light]??'0')+(SM[ps.sound]??'0')+(DM[ps.dayType]??'0');
   }
 
   /** 长按复制物理状态到剪切板，格式：时间：清晨，位置：家，运动：静止... */

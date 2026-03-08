@@ -16,16 +16,22 @@ import { TimelineEntry } from '../service/context/ContextModels';
 struct DailyTimelinePage {
   @State isMapMode: boolean = false;
   @State entries: TimelineEntry[] = [];
-  @State todayStr: string = '';
+  @State selectedDate: string = '';
+  @State availableDates: string[] = [];
+  @State isToday: boolean = true;
   private refreshTimer: number = -1;
   private mapController: webview.WebviewController = new webview.WebviewController();
   private mapReady: boolean = false;
 
   aboutToAppear(): void {
-    this.refreshData();
     let d = new Date();
-    this.todayStr = d.getFullYear() + '-' + (d.getMonth() + 1).toString().padStart(2, '0') + '-' + d.getDate().toString().padStart(2, '0');
-    this.refreshTimer = setInterval(() => { this.refreshData(); }, 10000);
+    this.selectedDate = d.getFullYear() + '-' + (d.getMonth() + 1).toString().padStart(2, '0') + '-' + d.getDate().toString().padStart(2, '0');
+    this.isToday = true;
+    this.availableDates = DailyTimelineService.getInstance().getAvailableDates();
+    this.refreshData();
+    this.refreshTimer = setInterval(() => {
+      if (this.isToday) { this.refreshData(); }
+    }, 10000);
   }
 
   aboutToDisappear(): void {
@@ -35,16 +41,50 @@ struct DailyTimelinePage {
     }
   }
 
+  private getTodayStr(): string {
+    let d = new Date();
+    return d.getFullYear() + '-' + (d.getMonth() + 1).toString().padStart(2, '0') + '-' + d.getDate().toString().padStart(2, '0');
+  }
+
   private refreshData(): void {
     try {
-      this.entries = DailyTimelineService.getInstance().getMergedTimeline();
-      // 地图模式下刷新数据时更新地图
+      if (this.isToday) {
+        this.entries = DailyTimelineService.getInstance().getMergedTimeline();
+      }
       if (this.isMapMode && this.mapReady) {
         this.sendMapData();
       }
     } catch {
       this.entries = [];
     }
+  }
+
+  private loadDateData(dateStr: string): void {
+    this.selectedDate = dateStr;
+    this.isToday = dateStr === this.getTodayStr();
+    if (this.isToday) {
+      this.entries = DailyTimelineService.getInstance().getMergedTimeline();
+    } else {
+      DailyTimelineService.getInstance().getTimelineForDate(dateStr).then((data: TimelineEntry[]) => {
+        this.entries = data;
+        if (this.isMapMode && this.mapReady) {
+          this.sendMapData();
+        }
+      });
+    }
+    if (this.isMapMode && this.mapReady) {
+      this.sendMapData();
+    }
+  }
+
+  private navigateDate(delta: number): void {
+    let parts = this.selectedDate.split('-');
+    let d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+    d.setDate(d.getDate() + delta);
+    let newDate = d.getFullYear() + '-' + (d.getMonth() + 1).toString().padStart(2, '0') + '-' + d.getDate().toString().padStart(2, '0');
+    // 不允许超过今天
+    if (newDate > this.getTodayStr()) return;
+    this.loadDateData(newDate);
   }
 
   // ─── Time / Duration formatting ───
@@ -103,9 +143,24 @@ struct DailyTimelinePage {
 
       points.push(`{lat:${e.latitude},lng:${e.longitude},label:"${icon} ${label}",time:"${time}",color:"${color}"}`);
 
-      if (prevLat !== 0 && prevLng !== 0) {
+      // 有 waypoints 时用精确路线，否则用直线
+      if (e.waypoints && e.waypoints.length > 0) {
+        // 从上一个点（或 entry 起点）到第一个 waypoint
+        let wpStart: number[] = [e.latitude, e.longitude];
+        if (prevLat !== 0 && prevLng !== 0) {
+          wpStart = [prevLat, prevLng];
+        }
         let dash = e.motionState === 'driving' ? 'false' : 'true';
-        lines.push(`{from:[${prevLat},${prevLng}],to:[${e.latitude},${e.longitude}],color:"${color}",dash:${dash}}`);
+        // 构建完整路径: 起点 → waypoints → entry坐标
+        let wpArr: string[] = [];
+        wpArr.push(`[${wpStart[0]},${wpStart[1]}]`);
+        for (let w = 0; w < e.waypoints.length; w++) {
+          wpArr.push(`[${e.waypoints[w][0]},${e.waypoints[w][1]}]`);
+        }
+        lines.push(`{path:[${wpArr.join(',')}],color:"${color}",dash:${dash}}`);
+      } else if (prevLat !== 0 && prevLng !== 0) {
+        let dash = e.motionState === 'driving' ? 'false' : 'true';
+        lines.push(`{path:[[${prevLat},${prevLng}],[${e.latitude},${e.longitude}]],color:"${color}",dash:${dash}}`);
       }
       prevLat = e.latitude;
       prevLng = e.longitude;
@@ -156,17 +211,40 @@ struct DailyTimelinePage {
       .padding({ left: 8, right: 16 })
       .backgroundColor(Color.White)
 
-      // ── Date ──
+      // ── Date navigation ──
       Row() {
-        Text('\u{1F4C5} ' + this.todayStr)
+        Text('\u{276E}')
+          .fontSize(18)
+          .fontColor('#007AFF')
+          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+          .onClick(() => { this.navigateDate(-1); })
+        Blank()
+        Text('\u{1F4C5} ' + this.selectedDate)
           .fontSize(14)
-          .fontColor('#666666')
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.isToday ? '#1A1A1A' : '#007AFF')
         Text('  ' + this.entries.length.toString() + I18n.t('ctx.timeline.count'))
           .fontSize(13)
           .fontColor('#999999')
+        if (!this.isToday) {
+          Text('  ' + I18n.t('ctx.timeline.today'))
+            .fontSize(12)
+            .fontColor('#007AFF')
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .borderRadius(8)
+            .backgroundColor('#F0F0FF')
+            .onClick(() => { this.loadDateData(this.getTodayStr()); })
+        }
+        Blank()
+        Text('\u{276F}')
+          .fontSize(18)
+          .fontColor(this.isToday ? '#CCCCCC' : '#007AFF')
+          .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+          .onClick(() => { if (!this.isToday) this.navigateDate(1); })
       }
       .width('100%')
-      .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+      .height(40)
+      .padding({ left: 4, right: 4 })
       .backgroundColor('#F8F8FC')
 
       if (this.isMapMode) {
@@ -188,7 +266,7 @@ struct DailyTimelinePage {
             Text('\u{1F4AD}')
               .fontSize(48)
               .margin({ bottom: 12 })
-            Text(I18n.t('ctx.timeline.empty'))
+            Text(this.isToday ? I18n.t('ctx.timeline.empty') : I18n.t('ctx.timeline.noData'))
               .fontSize(15)
               .fontColor('#999999')
           }
@@ -283,18 +361,31 @@ struct DailyTimelinePage {
                     }
                     .margin({ top: 4 })
 
-                    // Time range
-                    if (entry.endTime > entry.startTime) {
-                      Text(this.formatTime(entry.startTime) + ' - ' + this.formatTime(entry.endTime))
-                        .fontSize(11)
-                        .fontColor('#BBBBBB')
-                        .margin({ top: 2 })
-                    } else {
-                      Text(I18n.t('ctx.timeline.ongoing'))
-                        .fontSize(11)
-                        .fontColor('#4CAF50')
-                        .margin({ top: 2 })
+                    // Time range + GPS debug info
+                    Row({ space: 6 }) {
+                      if (entry.endTime > entry.startTime) {
+                        Text(this.formatTime(entry.startTime) + ' - ' + this.formatTime(entry.endTime))
+                          .fontSize(11)
+                          .fontColor('#BBBBBB')
+                      } else {
+                        Text(I18n.t('ctx.timeline.ongoing'))
+                          .fontSize(11)
+                          .fontColor('#4CAF50')
+                      }
+                      // GPS debug: coords + waypoint count
+                      if (entry.latitude !== 0) {
+                        Text(`(${entry.latitude.toFixed(4)},${entry.longitude.toFixed(4)})`)
+                          .fontSize(9)
+                          .fontColor('#999999')
+                      }
+                      if (entry.waypoints && entry.waypoints.length > 0) {
+                        Text(`${entry.waypoints.length}pts`)
+                          .fontSize(9)
+                          .fontColor('#2196F3')
+                          .fontWeight(FontWeight.Bold)
+                      }
                     }
+                    .margin({ top: 2 })
                   }
                   .layoutWeight(1)
                   .alignItems(HorizontalAlign.Start)

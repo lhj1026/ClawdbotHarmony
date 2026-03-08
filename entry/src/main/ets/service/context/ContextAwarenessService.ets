@@ -1556,7 +1556,13 @@ export class ContextAwarenessService {
     //    坐立竖握时 |y| > 5，排除坐立场景
     let isSideLying = (Math.abs(z) < 4.5) && (Math.abs(y) < 5) && this.isHoldingPhone;
 
-    if (isBackLying || isSideLying) {
+    // 运动中不可能躺着：走路/跑步时口袋中手机倾斜满足 isSideLying 条件导致误判
+    // 用加速度 magnitude 判断：走路时 magnitude 明显偏离 9.8
+    let magnitude = Math.sqrt(x * x + y * y + z * z);
+    let isInMotion = this.lastMotionState === 'walking' || this.lastMotionState === 'running';
+    let hasMotionAccel = Math.abs(magnitude - 9.8) > 0.8; // 走路时波动 > 0.8
+
+    if ((isBackLying || isSideLying) && !isInMotion && !hasMotionAccel) {
       this.isLyingDown = true;
     } else {
       this.isLyingDown = false;
@@ -2021,7 +2027,12 @@ export class ContextAwarenessService {
     this.lastLocation = locState;
     
     this.log.debug(TAG, `Location update: (${lat.toFixed(4)}, ${lng.toFixed(4)}) speed=${speed.toFixed(1)}m/s wifi=${this.lastWifiSsid}`);
-    
+
+    // 移动中推送 waypoint 到时间线 (用于精确路线显示)
+    if (this.lastMotionState !== 'stationary' && this.lastMotionState !== 'unknown') {
+      DailyTimelineService.getInstance().pushWaypoint(lat, lng);
+    }
+
     // 检查新地点（停留5分钟+WiFi）- 异步执行
     this.checkForNewPlaceSmart(lat, lng);
   }

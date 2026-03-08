@@ -10,63 +10,157 @@
   html,body{width:100%;height:100%;overflow:hidden}
   #map{width:100%;height:100%}
   .dot-label{
-    font-size:12px;font-weight:bold;white-space:nowrap;
-    background:rgba(255,255,255,0.92);padding:3px 8px;
-    border-radius:10px;border:1px solid #ddd;
-    box-shadow:0 1px 4px rgba(0,0,0,0.15);
-    line-height:1.4;
+    font-size:11px;font-weight:600;white-space:nowrap;
+    background:rgba(255,255,255,0.95);padding:4px 10px;
+    border-radius:12px;border:none;
+    box-shadow:0 2px 6px rgba(0,0,0,0.18);
+    line-height:1.5;max-width:160px;overflow:hidden;text-overflow:ellipsis;
+    pointer-events:none;
   }
-  .dot-label .time{color:#999;font-size:10px;font-weight:normal}
+  .dot-label .time{color:#aaa;font-size:9px;font-weight:normal;margin-left:4px}
+  .dot-label .place{display:inline-block;max-width:120px;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
   .empty-msg{
     display:flex;align-items:center;justify-content:center;
     height:100%;font-size:16px;color:#999;font-family:sans-serif;
+  }
+  .reset-btn{
+    position:fixed;bottom:24px;right:16px;z-index:1000;
+    width:44px;height:44px;border-radius:22px;border:none;
+    background:rgba(255,255,255,0.95);box-shadow:0 2px 8px rgba(0,0,0,0.2);
+    font-size:20px;line-height:44px;text-align:center;cursor:pointer;
+    display:none;
   }
 </style>
 </head>
 <body>
 <div id="map"></div>
+<button class="reset-btn" id="resetBtn" onclick="resetView()">&#x1f50d;</button>
 <script>
 var map=null;
 var layerGroup=null;
+var currentInChina=null;
+var userInteracted=false;
+var lastBounds=null;
+
+// WGS-84 → GCJ-02 coordinate transform (for China maps)
+var PI=3.1415926535897932384626;
+var EE=0.00669342162296594323;
+var A=6378245.0;
+function isInChinaBbox(lat,lng){return lng>=72.004&&lng<=137.8347&&lat>=0.8293&&lat<=55.8271}
+function transformLat(x,y){var r=-100+2*x+3*y+0.2*y*y+0.1*x*y+0.2*Math.sqrt(Math.abs(x));r+=(20*Math.sin(6*x*PI)+20*Math.sin(2*x*PI))*2/3;r+=(20*Math.sin(y*PI)+40*Math.sin(y/3*PI))*2/3;r+=(160*Math.sin(y/12*PI)+320*Math.sin(y*PI/30))*2/3;return r}
+function transformLng(x,y){var r=300+x+2*y+0.1*x*x+0.1*x*y+0.1*Math.sqrt(Math.abs(x));r+=(20*Math.sin(6*x*PI)+20*Math.sin(2*x*PI))*2/3;r+=(20*Math.sin(x*PI)+40*Math.sin(x/3*PI))*2/3;r+=(150*Math.sin(x/12*PI)+300*Math.sin(x/30*PI))*2/3;return r}
+function wgs84ToGcj02(lat,lng){
+  if(!isInChinaBbox(lat,lng))return[lat,lng];
+  var dLat=transformLat(lng-105,lat-35);
+  var dLng=transformLng(lng-105,lat-35);
+  var radLat=lat/180*PI;
+  var magic=Math.sin(radLat);magic=1-EE*magic*magic;
+  var sqrtMagic=Math.sqrt(magic);
+  dLat=(dLat*180)/(A*(1-EE)/(magic*sqrtMagic)*PI);
+  dLng=(dLng*180)/(A/sqrtMagic*Math.cos(radLat)*PI);
+  return[lat+dLat,lng+dLng];
+}
 
 function renderMap(points,lines){
   if(!points||points.length===0){
     document.getElementById('map').innerHTML='<div class="empty-msg">No GPS data</div>';
     return;
   }
+  // Detect if in China based on first valid point
+  var inChina=false;
+  for(var k=0;k<points.length;k++){
+    if(points[k].lat!==0||points[k].lng!==0){inChina=isInChinaBbox(points[k].lat,points[k].lng);break;}
+  }
+  // Recreate map if tile source changed
+  if(map&&currentInChina!==inChina){map.remove();map=null;layerGroup=null;}
+  currentInChina=inChina;
+
   if(!map){
     map=L.map('map',{zoomControl:false,attributionControl:false});
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
+    if(inChina){
+      L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',{
+        maxZoom:20,subdomains:['1','2','3','4']
+      }).addTo(map);
+    }else{
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
+    }
     layerGroup=L.layerGroup().addTo(map);
+    map.on('zoomstart',function(e){if(!e._fitBounds)userInteracted=true;});
+    map.on('dragstart',function(){userInteracted=true;});
+    map.on('moveend',function(){
+      document.getElementById('resetBtn').style.display=userInteracted?'block':'none';
+    });
   }else{
     layerGroup.clearLayers();
   }
+  // Coordinate transform helper
+  function loc(lat,lng){return inChina?wgs84ToGcj02(lat,lng):[lat,lng]}
+
   var bounds=[];
-  // Draw route lines
+  // Draw route lines (now supports multi-point paths)
   for(var i=0;i<lines.length;i++){
     var ln=lines[i];
-    var opts={color:ln.color,weight:4,opacity:0.8};
-    if(ln.dash)opts.dashArray='8,6';
-    L.polyline([ln.from,ln.to],opts).addTo(layerGroup);
+    var opts={color:ln.color,weight:3,opacity:0.7};
+    if(ln.dash)opts.dashArray='6,8';
+    if(ln.path){
+      var coords=[];
+      for(var j=0;j<ln.path.length;j++){
+        coords.push(loc(ln.path[j][0],ln.path[j][1]));
+      }
+      L.polyline(coords,opts).addTo(layerGroup);
+    }else if(ln.from&&ln.to){
+      var fromC=loc(ln.from[0],ln.from[1]);
+      var toC=loc(ln.to[0],ln.to[1]);
+      L.polyline([fromC,toC],opts).addTo(layerGroup);
+    }
   }
   // Draw markers
+  var labelLayer=L.layerGroup().addTo(layerGroup);
   for(var i=0;i<points.length;i++){
     var p=points[i];
-    bounds.push([p.lat,p.lng]);
-    L.circleMarker([p.lat,p.lng],{
-      radius:8,fillColor:'#fff',color:p.color,weight:3,fillOpacity:1
+    var c=loc(p.lat,p.lng);
+    bounds.push(c);
+    L.circleMarker(c,{
+      radius:7,fillColor:p.color,color:'#fff',weight:2,fillOpacity:0.9
     }).addTo(layerGroup);
+    // Spread labels in 8 directions to reduce overlap
+    var angles=[[-1,-32],[1,10],[-1,-32],[1,10],[0,-32],[0,10],[-1,-32],[1,10]];
+    var a=angles[i%8];
     var div=L.divIcon({
       className:'',
-      html:'<div class="dot-label">'+p.label+'<br><span class="time">'+p.time+'</span></div>',
-      iconSize:[0,0],iconAnchor:[-12,8]
+      html:'<div class="dot-label"><span class="place">'+p.label+'</span><span class="time">'+p.time+'</span></div>',
+      iconSize:[0,0],iconAnchor:[a[0]*60,a[1]]
     });
-    L.marker([p.lat,p.lng],{icon:div}).addTo(layerGroup);
+    L.marker(c,{icon:div}).addTo(labelLayer);
   }
-  if(bounds.length>1){
-    map.fitBounds(bounds,{padding:[50,50]});
-  }else if(bounds.length===1){
-    map.setView(bounds[0],15);
+  // Hide labels when zoomed out with many points, show on zoom in
+  function updateLabels(){
+    if(!map)return;
+    var z=map.getZoom();
+    if(points.length>10&&z<15){labelLayer.remove();}
+    else if(points.length>20&&z<16){labelLayer.remove();}
+    else{labelLayer.addTo(layerGroup);}
+  }
+  map.off('zoomend.labels');
+  map.on('zoomend.labels',updateLabels);
+  updateLabels();
+  lastBounds=bounds;
+  if(!userInteracted){
+    if(bounds.length>1){
+      map.fitBounds(bounds,{padding:[50,50]});
+    }else if(bounds.length===1){
+      map.setView(bounds[0],15);
+    }
+  }
+}
+
+function resetView(){
+  userInteracted=false;
+  document.getElementById('resetBtn').style.display='none';
+  if(lastBounds&&lastBounds.length>1){
+    map.fitBounds(lastBounds,{padding:[50,50]});
+  }else if(lastBounds&&lastBounds.length===1){
+    map.setView(lastBounds[0],15);
   }
 }
 </script>

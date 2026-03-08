@@ -405,7 +405,16 @@ static napi_value ImportTransitionState(napi_env env, napi_callback_info info) {
     return nullptr;
 }
 
-// Module registration
+// Module registration — V2 forward declarations
+static napi_value RecommenderV2Init      (napi_env env, napi_callback_info info);
+static napi_value RecommenderV2Predict   (napi_env env, napi_callback_info info);
+static napi_value RecommenderV2Reward    (napi_env env, napi_callback_info info);
+static napi_value RecommenderV2Train     (napi_env env, napi_callback_info info);
+static napi_value RecommenderV2Save      (napi_env env, napi_callback_info info);
+static napi_value RecommenderV2SaveLearned(napi_env env, napi_callback_info info);
+static napi_value RecommenderV2GetChain  (napi_env env, napi_callback_info info);
+static napi_value RecommenderV2Confidence(napi_env env, napi_callback_info info);
+static napi_value RecommenderV2Stats     (napi_env env, napi_callback_info info);
 
 EXTERN_C_START
 static napi_value Init(napi_env env, napi_value exports) {
@@ -426,6 +435,16 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"recommenderReward",  nullptr, RecommenderReward,  nullptr, nullptr, nullptr, napi_default, nullptr},
         {"recommenderSave",    nullptr, RecommenderSave,    nullptr, nullptr, nullptr, napi_default, nullptr},
         {"recommenderStats",   nullptr, RecommenderStats,   nullptr, nullptr, nullptr, napi_default, nullptr},
+        // V2 recommender (attribute-encoded state chain)
+        {"recommenderV2Init",       nullptr, RecommenderV2Init,       nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"recommenderV2Predict",    nullptr, RecommenderV2Predict,    nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"recommenderV2Reward",     nullptr, RecommenderV2Reward,     nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"recommenderV2Train",      nullptr, RecommenderV2Train,      nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"recommenderV2Save",       nullptr, RecommenderV2Save,       nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"recommenderV2SaveLearned",nullptr, RecommenderV2SaveLearned,nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"recommenderV2GetChain",   nullptr, RecommenderV2GetChain,   nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"recommenderV2Confidence", nullptr, RecommenderV2Confidence, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"recommenderV2Stats",      nullptr, RecommenderV2Stats,      nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     return exports;
@@ -456,10 +475,12 @@ extern "C" __attribute__((constructor)) void RegisterContextEngineModule(void) {
 
 // 全局推荐器单例（懒初始化）
 static context_engine::ActionRecommender* g_recommender = nullptr;
+static context_engine::ActionRecommenderV2* g_recommender_v2 = nullptr;
 static std::mutex g_rec_mu;
 static int g_reward_count = 0;
 static const int SAVE_INTERVAL = 5;  // 每5次反馈自动保存
 static std::string g_save_path;      // ArkTS 初始化时设置
+static std::string g_save_path_v2;
 
 static context_engine::ActionRecommender& getRecommender() {
     if (!g_recommender) {
@@ -591,6 +612,160 @@ static napi_value RecommenderStats(napi_env env, napi_callback_info info) {
         oss << "{\"code\":\"" << stats[i].code << "\""
             << ",\"updates\":" << stats[i].updates
             << ",\"avgReward\":" << std::fixed << std::setprecision(3) << stats[i].avgReward << "}";
+    }
+    oss << "]"; return napiString(env, oss.str());
+}
+
+// ============================================================
+// V2 Recommender NAPI implementations
+// ============================================================
+
+static context_engine::ActionRecommenderV2& getRecommenderV2() {
+    if (!g_recommender_v2) {
+        std::lock_guard<std::mutex> lk(g_rec_mu);
+        if (!g_recommender_v2) g_recommender_v2 = new context_engine::ActionRecommenderV2();
+    }
+    return *g_recommender_v2;
+}
+
+static context_engine::PhysicalState decodeStateCode(const std::string& stateCode) {
+    context_engine::PhysicalState state;
+    if (stateCode.size() >= 7) {
+        state.time     = static_cast<context_engine::TimeSlot>(stateCode[0]);
+        state.location = static_cast<context_engine::Location>(stateCode[1]);
+        state.motion   = static_cast<context_engine::Motion>  (stateCode[2]);
+        state.phone    = static_cast<context_engine::PhonePos>(stateCode[3]);
+        state.light    = static_cast<context_engine::Light>   (stateCode[4]);
+        state.sound    = static_cast<context_engine::Sound>   (stateCode[5]);
+        state.dayType  = static_cast<context_engine::DayType> (stateCode[6]);
+    }
+    return state;
+}
+
+static std::string g_learned_path_v2;
+
+static napi_value RecommenderV2Init(napi_env env, napi_callback_info info) {
+    size_t argc = 2; napi_value args[2];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc >= 1) {
+        g_save_path_v2 = napiGetString(env, args[0]);
+        getRecommenderV2().load(g_save_path_v2);
+    }
+    if (argc >= 2) {
+        g_learned_path_v2 = napiGetString(env, args[1]);
+        getRecommenderV2().loadLearnedPatterns(g_learned_path_v2);
+    }
+    return nullptr;
+}
+
+static napi_value RecommenderV2Predict(napi_env env, napi_callback_info info) {
+    // Args: stateCode, topK?, familiarity?, ownership?, routineLevel?
+    size_t argc = 5; napi_value args[5];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 1) return napiString(env, "[]");
+    auto state = decodeStateCode(napiGetString(env, args[0]));
+    int topK = 3;
+    if (argc >= 2) { int32_t k; napi_get_value_int32(env, args[1], &k); topK = k; }
+    // Instance attributes from geofence (computed in ArkTS)
+    context_engine::LocInstanceAttr instAttr;
+    if (argc >= 5) {
+        double f = 0, o = 0, r = 0;
+        napi_get_value_double(env, args[2], &f);
+        napi_get_value_double(env, args[3], &o);
+        napi_get_value_double(env, args[4], &r);
+        instAttr.familiarity  = static_cast<float>(f);
+        instAttr.ownership    = static_cast<float>(o);
+        instAttr.routineLevel = static_cast<float>(r);
+    }
+    auto recs = getRecommenderV2().recommend(state, topK, instAttr);
+    std::ostringstream oss;
+    oss << "[";
+    for (size_t i = 0; i < recs.size(); ++i) {
+        if (i > 0) oss << ",";
+        oss << "{\"code\":\"" << recs[i].code << "\""
+            << ",\"name\":\"" << recs[i].name << "\""
+            << ",\"score\":" << std::fixed << std::setprecision(4) << recs[i].score
+            << ",\"mlpProb\":" << std::fixed << std::setprecision(4) << recs[i].mlp_prob
+            << "}";
+    }
+    oss << "]";
+    return napiString(env, oss.str());
+}
+
+static napi_value RecommenderV2Reward(napi_env env, napi_callback_info info) {
+    size_t argc = 3; napi_value args[3];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 3) return nullptr;
+    auto state = decodeStateCode(napiGetString(env, args[0]));
+    std::string actionCode = napiGetString(env, args[1]);
+    double rewardVal = 0.0;
+    napi_get_value_double(env, args[2], &rewardVal);
+    int actIdx = context_engine::actionIndex(actionCode);
+    if (actIdx >= 0) {
+        getRecommenderV2().reward(state, actIdx, static_cast<float>(rewardVal));
+        ++g_reward_count;
+        if (!g_save_path_v2.empty() && g_reward_count % SAVE_INTERVAL == 0) {
+            getRecommenderV2().save(g_save_path_v2);
+        }
+    }
+    return nullptr;
+}
+
+static napi_value RecommenderV2Train(napi_env env, napi_callback_info info) {
+    size_t argc = 1; napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 1) return nullptr;
+    std::string json = napiGetString(env, args[0]);
+    float target[context_engine::ACT_COUNT] = {};
+    int idx = 0;
+    size_t pos = json.find('[');
+    if (pos != std::string::npos) {
+        pos++;
+        while (pos < json.size() && idx < context_engine::ACT_COUNT) {
+            while (pos < json.size() && (json[pos] == ' ' || json[pos] == ',')) pos++;
+            if (pos >= json.size() || json[pos] == ']') break;
+            char* end = nullptr;
+            float val = std::strtof(json.c_str() + pos, &end);
+            if (end > json.c_str() + pos) { target[idx++] = val; pos = end - json.c_str(); }
+            else break;
+        }
+    }
+    getRecommenderV2().trainFromLLM(target);
+    return nullptr;
+}
+
+static napi_value RecommenderV2Save(napi_env env, napi_callback_info info) {
+    size_t argc = 1; napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    std::string path = (argc >= 1) ? napiGetString(env, args[0]) : g_save_path_v2;
+    if (!path.empty()) getRecommenderV2().save(path);
+    return nullptr;
+}
+
+static napi_value RecommenderV2SaveLearned(napi_env env, napi_callback_info info) {
+    size_t argc = 1; napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    std::string path = (argc >= 1) ? napiGetString(env, args[0]) : g_learned_path_v2;
+    if (!path.empty()) getRecommenderV2().saveLearnedPatterns(path);
+    return nullptr;
+}
+
+static napi_value RecommenderV2GetChain(napi_env env, napi_callback_info info) {
+    return napiString(env, getRecommenderV2().getChainDescription());
+}
+
+static napi_value RecommenderV2Confidence(napi_env env, napi_callback_info info) {
+    napi_value result;
+    napi_create_double(env, getRecommenderV2().topConfidence(), &result);
+    return result;
+}
+
+static napi_value RecommenderV2Stats(napi_env env, napi_callback_info info) {
+    auto st = getRecommenderV2().stats();
+    std::ostringstream oss; oss << "[";
+    for (size_t i = 0; i < st.size(); ++i) {
+        if (i > 0) oss << ",";
+        oss << "{\"code\":\"" << st[i].code << "\",\"updates\":" << st[i].updates << "}";
     }
     oss << "]"; return napiString(env, oss.str());
 }

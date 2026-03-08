@@ -657,6 +657,11 @@ function buildZh(): Map<string, string> {
   m.set('ctx.timeline.listMode', '列表');
   m.set('ctx.timeline.mapMode', '地图');
   m.set('ctx.timeline.ongoing', '进行中');
+  m.set('ctx.timeline.today', '今天');
+  m.set('ctx.timeline.noData', '该日无行程记录');
+  // V2 推荐模型
+  m.set('ctx.recommender.title', '推荐模型');
+  m.set('ctx.recommender.noData', '暂无推荐');
 
   // SettingsPage - Context Awareness section
   m.set('settings.contextAwareness', '情景智能');
@@ -1597,6 +1602,11 @@ function buildEn(): Map<string, string> {
   m.set('ctx.timeline.listMode', 'List');
   m.set('ctx.timeline.mapMode', 'Map');
   m.set('ctx.timeline.ongoing', 'Ongoing');
+  m.set('ctx.timeline.today', 'Today');
+  m.set('ctx.timeline.noData', 'No data for this day');
+  // V2 Recommender
+  m.set('ctx.recommender.title', 'Recommender');
+  m.set('ctx.recommender.noData', 'No recommendations');
 
   // SettingsPage - Context Awareness section
   m.set('settings.contextAwareness', 'Context Intelligence');

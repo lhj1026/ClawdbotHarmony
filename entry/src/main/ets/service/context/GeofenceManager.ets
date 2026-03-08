@@ -537,6 +537,42 @@ export class GeofenceManager {
   }
   
   /**
+   * 计算当前所在围栏的实例属性 (用于V2推荐器)
+   * @returns [familiarity, ownership, routineLevel] 各在 [0, 1] 范围
+   */
+  getInstanceAttributes(): number[] {
+    if (this.currentlyInside.size === 0) {
+      return [0.0, 0.0, 0.0];  // 未在任何围栏内 = 未知地点
+    }
+    // 取第一个匹配的围栏
+    let gfId = Array.from(this.currentlyInside)[0];
+    let gf = this.geofences.get(gfId);
+    if (!gf) return [0.0, 0.0, 0.0];
+
+    // familiarity: min(visitCount / 50, 1.0)
+    let visitCount = gf.learnedSignals?.visitCount ?? 0;
+    let familiarity = Math.min(visitCount / 50.0, 1.0);
+
+    // ownership: by category
+    let ownershipMap: Record<string, number> = {
+      'home': 1.0, 'work': 0.8, 'gym': 0.3,
+      'restaurant': 0.1, 'shopping': 0.1, 'transit': 0.0, 'custom': 0.2
+    };
+    let ownership = ownershipMap[gf.category] ?? 0.0;
+
+    // routineLevel: 基于访问频率的规律性
+    // 简单估计：如果有 lastSeen 和 visitCount，推算每周访问次数
+    let routineLevel = 0.0;
+    if (visitCount > 0 && gf.learnedSignals?.lastSeen) {
+      let daysSinceCreation = Math.max(1, (Date.now() - (gf.learnedSignals.lastSeen - visitCount * 86400000)) / 86400000);
+      let weeklyVisits = (visitCount / daysSinceCreation) * 7;
+      routineLevel = Math.min(weeklyVisits / 7.0, 1.0);
+    }
+
+    return [familiarity, ownership, routineLevel];
+  }
+
+  /**
    * 获取当前状态摘要
    */
   getStatus(): string {
