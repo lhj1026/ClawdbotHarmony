@@ -21,6 +21,7 @@ export class Capability {
   static readonly Calendar: string = 'calendar';
   static readonly Exec: string = 'exec';
   static readonly Accessibility: string = 'accessibility';
+  static readonly Proxy: string = 'proxy';
 }
 
 export class Command {
@@ -59,6 +60,8 @@ export class Command {
   static readonly CALENDAR_ADD: string = 'calendar.add';
   // Exec (shell)
   static readonly EXEC_RUN: string = 'exec.run';
+  // Proxy (HTTP fetch via phone network)
+  static readonly PROXY_FETCH: string = 'proxy.fetch';
   // File transfer
   static readonly FILE_GET: string = 'file.get';
   // Context engine test

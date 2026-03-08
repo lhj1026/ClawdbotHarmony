@@ -19,6 +19,7 @@ import { SpeakerCapability } from './SpeakerCapability';
 import { EmailCapability } from './EmailCapability';
 import { CalendarCapability } from './CalendarCapability';
 import { ExecCapability } from './ExecCapability';
+import { ProxyCapability } from './ProxyCapability';
 import { GatewayProtocol } from './GatewayProtocol';
 import { Capability, Command } from './GatewayProtocol';
 import {
@@ -73,7 +74,7 @@ import { sensor } from '@kit.SensorServiceKit';
 import { AccessibilityService, ScreenNode, WindowInfo } from '../accessibility/AccessibilityService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.67.0';
+const APP_VERSION = '2.68.0';
 
 interface PendingStateRec {
   ruleId: string;
@@ -122,6 +123,7 @@ export class NodeRuntime {
   private emailCapability: EmailCapability = new EmailCapability();
   private calendarCapability: CalendarCapability = new CalendarCapability();
   private execCapability: ExecCapability = new ExecCapability();
+  private proxyCapability: ProxyCapability = new ProxyCapability();
   private pushCapability: PushCapability = PushCapability.getInstance();
 
   // Capability toggles (default all enabled)
@@ -3444,6 +3446,11 @@ export class NodeRuntime {
           result = await this.execCapability.execute(paramsJson);
           break;
         }
+        case Command.PROXY_FETCH: {
+          this.log.info(TAG, 'Executing proxy.fetch capability...');
+          result = await this.proxyCapability.execute(paramsJson);
+          break;
+        }
         case Command.CONTEXT_TEST: {
           this.log.info(TAG, 'Executing context.test...');
           result = await this.handleContextTest(paramsJson);
@@ -5201,6 +5208,9 @@ export class NodeRuntime {
       caps.push(Capability.Exec);
       commands.push(Command.EXEC_RUN);
     }
+    // Proxy is always available (no user-facing permission toggle needed)
+    caps.push(Capability.Proxy);
+    commands.push(Command.PROXY_FETCH);
     if (this._capAccessibility) {
       caps.push(Capability.Accessibility);
       commands.push(Command.ACCESSIBILITY_GET_SCREEN);
