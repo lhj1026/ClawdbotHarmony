@@ -986,9 +986,10 @@ export class ContextAwarenessService {
     }
     let variance = varianceSum / samples.length;
 
-    // 方差补偿：手持走路时 magnitude 均值接近 9.8 但震荡明显(方差>0.15)
-    // 真正静止时方差极低(<0.05)。原阈值 0.3 在采样间隔较大时容易漏判走路。
-    if (variance > 0.15 && mean < 10.5) {
+    // 方差补偿：手持走路时 magnitude 均值接近 9.8 但震荡明显(方差>0.08)
+    // 真正静止时方差极低(<0.02)。阈值 0.08 覆盖慢走场景（方差约 0.08-0.20），
+    // 原阈值 0.15 会漏判缓慢步行（慢走方差在 0.08-0.14 之间）。
+    if (variance > 0.08 && mean < 10.5) {
       return 'walking';
     }
 

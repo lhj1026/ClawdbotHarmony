@@ -24,11 +24,12 @@ export class PhysicalStateBuilder {
   private static instance: PhysicalStateBuilder | null = null;
   private tray: SensorDataTray = DataTray;
 
-  // ── 主导状态算法：保留最近 10 次采样，60% 多数才确认 ──────────
-  // 防止传感器短暂波动导致运动状态频繁切换
+  // ── 主导状态算法：保留最近 6 次采样，50% 多数即确认 ──────────
+  // 降低窗口大小+阈值，让走路状态更快被确认，减少 unknown 过渡
   private motionHistory: string[] = [];
-  private static readonly MOTION_HISTORY_SIZE: number = 10;
-  private static readonly MOTION_DOMINANT_RATIO: number = 0.6;
+  private lastConfirmedMotion: string = 'stationary'; // unknown 时回退到上次确认状态
+  private static readonly MOTION_HISTORY_SIZE: number = 6;
+  private static readonly MOTION_DOMINANT_RATIO: number = 0.5;
 
   static getInstance(): PhysicalStateBuilder {
     if (!PhysicalStateBuilder.instance) {
@@ -157,17 +158,18 @@ export class PhysicalStateBuilder {
       counts[s] = (counts[s] ?? 0) + 1;
     }
 
-    // 超过 60% 才确认为主导状态（'unknown' 不参与主导竞争，留作兜底）
+    // 超过 50% 才确认为主导状态（'unknown' 不参与主导竞争，留作兜底）
     let candidates: MotionCategory[] = ['stationary', 'walking', 'running', 'cycling', 'driving', 'transit'];
     for (let s of candidates) {
       let cnt = counts[s] ?? 0;
       if (cnt / totalSamples >= PhysicalStateBuilder.MOTION_DOMINANT_RATIO) {
+        this.lastConfirmedMotion = s;
         return s;
       }
     }
 
-    // 无主导状态 → 不确定，返回 unknown
-    return 'unknown';
+    // 无主导状态 → 回退到上次已知状态（避免显示"未知"抖动）
+    return this.lastConfirmedMotion as MotionCategory;
   }
 
   // ==================== Dim 4: Phone ====================

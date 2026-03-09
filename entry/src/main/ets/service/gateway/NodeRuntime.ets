@@ -74,7 +74,7 @@ import { sensor } from '@kit.SensorServiceKit';
 import { AccessibilityService, ScreenNode, WindowInfo } from '../accessibility/AccessibilityService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.68.0';
+const APP_VERSION = '2.68.2';
 
 interface PendingStateRec {
   ruleId: string;
@@ -539,10 +539,10 @@ export class NodeRuntime {
       return acc + (diff * diff);
     }, 0) / this._recentMagnitudes.length;
 
-    // 方差 < 0.1 认为静止。真正静止时方差 < 0.01；走路时方差 0.1-0.5+。
-    // 原阈值 1.5 过大：走路时方差约 0.2-0.5 也被判为静止，导致 _isLyingDown
-    // 误判为 true，进而在 CAS 中把 walking 强制覆盖为 stationary。
-    return variance < 0.1;
+    // 方差 < 0.05 认为静止。真正静止时方差 < 0.01；慢走时方差约 0.08-0.20+。
+    // 阈值 0.05 确保慢走不会被误判为静止，防止 _isLyingDown 误为 true
+    // 进而在 CAS 中把 walking 强制覆盖为 stationary。
+    return variance < 0.05;
   }
 
   /**
@@ -2481,6 +2481,9 @@ export class NodeRuntime {
   async fetchAgentIdentity(): Promise<void> {
     if (!this.operatorSession) return;
     if (this._operatorState !== ConnectionState.Connected) return;
+    // 每次连接时强制清除头像缓存，确保从服务器重新下载最新头像
+    this._cachedAvatarPath = '';
+    this._cachedAvatarUrl = '';
     this.log.info(TAG, 'Fetching agent identity from gateway config...');
 
     // Strategy 0: Extract identity from connect response (most reliable source)
