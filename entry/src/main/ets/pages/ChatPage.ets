@@ -185,8 +185,13 @@ export struct ChatPage {
         this.gwAgentName = identity.name;
         this.gwAgentEmoji = identity.emoji;
         this.gwAgentTheme = identity.theme;
-        this.gwAgentAvatar = NodeRuntime.getInstance().resolveAgentAvatarUrl() ?? '';
-        this.log.info('ChatPage', `Gateway identity received: name="${identity.name}" emoji="${identity.emoji}" avatar="${identity.avatar}" resolvedAvatar="${this.gwAgentAvatar}"`);
+        let resolvedAvatar = NodeRuntime.getInstance().resolveAgentAvatarUrl() ?? '';
+        this.log.info('ChatPage', `Gateway identity received: name="${identity.name}" emoji="${identity.emoji}" avatar="${identity.avatar}" resolvedAvatar="${resolvedAvatar}"`);
+        // Force ArkUI to re-render image even if path string is same (content may have changed)
+        if (resolvedAvatar.length > 0 && !resolvedAvatar.startsWith('http') && this.gwAgentAvatar === resolvedAvatar) {
+          this.gwAgentAvatar = '';
+        }
+        this.gwAgentAvatar = resolvedAvatar;
         // If avatar not yet cached locally, retry periodically until download completes
         if (identity.avatar.length > 0 && (this.gwAgentAvatar.length === 0 || this.gwAgentAvatar.startsWith('http'))) {
           this.retryAvatarResolve(5, 2000);

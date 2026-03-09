@@ -2433,10 +2433,14 @@ export class NodeRuntime {
         if (ct.includes('png')) ext = 'png';
         else if (ct.includes('gif')) ext = 'gif';
         else if (ct.includes('webp')) ext = 'webp';
-        let destPath = `${ctx.cacheDir}/gw_avatar.${ext}`;
+        let destPath = `${ctx.cacheDir}/gw_avatar_${Date.now()}.${ext}`;
         let file = fileIo.openSync(destPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
         fileIo.writeSync(file.fd, data);
         fileIo.closeSync(file);
+        // Delete old cached file to avoid stale files accumulating
+        if (this._cachedAvatarPath.length > 0 && this._cachedAvatarPath !== destPath) {
+          try { fileIo.unlinkSync(this._cachedAvatarPath); } catch { /* ignore */ }
+        }
         this._cachedAvatarPath = destPath;
         this._cachedAvatarUrl = identity.avatar;  // track which URL this cache corresponds to
         this.log.info(TAG, `Avatar cached to: ${destPath} (${data.byteLength} bytes)`);
