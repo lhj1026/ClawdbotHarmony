@@ -18,6 +18,8 @@ struct Index {
     LogService.getInstance().info('App', 'ClawdBot started');
     this.loadLang();
     this.autoConnectGateway();
+    // 独立于 Gateway 启动情景智能（单机模式下也生效）
+    this.maybeStartContextAwareness();
     this.langListener = () => {
       this.lang = I18n.lang;
     };
@@ -78,6 +80,18 @@ struct Index {
     } catch {
       LogService.getInstance().warn('App', 'Failed to auto-connect gateway');
     }
+  }
+
+  /** Start Context Awareness independently of Gateway connection */
+  private async maybeStartContextAwareness(): Promise<void> {
+    try {
+      let ctx = getContext(this) as common.UIAbilityContext;
+      let store = await preferences.getPreferences(ctx, 'chat_prefs');
+      let enabled = (await store.get('contextAwarenessEnabled', false)) as boolean;
+      if (enabled) {
+        NodeRuntime.getInstance().setContextAwarenessEnabled(true, ctx);
+      }
+    } catch { /* ignore */ }
   }
 
   private async loadLang(): Promise<void> {

@@ -395,12 +395,13 @@ export class NodeRuntime {
   /**
    * Toggle context awareness on/off from settings
    */
-  async setContextAwarenessEnabled(enabled: boolean): Promise<void> {
-    if (!this._context) {
+  async setContextAwarenessEnabled(enabled: boolean, fallbackCtx?: common.UIAbilityContext): Promise<void> {
+    let ctx = this._context ?? fallbackCtx;
+    if (!ctx) {
       return;
     }
     try {
-      let store = preferences.getPreferencesSync(this._context, { name: 'chat_prefs' });
+      let store = preferences.getPreferencesSync(ctx, { name: 'chat_prefs' });
       store.putSync('contextAwarenessEnabled', enabled);
       store.flush();
     } catch (err) {
@@ -410,7 +411,7 @@ export class NodeRuntime {
     let cas = ContextAwarenessService.getInstance();
     if (enabled) {
       if (!cas.isActive()) {
-        this.startContextAwareness(this._context);
+        this.startContextAwareness(ctx);
       }
     } else {
       if (cas.isActive()) {

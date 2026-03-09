@@ -1532,9 +1532,18 @@ export struct SettingsPage {
 
             Toggle({ type: ToggleType.Switch, isOn: this.contextAwarenessEnabled })
               .selectedColor('#007AFF')
-              .onChange((isOn: boolean) => {
+              .onChange(async (isOn: boolean) => {
                 this.contextAwarenessEnabled = isOn;
-                NodeRuntime.getInstance().setContextAwarenessEnabled(isOn);
+                // 直接保存（不依赖 NodeRuntime._context）
+                try {
+                  let ctx = getContext(this) as common.UIAbilityContext;
+                  let store = await preferences.getPreferences(ctx, 'chat_prefs');
+                  await store.put('contextAwarenessEnabled', isOn);
+                  await store.flush();
+                } catch (e) { /* ignore */ }
+                // 通知 NodeRuntime 启停服务（传入 context 作为 fallback）
+                let ctx = getContext(this) as common.UIAbilityContext;
+                NodeRuntime.getInstance().setContextAwarenessEnabled(isOn, ctx);
               })
           }
           .width('100%')
