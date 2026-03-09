@@ -20,6 +20,10 @@ import { GeoCodingService } from './GeoCodingService';
 const TAG = 'DailyTimeline';
 const PREFS_NAME = 'daily_timeline_prefs';
 const MAX_ENTRIES_PER_DAY = 200;
+const MAX_WAYPOINTS_PER_ENTRY = 500;
+const WAYPOINT_MIN_DISTANCE_M = 30;
+const MAX_HISTORY_DAYS = 90;
+const DATE_LIST_KEY = 'saved_dates';
 
 export class DailyTimelineService {
   private static instance: DailyTimelineService | null = null;
@@ -28,6 +32,7 @@ export class DailyTimelineService {
   private entries: TimelineEntry[] = [];
   private currentDate: string = '';
   private initialized: boolean = false;
+  private savedDates: string[] = [];
 
   // 用于去重: 避免短时间内重复推送相同状态
   private lastGeofenceId: string = '';
@@ -47,9 +52,10 @@ export class DailyTimelineService {
     try {
       this.prefs = await preferences.getPreferences(context, PREFS_NAME);
       this.currentDate = this.getTodayStr();
+      await this.loadDateList();
       await this.loadEntries();
       this.initialized = true;
-      this.log.info(TAG, `Init: ${this.entries.length} entries for ${this.currentDate}`);
+      this.log.info(TAG, `Init: ${this.entries.length} entries for ${this.currentDate}, ${this.savedDates.length} history days`);
     } catch (err) {
       this.log.warn(TAG, `Init failed: ${(err as Error).message}`);
     }
@@ -74,6 +80,8 @@ export class DailyTimelineService {
     let today = this.getTodayStr();
     if (today !== this.currentDate) {
       this.log.info(TAG, `Date changed: ${this.currentDate} → ${today}`);
+      // 保存旧日期数据到历史
+      this.saveEntriesForDate(this.currentDate);
       this.entries = [];
       this.currentDate = today;
       this.lastGeofenceId = '';
@@ -146,6 +154,60 @@ export class DailyTimelineService {
   }
 
   /**
+   * 推送途中 GPS 轨迹点 (在移动状态下定期调用)
+   */
+  pushWaypoint(latitude: number, longitude: number): void {
+    if (latitude === 0 && longitude === 0) return;
+    if (this.entries.length === 0) return;
+
+    let last = this.entries[this.entries.length - 1];
+    // 只在进行中的非围栏 entry 上追加 waypoint
+    if (last.endTime !== 0) return;
+    if (last.geofenceId.length > 0 && last.motionState === 'stationary') return;
+
+    if (!last.waypoints) {
+      last.waypoints = [];
+    }
+
+    // 距离去重: 与上一个 waypoint 距离 < WAYPOINT_MIN_DISTANCE_M 则跳过
+    if (last.waypoints.length > 0) {
+      let prev = last.waypoints[last.waypoints.length - 1];
+      let dist = this.haversineM(prev[0], prev[1], latitude, longitude);
+      if (dist < WAYPOINT_MIN_DISTANCE_M) return;
+    } else {
+      // 也跟 entry 起点比较
+      let dist = this.haversineM(last.latitude, last.longitude, latitude, longitude);
+      if (dist < WAYPOINT_MIN_DISTANCE_M) return;
+    }
+
+    last.waypoints.push([latitude, longitude, Date.now()]);
+
+    if (last.waypoints.length > MAX_WAYPOINTS_PER_ENTRY) {
+      last.waypoints = last.waypoints.slice(-MAX_WAYPOINTS_PER_ENTRY);
+    }
+
+    // 日志: 每5个点记录一次
+    if (last.waypoints.length % 5 === 0) {
+      this.log.info(TAG, `Waypoint #${last.waypoints.length}: (${latitude.toFixed(4)},${longitude.toFixed(4)}) [${last.motionState}]`);
+    }
+
+    // 节流保存: 每 10 个 waypoint 保存一次
+    if (last.waypoints.length % 10 === 0) {
+      this.saveEntries();
+    }
+  }
+
+  private haversineM(lat1: number, lng1: number, lat2: number, lng2: number): number {
+    let R = 6371000;
+    let dLat = (lat2 - lat1) * Math.PI / 180;
+    let dLng = (lng2 - lng1) * Math.PI / 180;
+    let a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  /**
    * 异步逆地理编码：为途中 entry 补充地名
    */
   private asyncGeocodeEntry(entry: TimelineEntry): void {
@@ -207,6 +269,7 @@ export class DailyTimelineService {
         longitude: e.longitude,
         geocodeLabel: e.geocodeLabel,
         scenarioTitle: e.scenarioTitle,
+        waypoints: e.waypoints,
       };
       result.push(copy);
     }
@@ -226,6 +289,10 @@ export class DailyTimelineService {
    */
   getMergedTimeline(): TimelineEntry[] {
     let raw = this.getDailyTimeline();
+    return this.mergeRawEntries(raw);
+  }
+
+  private mergeRawEntries(raw: TimelineEntry[]): TimelineEntry[] {
     if (raw.length === 0) return [];
 
     let merged: TimelineEntry[] = [];
@@ -233,12 +300,10 @@ export class DailyTimelineService {
 
     for (let i = 1; i < raw.length; i++) {
       let next = raw[i];
-      // 同一地点 (非空) 且运动状态都是 stationary → 合并
       if (next.geofenceId.length > 0 &&
           next.geofenceId === current.geofenceId &&
           next.motionState === 'stationary' &&
           current.motionState === 'stationary') {
-        // 延续当前 entry
         current = {
           id: current.id,
           startTime: current.startTime,
@@ -264,57 +329,149 @@ export class DailyTimelineService {
   // ─── 持久化 ───
 
   private async saveEntries(): Promise<void> {
+    this.saveEntriesForDate(this.currentDate);
+  }
+
+  private async saveEntriesForDate(dateStr: string): Promise<void> {
     if (!this.prefs) return;
     try {
-      let json = JSON.stringify(this.entries);
-      this.prefs.putSync('date', this.currentDate);
+      let entriesToSave = dateStr === this.currentDate ? this.entries : [];
+      // 如果不是当天，从 prefs 中读取（已保存的）
+      if (dateStr !== this.currentDate) return;
+
+      let json = JSON.stringify(entriesToSave);
+      let key = 'entries_' + dateStr;
+      this.prefs.putSync(key, json);
+      // 兼容旧格式
+      this.prefs.putSync('date', dateStr);
       this.prefs.putSync('entries', json);
+
+      // 更新日期列表
+      if (entriesToSave.length > 0 && !this.savedDates.includes(dateStr)) {
+        this.savedDates.push(dateStr);
+        this.savedDates.sort();
+        // 限制历史天数
+        if (this.savedDates.length > MAX_HISTORY_DAYS) {
+          let removed = this.savedDates.shift()!;
+          this.prefs.deleteSync('entries_' + removed);
+        }
+        this.prefs.putSync(DATE_LIST_KEY, JSON.stringify(this.savedDates));
+      }
       await this.prefs.flush();
     } catch (err) {
       this.log.warn(TAG, `Save failed: ${(err as Error).message}`);
     }
   }
 
+  private async loadDateList(): Promise<void> {
+    if (!this.prefs) return;
+    try {
+      let json = await this.prefs.get(DATE_LIST_KEY, '[]') as string;
+      this.savedDates = JSON.parse(json) as string[];
+      // 迁移: 如果旧格式有数据但 savedDates 没有今天，添加今天
+      let oldDate = await this.prefs.get('date', '') as string;
+      if (oldDate.length > 0 && !this.savedDates.includes(oldDate)) {
+        // 把旧格式数据迁移到新 key
+        let oldJson = await this.prefs.get('entries', '[]') as string;
+        this.prefs.putSync('entries_' + oldDate, oldJson);
+        this.savedDates.push(oldDate);
+        this.savedDates.sort();
+        this.prefs.putSync(DATE_LIST_KEY, JSON.stringify(this.savedDates));
+        await this.prefs.flush();
+        this.log.info(TAG, `Migrated old data for ${oldDate}`);
+      }
+    } catch (err) {
+      this.savedDates = [];
+    }
+  }
+
+  private parseEntriesJson(json: string): TimelineEntry[] {
+    let parsed: Object[] = JSON.parse(json) as Object[];
+    let result: TimelineEntry[] = [];
+    for (let i = 0; i < parsed.length; i++) {
+      let obj = parsed[i] as Record<string, Object>;
+      let entry: TimelineEntry = {
+        id: (obj['id'] as string) ?? '',
+        startTime: (obj['startTime'] as number) ?? 0,
+        endTime: (obj['endTime'] as number) ?? 0,
+        geofenceId: (obj['geofenceId'] as string) ?? '',
+        geofenceLabel: (obj['geofenceLabel'] as string) ?? '',
+        geofenceIcon: (obj['geofenceIcon'] as string) ?? '',
+        motionState: (obj['motionState'] as string) ?? '',
+        latitude: (obj['latitude'] as number) ?? 0,
+        longitude: (obj['longitude'] as number) ?? 0,
+        geocodeLabel: (obj['geocodeLabel'] as string) ?? '',
+        scenarioTitle: (obj['scenarioTitle'] as string) ?? '',
+      };
+      let wp = obj['waypoints'];
+      if (wp) {
+        entry.waypoints = wp as number[][];
+      }
+      result.push(entry);
+    }
+    return result;
+  }
+
   private async loadEntries(): Promise<void> {
     if (!this.prefs) return;
     try {
-      let savedDate = await this.prefs.get('date', '') as string;
-      if (savedDate === this.currentDate) {
-        let json = await this.prefs.get('entries', '[]') as string;
-        let parsed: Object[] = JSON.parse(json) as Object[];
-        this.entries = [];
-        for (let i = 0; i < parsed.length; i++) {
-          let obj = parsed[i] as Record<string, Object>;
-          let entry: TimelineEntry = {
-            id: (obj['id'] as string) ?? '',
-            startTime: (obj['startTime'] as number) ?? 0,
-            endTime: (obj['endTime'] as number) ?? 0,
-            geofenceId: (obj['geofenceId'] as string) ?? '',
-            geofenceLabel: (obj['geofenceLabel'] as string) ?? '',
-            geofenceIcon: (obj['geofenceIcon'] as string) ?? '',
-            motionState: (obj['motionState'] as string) ?? '',
-            latitude: (obj['latitude'] as number) ?? 0,
-            longitude: (obj['longitude'] as number) ?? 0,
-            geocodeLabel: (obj['geocodeLabel'] as string) ?? '',
-            scenarioTitle: (obj['scenarioTitle'] as string) ?? '',
-          };
-          this.entries.push(entry);
+      let key = 'entries_' + this.currentDate;
+      let json = await this.prefs.get(key, '') as string;
+      if (json.length === 0) {
+        // 兼容旧格式
+        let savedDate = await this.prefs.get('date', '') as string;
+        if (savedDate === this.currentDate) {
+          json = await this.prefs.get('entries', '[]') as string;
         }
+      }
+      if (json.length > 0) {
+        this.entries = this.parseEntriesJson(json);
         // 恢复去重状态
         if (this.entries.length > 0) {
           let last = this.entries[this.entries.length - 1];
           this.lastGeofenceId = last.geofenceId;
           this.lastMotionState = last.motionState;
         }
-        this.log.info(TAG, `Loaded ${this.entries.length} entries for ${savedDate}`);
+        this.log.info(TAG, `Loaded ${this.entries.length} entries for ${this.currentDate}`);
       } else {
-        this.log.info(TAG, `New day or no saved data (saved=${savedDate}, today=${this.currentDate})`);
+        this.log.info(TAG, `No data for ${this.currentDate}`);
         this.entries = [];
       }
     } catch (err) {
       this.log.warn(TAG, `Load failed: ${(err as Error).message}`);
       this.entries = [];
     }
+  }
+
+  /**
+   * 获取历史某天的时间线
+   */
+  async getTimelineForDate(dateStr: string): Promise<TimelineEntry[]> {
+    if (dateStr === this.currentDate || dateStr === this.getTodayStr()) {
+      return this.getMergedTimeline();
+    }
+    if (!this.prefs) return [];
+    try {
+      let key = 'entries_' + dateStr;
+      let json = await this.prefs.get(key, '[]') as string;
+      let raw = this.parseEntriesJson(json);
+      return this.mergeRawEntries(raw);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * 获取有数据的历史日期列表（含今天）
+   */
+  getAvailableDates(): string[] {
+    let today = this.getTodayStr();
+    let dates = this.savedDates.slice();
+    if (!dates.includes(today) && this.entries.length > 0) {
+      dates.push(today);
+    }
+    dates.sort();
+    return dates;
   }
 
   // ─── 工具 ───

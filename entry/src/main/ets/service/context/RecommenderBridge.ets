@@ -15,6 +15,7 @@
 import contextEngine from 'libcontext_engine.so';
 import { LogService } from '../../common/LogService';
 import { fileIo } from '@kit.CoreFileKit';
+import { GeofenceManager } from './GeofenceManager';
 
 const TAG = 'RecommenderBridge';
 
@@ -174,6 +175,156 @@ export class RecommenderBridge {
     if (elapsed > this.TIMEOUT_MS) {
       // 超时未操作 → 弱负反馈
       this.log.info(TAG, `超时负反馈: state=${this._lastSnapshot.stateCode} elapsed=${elapsed}ms`);
+      for (const item of this._lastSnapshot.items) {
+        this.reward(this._lastSnapshot.stateCode, item.code, FeedbackType.TIMEOUT);
+      }
+      this._lastSnapshot = null;
+    }
+  }
+}
+
+// ============================================================
+// V2 推荐器桥接 (attribute encoding + state chain + instance attrs)
+// ============================================================
+
+const TAG_V2 = 'RecommenderBridgeV2';
+
+export class RecommenderBridgeV2 {
+  private static _instance: RecommenderBridgeV2 | null = null;
+  private log = LogService.getInstance();
+  private savePath = '';
+  private learnedPath = '';
+  private inited = false;
+  private saveTimer: number = -1;
+  private _lastSnapshot: ShownSnapshot | null = null;
+  private readonly TIMEOUT_MS = 30_000;
+
+  private constructor() {}
+
+  static getInstance(): RecommenderBridgeV2 {
+    if (!RecommenderBridgeV2._instance) {
+      RecommenderBridgeV2._instance = new RecommenderBridgeV2();
+    }
+    return RecommenderBridgeV2._instance;
+  }
+
+  init(filesDir: string): void {
+    if (this.inited) return;
+    this.savePath = filesDir + '/recommender_v2.bin';
+    this.learnedPath = filesDir + '/distiller_learned.bin';
+    try {
+      contextEngine.recommenderV2Init(this.savePath, this.learnedPath);
+      this.inited = true;
+      this.log.info(TAG_V2, `V2初始化完成(distilled)，路径: ${this.savePath}`);
+    } catch (e) {
+      this.log.warn(TAG_V2, `V2初始化失败: ${(e as Error).message}`);
+    }
+  }
+
+  /**
+   * V2 MLP 预测 top-K 推荐
+   * 自动从 GeofenceManager 获取 instance attributes
+   */
+  predict(stateCode: string, topK: number = 3): RecommendItem[] {
+    if (!this.inited || stateCode.length < 7) return [];
+    try {
+      let inst = GeofenceManager.getInstance().getInstanceAttributes();
+      const json = contextEngine.recommenderV2Predict(
+        stateCode, topK, inst[0], inst[1], inst[2]
+      ) as string;
+      return JSON.parse(json) as RecommendItem[];
+    } catch (e) {
+      this.log.warn(TAG_V2, `predict失败: ${(e as Error).message}`);
+      return [];
+    }
+  }
+
+  recordShown(stateCode: string, items: RecommendItem[]): void {
+    this.checkPreviousTimeout();
+    this._lastSnapshot = { stateCode, items, shownAt: Date.now() };
+  }
+
+  reward(stateCode: string, actionCode: string, r: number): void {
+    if (!this.inited || stateCode.length < 7 || actionCode.length < 2) return;
+    try {
+      contextEngine.recommenderV2Reward(stateCode, actionCode, r);
+      this.log.info(TAG_V2, `reward: state=${stateCode} action=${actionCode} r=${r.toFixed(2)}`);
+      this.scheduleAutoSave();
+      if (this._lastSnapshot?.stateCode === stateCode) {
+        this._lastSnapshot = null;
+      }
+    } catch (e) {
+      this.log.warn(TAG_V2, `reward失败: ${(e as Error).message}`);
+    }
+  }
+
+  /** LLM 蒸馏训练：传入目标概率分布 JSON */
+  trainFromLLM(targetDistJson: string): void {
+    if (!this.inited) return;
+    try {
+      contextEngine.recommenderV2Train(targetDistJson);
+      this.log.info(TAG_V2, 'LLM蒸馏训练完成');
+    } catch (e) {
+      this.log.warn(TAG_V2, `train失败: ${(e as Error).message}`);
+    }
+  }
+
+  /** 获取状态链描述 (用于 LLM prompt) */
+  getChainDescription(): string {
+    if (!this.inited) return '[]';
+    try { return contextEngine.recommenderV2GetChain() as string; }
+    catch (e) { return '[]'; }
+  }
+
+  /** MLP top 置信度 (用于 LLM gating: 低于阈值才请求LLM) */
+  getTopConfidence(): number {
+    if (!this.inited) return 0;
+    try { return contextEngine.recommenderV2Confidence() as number; }
+    catch (e) { return 0; }
+  }
+
+  onCardDismissed(stateCode: string, shownCodes: string[]): void {
+    for (const code of shownCodes) {
+      this.reward(stateCode, code, FeedbackType.DISMISS);
+    }
+    this._lastSnapshot = null;
+  }
+
+  onActionExecuted(stateCode: string, actionCode: string, success: boolean): void {
+    this.reward(stateCode, actionCode, success ? FeedbackType.ACCEPT : FeedbackType.NEUTRAL);
+  }
+
+  flush(): void {
+    if (!this.inited) return;
+    try {
+      contextEngine.recommenderV2Save(this.savePath);
+      contextEngine.recommenderV2SaveLearned(this.learnedPath);
+      this.log.info(TAG_V2, 'V2参数+学习模式已保存');
+    } catch (e) {
+      this.log.warn(TAG_V2, `save失败: ${(e as Error).message}`);
+    }
+  }
+
+  getStats(): string {
+    if (!this.inited) return '[]';
+    try { return contextEngine.recommenderV2Stats() as string; }
+    catch (e) { return '[]'; }
+  }
+
+  private scheduleAutoSave(): void {
+    if (this.saveTimer >= 0) return;
+    let timerId: number = setTimeout(() => {
+      this.flush();
+      this.saveTimer = -1;
+    }, 3000);
+    this.saveTimer = timerId;
+  }
+
+  private checkPreviousTimeout(): void {
+    if (!this._lastSnapshot) return;
+    const elapsed = Date.now() - this._lastSnapshot.shownAt;
+    if (elapsed > this.TIMEOUT_MS) {
+      this.log.info(TAG_V2, `超时负反馈: state=${this._lastSnapshot.stateCode} elapsed=${elapsed}ms`);
       for (const item of this._lastSnapshot.items) {
         this.reward(this._lastSnapshot.stateCode, item.code, FeedbackType.TIMEOUT);
       }

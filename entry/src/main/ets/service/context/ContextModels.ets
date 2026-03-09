@@ -593,6 +593,7 @@ export interface TimelineEntry {
   longitude: number;             // GPS 经度 (0 = 未知)
   geocodeLabel: string;          // 逆地理编码地名 (道路名/区域名)
   scenarioTitle: string;         // 匹配的场景标题 (如 "工作日早起", 空=无匹配)
+  waypoints?: number[][];        // 途中GPS轨迹点 [[lat,lng,timestamp], ...] (可选)
 }
 
 // ==================== 传感器录制/回放 ====================
