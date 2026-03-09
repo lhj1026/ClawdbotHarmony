@@ -2250,9 +2250,12 @@ export class ContextAwarenessService {
         );
         if (geofences.length > 0) {
           this.recordedPut('geofence', geofences[0].id, 1.0, 'geofence');
+          // GPS 确认围栏时同步写入 wifiGeofence（PhysicalStateBuilder 依赖此字段分类位置）
+          this.recordedPut('wifiGeofence', geofences[0].category, 0.8, 'geofence');
         } else {
           // 不在任何围栏内，清除旧值（防止新地点检测被 T1 skip 阻断）
           this.recordedPut('geofence', '', 0, 'geofence');
+          this.recordedPut('wifiGeofence', '', 0, 'geofence');
         }
       }
     }
@@ -3346,9 +3349,11 @@ export class ContextAwarenessService {
     this.recordedPut('longitude', event.location.longitude.toString(), 1.0, 'gps');
     if (event.type === 'enter') {
       this.recordedPut('geofence', event.geofence.id, 1.0, 'geofence');
+      this.recordedPut('wifiGeofence', event.geofence.category, 0.8, 'geofence');
     } else {
       // Exit: 清除围栏标记，让新地点检测和 GPS 定时器正常工作
       this.recordedPut('geofence', '', 0, 'geofence');
+      this.recordedPut('wifiGeofence', '', 0, 'geofence');
       this.log.info(TAG, `Geofence exit: cleared tray, left ${event.geofence.name}`);
     }
 
