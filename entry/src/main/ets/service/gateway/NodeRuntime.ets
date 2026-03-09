@@ -206,6 +206,8 @@ export class NodeRuntime {
 
   // A2UI / inline canvas listeners — notify ChatPage when A2UI or canvas content arrives
   private _a2uiListeners: Array<(type: string, content: string) => void> = [];
+  // Fallback context for standalone mode background task
+  private _fallbackContext: common.UIAbilityContext | undefined = undefined;
 
   // Experience pull completion callbacks — notify MemoryPage when pull finishes
   private _experiencePullCallbacks: Array<(success: boolean, count: number) => void> = [];
@@ -366,10 +368,15 @@ export class NodeRuntime {
       // Stop background task when returning to foreground
       this.stopBackgroundTask();
     } else {
-      // Start background task to keep WebSocket alive when going to background
-      // Only start if we have an active connection
-      if (this.connectionState === ConnectionState.Connected && this._context) {
-        this.startBackgroundTask(this._context);
+      let bgCtx = this._context ?? this._fallbackContext;
+      if (bgCtx) {
+        if (this.connectionState === ConnectionState.Connected) {
+          // 网关模式：启动 DATA_TRANSFER + LOCATION
+          this.startBackgroundTask(bgCtx);
+        } else if (this._contextListenersRegistered) {
+          // 单机模式但情景智能运行中：仅启动 LOCATION 防止传感器冻结
+          this.startLocationOnlyTask(bgCtx);
+        }
       }
       // 持久化 LinUCB 参数（退后台时保存）
       RecommenderBridge.getInstance().flush();
@@ -400,6 +407,7 @@ export class NodeRuntime {
     if (!ctx) {
       return;
     }
+    this._fallbackContext = ctx;  // 保存供后台任务使用
     try {
       let store = preferences.getPreferencesSync(ctx, { name: 'chat_prefs' });
       store.putSync('contextAwarenessEnabled', enabled);
@@ -750,9 +758,21 @@ export class NodeRuntime {
       } catch (_e) { /* 静默跳过 */ }
       // ────────────────────────────────────────────────────────────
 
-      // A2UI 卡片由 stateChangeListener 统一处理，此处不再重复生成
-      // 只发送通知（后台时）
-      if (!this._isInForeground) {
+      // A2UI 卡片由 stateChangeListener 统一处理（ChatPage 可见时正常显示）
+      // ChatPage 不可见时：投递为持久 chat message + 发送系统通知
+      if (!this._isChatPageVisible) {
+        let text = `💡 **${ruleName}**\n${rec.reason}`;
+        let event: GatewayChatEvent = {
+          runId: `ctx-rec-${Date.now()}`,
+          sessionKey: '',
+          seq: 0,
+          state: 'final',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: text }],
+          },
+        };
+        this.dispatchChatEvent(event);
         NotificationHelper.getInstance().send('💡 ' + I18n.t('context.notification.title'), rec.reason).catch(() => { /* ignore */ });
       }
     });
@@ -777,8 +797,8 @@ export class NodeRuntime {
         };
         this.dispatchChatEvent(event);
       }
-      // Notification for first suggestion if in background
-      if (!this._isInForeground && suggestions.length > 0) {
+      // Notification for first suggestion if ChatPage not visible
+      if ((!this._isInForeground || !this._isChatPageVisible) && suggestions.length > 0) {
         let first = suggestions[0];
         NotificationHelper.getInstance()
           .send('📍 ' + I18n.t('context.notification.discoveredPlace'), `${first.name} — ${first.reason}`)
@@ -878,16 +898,39 @@ export class NodeRuntime {
     }
   }
 
+  /** Start LOCATION-only background task for standalone mode with context awareness */
+  private async startLocationOnlyTask(context: common.UIAbilityContext): Promise<void> {
+    if (this._locationTaskRunning) {
+      return;
+    }
+    try {
+      let info: wantAgent.WantAgentInfo = {
+        wants: [{ bundleName: context.abilityInfo.bundleName, abilityName: context.abilityInfo.name }],
+        actionType: wantAgent.OperationType.START_ABILITY,
+        requestCode: 1,
+        actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
+      };
+      let agent = await wantAgent.getWantAgent(info);
+      await backgroundTaskManager.startBackgroundRunning(context, backgroundTaskManager.BackgroundMode.LOCATION, agent);
+      this._locationTaskRunning = true;
+      this.log.info(TAG, '📍 Background task started (LOCATION only) - standalone mode');
+    } catch (err) {
+      let code = (err as Record<string, number>)['code'] ?? 0;
+      this.log.system(TAG, `Failed to start LOCATION bg task: code=${code} ${(err as Error).message ?? ''}`);
+    }
+  }
+
   /** Stop background task (stopBackgroundRunning stops all modes for this context) */
   private async stopBackgroundTask(): Promise<void> {
     if (!this._backgroundTaskRunning && !this._locationTaskRunning) {
       return;
     }
-    if (!this._context) {
+    let ctx = this._context ?? this._fallbackContext;
+    if (!ctx) {
       return;
     }
     try {
-      await backgroundTaskManager.stopBackgroundRunning(this._context);
+      await backgroundTaskManager.stopBackgroundRunning(ctx);
       this._backgroundTaskRunning = false;
       this._locationTaskRunning = false;
       this.log.info(TAG, 'Background tasks stopped (DATA_TRANSFER + LOCATION)');

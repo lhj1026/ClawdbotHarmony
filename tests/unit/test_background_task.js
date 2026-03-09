@@ -11,6 +11,8 @@
  *   - Both tasks stop when returning to foreground
  *   - Guard conditions prevent double-start
  *   - stopBackgroundTask resets both flags
+ *   - Standalone mode: LOCATION-only task starts when no gateway connection but context aware
+ *   - fallbackContext used when _context unavailable
  *   - module.json5 declares all required backgroundModes
  */
 
@@ -37,59 +39,77 @@ class BackgroundTaskSimulator {
   constructor() {
     this._backgroundTaskRunning = false;   // line 254
     this._locationTaskRunning = false;     // line 255
-    this._contextListenersRegistered = false; // line 237
-    this._isInForeground = true;           // line 245
+    this._contextListenersRegistered = false; // line 240
+    this._isInForeground = true;           // line 246
+    this._fallbackContext = false;         // line 210
     this.connectionConnected = false;
-    this.hasContext = false;
+    this.hasContext = false;               // mirrors _context !== undefined
 
     // Mock tracking
     this.startedModes = [];
     this.stopCount = 0;
   }
 
-  // Mirror of registerContextListeners (line 552-558)
+  // Mirror of registerContextListeners (line 566-570)
   registerContextListeners() {
     this._contextListenersRegistered = true;
   }
 
-  // Mirror of startBackgroundTask (lines 825-875)
+  // Mirror of startBackgroundTask (lines 849-899)
   async startBackgroundTask() {
     if (this._backgroundTaskRunning) {
-      return; // line 826-828
+      return; // line 850-852
     }
 
-    // DATA_TRANSFER (line 841)
+    // DATA_TRANSFER (line 865)
     this.startedModes.push(BackgroundMode.DATA_TRANSFER);
     this._backgroundTaskRunning = true;
 
-    // LOCATION (lines 854-874) — only if context listeners registered
+    // LOCATION (lines 879-898) — only if context listeners registered
     if (this._contextListenersRegistered && !this._locationTaskRunning) {
       this.startedModes.push(BackgroundMode.LOCATION);
       this._locationTaskRunning = true;
     }
   }
 
-  // Mirror of stopBackgroundTask (lines 877-893)
+  // Mirror of startLocationOnlyTask (lines 901-921)
+  async startLocationOnlyTask() {
+    if (this._locationTaskRunning) {
+      return;
+    }
+    this.startedModes.push(BackgroundMode.LOCATION);
+    this._locationTaskRunning = true;
+  }
+
+  // Mirror of stopBackgroundTask (lines 923-940)
   async stopBackgroundTask() {
     if (!this._backgroundTaskRunning && !this._locationTaskRunning) {
-      return; // line 879-880
+      return;
     }
-    // stopBackgroundRunning stops all modes for this context (line 886)
+    let hasCtx = this.hasContext || this._fallbackContext;
+    if (!hasCtx) return;
     this.stopCount++;
     this._backgroundTaskRunning = false;
     this._locationTaskRunning = false;
   }
 
-  // Mirror of setForegroundState (lines 352-376)
+  // Mirror of setForegroundState (lines 352-384)
   async setForegroundState(inForeground) {
     this._isInForeground = inForeground;
     if (inForeground) {
-      // line 366
+      // line 369
       await this.stopBackgroundTask();
     } else {
-      // line 370-371
-      if (this.connectionConnected && this.hasContext) {
-        await this.startBackgroundTask();
+      // line 370-383
+      let bgCtx = this.hasContext || this._fallbackContext;
+      if (bgCtx) {
+        if (this.connectionConnected) {
+          // 网关模式：启动 DATA_TRANSFER + LOCATION
+          await this.startBackgroundTask();
+        } else if (this._contextListenersRegistered) {
+          // 单机模式但情景智能运行中：仅启动 LOCATION
+          await this.startLocationOnlyTask();
+        }
       }
     }
   }
@@ -138,6 +158,7 @@ describe('Background task - stopBackgroundTask', function () {
   let sim;
   beforeEach(function () {
     sim = new BackgroundTaskSimulator();
+    sim.hasContext = true;  // stopBackgroundTask needs context to proceed
   });
 
   it('resets both flags when stopping', async function () {
@@ -198,11 +219,22 @@ describe('Background task - setForegroundState lifecycle', function () {
     assertEqual(sim.startedModes.length, 4, 'should have 2 starts per background transition');
   });
 
-  it('no connection → background does not start tasks', async function () {
+  it('no connection but context listeners → LOCATION-only (standalone mode)', async function () {
     sim.connectionConnected = false;
     await sim.setForegroundState(false);
-    assertFalse(sim._backgroundTaskRunning, 'should not start without connection');
-    assertFalse(sim._locationTaskRunning);
+    assertFalse(sim._backgroundTaskRunning, 'DATA_TRANSFER should not start without connection');
+    assertTrue(sim._locationTaskRunning, 'LOCATION should start for standalone context awareness');
+    assertIncludes(sim.startedModes, BackgroundMode.LOCATION);
+    assertEqual(sim.startedModes.length, 1, 'only LOCATION should start');
+  });
+
+  it('no connection AND no context listeners → nothing starts', async function () {
+    sim.connectionConnected = false;
+    sim._contextListenersRegistered = false;
+    await sim.setForegroundState(false);
+    assertFalse(sim._backgroundTaskRunning, 'should not start without connection or context');
+    assertFalse(sim._locationTaskRunning, 'should not start LOCATION without context listeners');
+    assertEqual(sim.startedModes.length, 0);
   });
 
   it('no context listeners → background starts only DATA_TRANSFER', async function () {
@@ -210,6 +242,62 @@ describe('Background task - setForegroundState lifecycle', function () {
     await sim.setForegroundState(false);
     assertTrue(sim._backgroundTaskRunning, 'DATA_TRANSFER should start');
     assertFalse(sim._locationTaskRunning, 'LOCATION should not start without context');
+  });
+});
+
+describe('Background task - standalone mode (no gateway)', function () {
+  let sim;
+  beforeEach(function () {
+    sim = new BackgroundTaskSimulator();
+    sim.connectionConnected = false;
+    sim.hasContext = false;
+    sim._fallbackContext = true;  // fallback context from setContextAwarenessEnabled
+    sim.registerContextListeners();
+  });
+
+  it('standalone + context aware → LOCATION-only on background', async function () {
+    await sim.setForegroundState(false);
+    assertFalse(sim._backgroundTaskRunning, 'no DATA_TRANSFER in standalone mode');
+    assertTrue(sim._locationTaskRunning, 'LOCATION should run for sensor keepalive');
+  });
+
+  it('standalone foreground→background→foreground→background cycle', async function () {
+    await sim.setForegroundState(false);
+    assertTrue(sim._locationTaskRunning);
+    assertEqual(sim.startedModes.length, 1);
+
+    await sim.setForegroundState(true);
+    assertFalse(sim._locationTaskRunning, 'LOCATION should stop on foreground');
+
+    await sim.setForegroundState(false);
+    assertTrue(sim._locationTaskRunning, 'LOCATION should restart on background');
+    assertEqual(sim.startedModes.length, 2, 'LOCATION started twice across two background transitions');
+  });
+
+  it('startLocationOnlyTask does not double-start', async function () {
+    await sim.startLocationOnlyTask();
+    assertTrue(sim._locationTaskRunning);
+    assertEqual(sim.startedModes.length, 1);
+
+    await sim.startLocationOnlyTask();
+    assertEqual(sim.startedModes.length, 1, 'guard prevents double-start');
+  });
+
+  it('no fallbackContext AND no _context → nothing starts', async function () {
+    sim._fallbackContext = false;
+    sim.hasContext = false;
+    await sim.setForegroundState(false);
+    assertFalse(sim._locationTaskRunning, 'no context available, cannot start');
+    assertEqual(sim.startedModes.length, 0);
+  });
+
+  it('stopBackgroundTask uses fallbackContext', async function () {
+    await sim.setForegroundState(false);
+    assertTrue(sim._locationTaskRunning);
+
+    await sim.stopBackgroundTask();
+    assertFalse(sim._locationTaskRunning, 'should stop using fallbackContext');
+    assertEqual(sim.stopCount, 1);
   });
 });
 
