@@ -8,9 +8,33 @@ export interface ChangelogEntry {
   fixes: string[];
 }
 
-export const APP_VERSION: string = '2.66.0';
+export const APP_VERSION: string = '2.68.2';
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '2.68.2',
+    date: '2026-03-08',
+    features: [
+
+    ],
+    fixes: [
+      '修复走路时 motionState 误判为 stationary：classifyByZAxisFeatures 幅度极小(zAxisAmplitude<0.2)时改返回 unknown，交由方差分类器 classifyWithSmoothing 判断，避免手机口袋竖放/初始化未满50样本时误判',
+      '修复加载配置连接服务器后头像不更新：新增 _cachedAvatarUrl 追踪缓存对应的 avatar URL，dispatchIdentity 发现 URL 变更时清除旧缓存路径并触发重新下载',
+    ],
+  },
+  {
+    version: '2.66.1',
+    date: '2026-03-03',
+    features: [
+      '架构清理: 移除C++规则引擎内Stream RL(stream_mlp)、MAB(mab)、LinUCB 14维(linucb)三套学习模块(已由ActionRecommender 185维MLP+LinUCB替代)',
+      '移除LocationDiscoveryService(GPS聚类自动发现, 功能由GeofenceManager覆盖)',
+      '规则引擎评分回退为confidence×priority(移除Stream RL hybrid boost)',
+      'ContextSettingsPage移除Stream Deep RL/MAB/位置发现三个UI区块',
+    ],
+    fixes: [
+
+    ],
+  },
   {
     version: '2.66.0',
     date: '2026-03-02',
@@ -776,4 +800,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const LATEST_VERSION: string = '2.66.0';
+export const LATEST_VERSION: string = '2.68.2';

@@ -986,9 +986,9 @@ export class ContextAwarenessService {
     }
     let variance = varianceSum / samples.length;
 
-    // 方差补偿：手持走路时 magnitude 均值接近 9.8 但震荡明显(方差>0.3)
-    // 真正静止时方差极低(<0.15)
-    if (variance > 0.3 && mean < 10.5) {
+    // 方差补偿：手持走路时 magnitude 均值接近 9.8 但震荡明显(方差>0.15)
+    // 真正静止时方差极低(<0.05)。原阈值 0.3 在采样间隔较大时容易漏判走路。
+    if (variance > 0.15 && mean < 10.5) {
       return 'walking';
     }
 
@@ -1159,9 +1159,10 @@ export class ContextAwarenessService {
    * 返回基于 Z 轴的建议状态，或 'unknown' 表示无法判断
    */
   private classifyByZAxisFeatures(): MotionState {
-    // 静止：极小幅度
+    // 幅度极小时无法区分静止与手机朝向导致的低Z分量（如口袋竖放走路），
+    // 交由方差分类器 classifyWithSmoothing() 判断，避免误判走路为静止。
     if (this.zAxisAmplitude < 0.2) {
-      return 'stationary';
+      return 'unknown';
     }
 
     // 走路特征：高频 + 大幅度
