@@ -74,7 +74,7 @@ import { sensor } from '@kit.SensorServiceKit';
 import { AccessibilityService, ScreenNode, WindowInfo } from '../accessibility/AccessibilityService';
 
 const TAG = 'NodeRuntime';
-const APP_VERSION = '2.68.0';
+const APP_VERSION = '2.68.2';
 
 interface PendingStateRec {
   ruleId: string;
@@ -219,6 +219,7 @@ export class NodeRuntime {
   private _agentIdentity: AgentIdentity | undefined = undefined;
   private _agentId: string = 'main';  // agent ID from config (for avatar URL)
   private _cachedAvatarPath: string = '';  // local file path of downloaded avatar
+  private _cachedAvatarUrl: string = '';   // avatar URL that was used to produce _cachedAvatarPath
   private _lastRecRuleId: string = '';
   // 等待状态确认后才弹出的推荐
   private _pendingStateRec: PendingStateRec | null = null;
@@ -538,8 +539,10 @@ export class NodeRuntime {
       return acc + (diff * diff);
     }, 0) / this._recentMagnitudes.length;
 
-    // 方差 < 1.5 认为静止（躺着时手有轻微抖动，放宽判断）
-    return variance < 1.5;
+    // 方差 < 0.05 认为静止。真正静止时方差 < 0.01；慢走时方差约 0.08-0.20+。
+    // 阈值 0.05 确保慢走不会被误判为静止，防止 _isLyingDown 误为 true
+    // 进而在 CAS 中把 walking 强制覆盖为 stationary。
+    return variance < 0.05;
   }
 
   /**
@@ -2281,9 +2284,16 @@ export class NodeRuntime {
         listener(identity);
       } catch { /* ignore */ }
     }
-    // Trigger avatar download if identity has avatar but not yet cached
-    if (identity && identity.avatar.length > 0 && this._cachedAvatarPath.length === 0) {
-      this.downloadAndCacheAvatar();
+    // Trigger avatar download if identity has avatar but not yet cached,
+    // or if avatar URL changed (e.g. connected to a different server).
+    if (identity && identity.avatar.length > 0) {
+      if (identity.avatar !== this._cachedAvatarUrl) {
+        // Avatar URL changed — invalidate old cache so fresh download runs.
+        this._cachedAvatarPath = '';
+      }
+      if (this._cachedAvatarPath.length === 0) {
+        this.downloadAndCacheAvatar();
+      }
     }
     // Persist identity for faster resume
     if (identity && identity.name.length > 0) {
@@ -2428,6 +2438,7 @@ export class NodeRuntime {
         fileIo.writeSync(file.fd, data);
         fileIo.closeSync(file);
         this._cachedAvatarPath = destPath;
+        this._cachedAvatarUrl = identity.avatar;  // track which URL this cache corresponds to
         this.log.info(TAG, `Avatar cached to: ${destPath} (${data.byteLength} bytes)`);
         // Save to preferences for next launch
         this.saveCachedIdentity();
@@ -2470,6 +2481,9 @@ export class NodeRuntime {
   async fetchAgentIdentity(): Promise<void> {
     if (!this.operatorSession) return;
     if (this._operatorState !== ConnectionState.Connected) return;
+    // 每次连接时强制清除头像缓存，确保从服务器重新下载最新头像
+    this._cachedAvatarPath = '';
+    this._cachedAvatarUrl = '';
     this.log.info(TAG, 'Fetching agent identity from gateway config...');
 
     // Strategy 0: Extract identity from connect response (most reliable source)
@@ -2799,9 +2813,11 @@ export class NodeRuntime {
         try {
           fileIo.accessSync(identity.cachedAvatarPath);
           this._cachedAvatarPath = identity.cachedAvatarPath;
+          this._cachedAvatarUrl = identity.avatar;  // remember which URL this cache belongs to
           this.log.info(TAG, `Loaded cached avatar: ${identity.cachedAvatarPath}`);
         } catch {
           this._cachedAvatarPath = '';
+          this._cachedAvatarUrl = '';
         }
       }
 
@@ -2861,6 +2877,10 @@ export class NodeRuntime {
     this._connectPassword = password;
     this._pairingApproved = false;
     this._pairingNotified = false;
+    // Clear cached avatar so dispatchIdentity always re-downloads on each explicit connect.
+    // Auto-reconnect (forceReconnect) bypasses connect() and preserves the cache.
+    this._cachedAvatarPath = '';
+    this._cachedAvatarUrl = ''; // 同时清 URL 缓存，确保 dispatchIdentity 强制重新下载
     this.log.info(TAG, `connect() called: ${endpoint.host}:${endpoint.port} tls=${endpoint.useTls} token=${token ? 'yes' : 'no'} password=${password ? 'yes' : 'no'} displayName="${this._displayName}"`);
     // Set context for capabilities that need file system access
     this.cameraCapability.setContext(context);

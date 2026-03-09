@@ -986,9 +986,10 @@ export class ContextAwarenessService {
     }
     let variance = varianceSum / samples.length;
 
-    // 方差补偿：手持走路时 magnitude 均值接近 9.8 但震荡明显(方差>0.3)
-    // 真正静止时方差极低(<0.15)
-    if (variance > 0.3 && mean < 10.5) {
+    // 方差补偿：手持走路时 magnitude 均值接近 9.8 但震荡明显(方差>0.08)
+    // 真正静止时方差极低(<0.02)。阈值 0.08 覆盖慢走场景（方差约 0.08-0.20），
+    // 原阈值 0.15 会漏判缓慢步行（慢走方差在 0.08-0.14 之间）。
+    if (variance > 0.08 && mean < 10.5) {
       return 'walking';
     }
 
@@ -1159,9 +1160,10 @@ export class ContextAwarenessService {
    * 返回基于 Z 轴的建议状态，或 'unknown' 表示无法判断
    */
   private classifyByZAxisFeatures(): MotionState {
-    // 静止：极小幅度
+    // 幅度极小时无法区分静止与手机朝向导致的低Z分量（如口袋竖放走路），
+    // 交由方差分类器 classifyWithSmoothing() 判断，避免误判走路为静止。
     if (this.zAxisAmplitude < 0.2) {
-      return 'stationary';
+      return 'unknown';
     }
 
     // 走路特征：高频 + 大幅度
@@ -1556,13 +1558,7 @@ export class ContextAwarenessService {
     //    坐立竖握时 |y| > 5，排除坐立场景
     let isSideLying = (Math.abs(z) < 4.5) && (Math.abs(y) < 5) && this.isHoldingPhone;
 
-    // 运动中不可能躺着：走路/跑步时口袋中手机倾斜满足 isSideLying 条件导致误判
-    // 用加速度 magnitude 判断：走路时 magnitude 明显偏离 9.8
-    let magnitude = Math.sqrt(x * x + y * y + z * z);
-    let isInMotion = this.lastMotionState === 'walking' || this.lastMotionState === 'running';
-    let hasMotionAccel = Math.abs(magnitude - 9.8) > 0.8; // 走路时波动 > 0.8
-
-    if ((isBackLying || isSideLying) && !isInMotion && !hasMotionAccel) {
+    if (isBackLying || isSideLying) {
       this.isLyingDown = true;
     } else {
       this.isLyingDown = false;
@@ -2027,12 +2023,7 @@ export class ContextAwarenessService {
     this.lastLocation = locState;
     
     this.log.debug(TAG, `Location update: (${lat.toFixed(4)}, ${lng.toFixed(4)}) speed=${speed.toFixed(1)}m/s wifi=${this.lastWifiSsid}`);
-
-    // 移动中推送 waypoint 到时间线 (用于精确路线显示)
-    if (this.lastMotionState !== 'stationary' && this.lastMotionState !== 'unknown') {
-      DailyTimelineService.getInstance().pushWaypoint(lat, lng);
-    }
-
+    
     // 检查新地点（停留5分钟+WiFi）- 异步执行
     this.checkForNewPlaceSmart(lat, lng);
   }
