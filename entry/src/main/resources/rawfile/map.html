@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="leaflet.css"/>
+<script src="leaflet.js"></script>
 <style>
   *{margin:0;padding:0}
   html,body{width:100%;height:100%;overflow:hidden}
@@ -45,7 +45,7 @@ var lastBounds=null;
 // WGS-84 → GCJ-02 coordinate transform (for China maps)
 var PI=3.1415926535897932384626;
 var EE=0.00669342162296594323;
-var A=6378245.0;
+var AA=6378245.0;
 function isInChinaBbox(lat,lng){return lng>=72.004&&lng<=137.8347&&lat>=0.8293&&lat<=55.8271}
 function transformLat(x,y){var r=-100+2*x+3*y+0.2*y*y+0.1*x*y+0.2*Math.sqrt(Math.abs(x));r+=(20*Math.sin(6*x*PI)+20*Math.sin(2*x*PI))*2/3;r+=(20*Math.sin(y*PI)+40*Math.sin(y/3*PI))*2/3;r+=(160*Math.sin(y/12*PI)+320*Math.sin(y*PI/30))*2/3;return r}
 function transformLng(x,y){var r=300+x+2*y+0.1*x*x+0.1*x*y+0.1*Math.sqrt(Math.abs(x));r+=(20*Math.sin(6*x*PI)+20*Math.sin(2*x*PI))*2/3;r+=(20*Math.sin(x*PI)+40*Math.sin(x/3*PI))*2/3;r+=(150*Math.sin(x/12*PI)+300*Math.sin(x/30*PI))*2/3;return r}
@@ -56,9 +56,38 @@ function wgs84ToGcj02(lat,lng){
   var radLat=lat/180*PI;
   var magic=Math.sin(radLat);magic=1-EE*magic*magic;
   var sqrtMagic=Math.sqrt(magic);
-  dLat=(dLat*180)/(A*(1-EE)/(magic*sqrtMagic)*PI);
-  dLng=(dLng*180)/(A/sqrtMagic*Math.cos(radLat)*PI);
+  dLat=(dLat*180)/(AA*(1-EE)/(magic*sqrtMagic)*PI);
+  dLng=(dLng*180)/(AA/sqrtMagic*Math.cos(radLat)*PI);
   return[lat+dLat,lng+dLng];
+}
+
+// China tile sources (ordered by reliability)
+var CHINA_TILES=[
+  // 高德矢量图 (style=7: 彩色道路图)
+  {url:'https://wprd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scl=1&style=7&x={x}&y={y}&z={z}',sub:['1','2','3','4']},
+  // 高德矢量图 (style=8: 灰色简洁图)
+  {url:'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',sub:['1','2','3','4']},
+  // 腾讯地图
+  {url:'https://rt{s}.map.gtimg.com/realtimerender?z={z}&x={x}&y={y}&type=vector&style=0',sub:['0','1','2','3'],tms:true}
+];
+
+function addChinaTiles(mapObj,tryIndex){
+  if(tryIndex>=CHINA_TILES.length)return; // all sources exhausted
+  var src=CHINA_TILES[tryIndex];
+  var opts={maxZoom:20,subdomains:src.sub};
+  if(src.tms)opts.tms=true;
+  var layer=L.tileLayer(src.url,opts);
+  var errorCount=0;
+  layer.on('tileerror',function(){
+    errorCount++;
+    // 连续多张瓦片失败 → 切换到下一个源
+    if(errorCount>4){
+      layer.off('tileerror');
+      mapObj.removeLayer(layer);
+      addChinaTiles(mapObj,tryIndex+1);
+    }
+  });
+  layer.addTo(mapObj);
 }
 
 function renderMap(points,lines){
@@ -78,9 +107,7 @@ function renderMap(points,lines){
   if(!map){
     map=L.map('map',{zoomControl:false,attributionControl:false});
     if(inChina){
-      L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',{
-        maxZoom:20,subdomains:['1','2','3','4']
-      }).addTo(map);
+      addChinaTiles(map,0);
     }else{
       L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
     }
