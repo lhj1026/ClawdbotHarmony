@@ -2880,6 +2880,7 @@ export class NodeRuntime {
     // Clear cached avatar so dispatchIdentity always re-downloads on each explicit connect.
     // Auto-reconnect (forceReconnect) bypasses connect() and preserves the cache.
     this._cachedAvatarPath = '';
+    this._cachedAvatarUrl = ''; // 同时清 URL 缓存，确保 dispatchIdentity 强制重新下载
     this.log.info(TAG, `connect() called: ${endpoint.host}:${endpoint.port} tls=${endpoint.useTls} token=${token ? 'yes' : 'no'} password=${password ? 'yes' : 'no'} displayName="${this._displayName}"`);
     // Set context for capabilities that need file system access
     this.cameraCapability.setContext(context);
