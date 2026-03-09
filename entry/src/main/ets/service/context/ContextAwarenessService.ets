@@ -2109,7 +2109,7 @@ export class ContextAwarenessService {
     // ==================== 7-Tuple 物理状态 & 场景匹配 ====================
     this.buildPhysicalStateAndDetectChange();
 
-    let snapshot = this.tray.getSnapshot();
+    let snapshot = this.augmentSnapshot(this.tray.getSnapshot());
     await this.evaluateAndDeliver(snapshot);
 
     // Periodically save connection records (every evaluation cycle)
