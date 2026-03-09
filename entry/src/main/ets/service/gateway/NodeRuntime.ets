@@ -253,6 +253,7 @@ export class NodeRuntime {
 
   // Background task for keeping WebSocket alive when app is in background
   private _backgroundTaskRunning: boolean = false;
+  private _locationTaskRunning: boolean = false;
 
   static getInstance(): NodeRuntime {
     if (!NodeRuntime.instance) {
@@ -852,17 +853,43 @@ export class NodeRuntime {
         this.log.system(TAG, 'backgroundModes not configured in module.json5 (need dataTransfer)');
       }
     }
+
+    // Start LOCATION background task to keep GPS/WiFi sensing alive for context awareness
+    if (this._contextListenersRegistered && !this._locationTaskRunning) {
+      try {
+        let wantAgentInfo2: wantAgent.WantAgentInfo = {
+          wants: [{
+            bundleName: context.abilityInfo.bundleName,
+            abilityName: context.abilityInfo.name
+          }],
+          actionType: wantAgent.OperationType.START_ABILITY,
+          requestCode: 1,
+          actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
+        };
+        let agent2 = await wantAgent.getWantAgent(wantAgentInfo2);
+        await backgroundTaskManager.startBackgroundRunning(context, backgroundTaskManager.BackgroundMode.LOCATION, agent2);
+        this._locationTaskRunning = true;
+        this.log.info(TAG, '📍 Background task started (LOCATION) - GPS/WiFi sensing stays alive');
+      } catch (err) {
+        let code = (err as Record<string, number>)['code'] ?? 0;
+        this.log.system(TAG, `Failed to start LOCATION background task: code=${code} ${(err as Error).message ?? ''}`);
+      }
+    }
   }
 
-  /** Stop background task */
+  /** Stop background task (stopBackgroundRunning stops all modes for this context) */
   private async stopBackgroundTask(): Promise<void> {
-    if (!this._backgroundTaskRunning || !this._context) {
+    if (!this._backgroundTaskRunning && !this._locationTaskRunning) {
+      return;
+    }
+    if (!this._context) {
       return;
     }
     try {
       await backgroundTaskManager.stopBackgroundRunning(this._context);
       this._backgroundTaskRunning = false;
-      this.log.info(TAG, 'Background task stopped');
+      this._locationTaskRunning = false;
+      this.log.info(TAG, 'Background tasks stopped (DATA_TRANSFER + LOCATION)');
     } catch (err) {
       this.log.warn(TAG, `Failed to stop background task: ${(err as Error).message ?? ''}`);
     }

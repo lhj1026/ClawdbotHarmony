@@ -23,7 +23,8 @@
         "exported": true,
         "backgroundModes": [
           "audioRecording",
-          "dataTransfer"
+          "dataTransfer",
+          "location"
         ],
         "skills": [
           {
