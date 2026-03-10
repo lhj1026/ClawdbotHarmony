@@ -542,7 +542,7 @@ export class ContextAwarenessService {
   }
   
   
-  // ==================== WiFi 连接事件处理 ====================
+  // ==================== WiFi 断开连接事件处理 ====================
   
   private onWifiDisconnected(): void {
     if (this.isReplaying) return;  // 回放中不处理WiFi事件
@@ -599,6 +599,7 @@ export class ContextAwarenessService {
     // 清除当前 WiFi 围栏匹配
     this.recordedPut('wifiGeofence', '', 0, 'wifi');
     this.recordedPut('geofenceCategory', '', 0, 'wifi');  // 同步清除 GPS 围栏类别
+    this.recordedPut('wifiSsid', '', 0, 'wifi');  // 清除 WiFi SSID
     this.lastWifiSsid = '';
   }
   
