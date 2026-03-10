@@ -598,6 +598,7 @@ export class ContextAwarenessService {
 
     // 清除当前 WiFi 围栏匹配
     this.recordedPut('wifiGeofence', '', 0, 'wifi');
+    this.recordedPut('geofenceCategory', '', 0, 'wifi');  // 同步清除 GPS 围栏类别
     this.lastWifiSsid = '';
   }
   
@@ -774,6 +775,12 @@ export class ContextAwarenessService {
     let wifiGfSlot = this.tray.get('wifiGeofence');
     if (wifiGfSlot && wifiGfSlot.value && wifiGfSlot.value.length > 0) {
       snapshot.wifiGeofence = wifiGfSlot.value;
+    } else {
+      // WiFi 未匹配围栏时，回退到 GPS/围栏事件确认的类别
+      let gfCatSlot = this.tray.get('geofenceCategory');
+      if (gfCatSlot && gfCatSlot.value && gfCatSlot.value.length > 0) {
+        snapshot.wifiGeofence = gfCatSlot.value;
+      }
     }
     // 补充 geofence（C++ 可能因过期没返回）
     if (!snapshot.geofence || snapshot.geofence.length === 0) {
@@ -2250,12 +2257,12 @@ export class ContextAwarenessService {
         );
         if (geofences.length > 0) {
           this.recordedPut('geofence', geofences[0].id, 1.0, 'geofence');
-          // GPS 确认围栏时同步写入 wifiGeofence（PhysicalStateBuilder 依赖此字段分类位置）
-          this.recordedPut('wifiGeofence', geofences[0].category, 0.8, 'geofence');
+          // GPS 确认围栏：写入独立字段供 PhysicalStateBuilder 使用（不写 wifiGeofence，避免污染 WiFi guard）
+          this.recordedPut('geofenceCategory', geofences[0].category, 0.8, 'geofence');
         } else {
           // 不在任何围栏内，清除旧值（防止新地点检测被 T1 skip 阻断）
           this.recordedPut('geofence', '', 0, 'geofence');
-          this.recordedPut('wifiGeofence', '', 0, 'geofence');
+          this.recordedPut('geofenceCategory', '', 0, 'geofence');
         }
       }
     }
@@ -3349,11 +3356,11 @@ export class ContextAwarenessService {
     this.recordedPut('longitude', event.location.longitude.toString(), 1.0, 'gps');
     if (event.type === 'enter') {
       this.recordedPut('geofence', event.geofence.id, 1.0, 'geofence');
-      this.recordedPut('wifiGeofence', event.geofence.category, 0.8, 'geofence');
+      this.recordedPut('geofenceCategory', event.geofence.category, 0.8, 'geofence');
     } else {
       // Exit: 清除围栏标记，让新地点检测和 GPS 定时器正常工作
       this.recordedPut('geofence', '', 0, 'geofence');
-      this.recordedPut('wifiGeofence', '', 0, 'geofence');
+      this.recordedPut('geofenceCategory', '', 0, 'geofence');
       this.log.info(TAG, `Geofence exit: cleared tray, left ${event.geofence.name}`);
     }
 

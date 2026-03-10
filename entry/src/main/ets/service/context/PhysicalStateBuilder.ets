@@ -77,12 +77,14 @@ export class PhysicalStateBuilder {
   // ==================== Dim 2: Location ====================
 
   private classifyLocation(): LocationCategory {
+    // 优先：WiFi 匹配的围栏类别；回退：GPS/围栏事件确认的类别
     let wifiGeofence = this.trayValue('wifiGeofence');
+    let geofenceCategory = wifiGeofence.length > 0 ? wifiGeofence : this.trayValue('geofenceCategory');
     let motionState = this.trayValue('motionState');
 
-    // WiFi geofence 直接映射
-    if (wifiGeofence.length > 0) {
-      switch (wifiGeofence) {
+    // 围栏类别直接映射
+    if (geofenceCategory.length > 0) {
+      switch (geofenceCategory) {
         case 'home': return 'home';
         case 'work': return 'work';
         case 'restaurant': return 'restaurant';
