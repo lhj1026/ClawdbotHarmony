@@ -1281,8 +1281,12 @@ export class ContextAwarenessService {
     }
     
     // 车载蓝牙覆盖：连接车载BT时，stationary/walking → driving
+    // 但如果步数已显著增加（>30步），说明用户已下车行走，不应再强制 driving
     let btInVehicle = this.tray.get('bt_in_vehicle');
-    if (btInVehicle && btInVehicle.value === 'true' && (newState === 'stationary' || newState === 'walking')) {
+    let stepsSinceDriving = this.stepCount - this.drivingInertiaStepBase;
+    if (btInVehicle && btInVehicle.value === 'true'
+      && (newState === 'stationary' || newState === 'walking')
+      && stepsSinceDriving < 30) {
       newState = 'driving';
     }
 
@@ -1913,8 +1917,9 @@ export class ContextAwarenessService {
       // 围栏 WiFi 仍连接 → 用户还在围栏内，跳过 GPS（无论是静止还是走路）
       if (inKnownGeofence && wifiMatchesGeofence && this.lastLocation) {
         this.log.debug(TAG, 'Skip GPS: geofence WiFi still connected');
-        // 清除过期速度，防止驾车状态因旧速度残留而"卡住"
+        // 清除过期速度+驾车惯性，防止运动状态因旧数据残留而"卡住"
         this.lastLocation.speed = 0;
+        this.lastHighSpeedTime = 0;
         return;
       }
 
@@ -1922,6 +1927,7 @@ export class ContextAwarenessService {
       if (this.lastMotionState === 'stationary' && inKnownGeofence && this.lastLocation) {
         this.log.debug(TAG, 'Skip GPS: stationary in known geofence');
         this.lastLocation.speed = 0;
+        this.lastHighSpeedTime = 0;
         return;
       }
 
@@ -1931,6 +1937,7 @@ export class ContextAwarenessService {
         if (!envChanged && this.lastLocation) {
           this.log.debug(TAG, 'Skip GPS: stationary, environment unchanged');
           this.lastLocation.speed = 0;
+          this.lastHighSpeedTime = 0;
           this.checkForNewPlaceSmart(this.lastLocation.latitude, this.lastLocation.longitude);
           return;
         }
