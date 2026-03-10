@@ -214,7 +214,11 @@ export class ContextAwarenessService {
   private drivingInertiaStepBase: number = 0;  // 高速行驶时的步数基线，用于惯性期步数比对
   // 围栏离开冷却
   private geofenceDepartureTime: number = 0;
-  
+
+  // 围栏来源追踪：WiFi 和 GPS 各自独立维护 ID，geofence 由合并派生
+  private wifiGeofenceId: string = '';    // WiFi SSID 匹配到的围栏 ID
+  private gpsGeofenceId: string = '';     // GPS 坐标确认的围栏 ID
+
   // WiFi 状态跟踪
   private lastWifiSsid: string = '';
   private wifiLostWorkTimestamp: number = 0;  // backward compat
@@ -583,7 +587,8 @@ export class ContextAwarenessService {
       // 围栏 WiFi 断开 → 用户正在离开该围栏
       // 立即强制 GPS 刷新，并按当前运动状态切换到室外 GPS 频率
       this.log.info(TAG, `Geofence WiFi lost: force GPS fetch, entering outdoor mode (motion=${this.lastMotionState})`);
-      this.recordedPut('geofence', '', 0, 'geofence');  // 先清除旧围栏，防止 T1 skip
+      this.wifiGeofenceId = '';
+      this.mergeGeofence();  // WiFi 清除后回退到 GPS 围栏（若有）
       this.geofenceDepartureTime = Date.now();  // 启动围栏离开冷却
       this.adjustLocationInterval(this.lastMotionState);  // 按运动状态设置GPS频率
       this.fetchSingleLocation();  // 立即获取一次 GPS 定位
@@ -596,10 +601,9 @@ export class ContextAwarenessService {
       });
     }
 
-    // 清除当前 WiFi 围栏匹配
+    // 清除当前 WiFi 围栏匹配（不清除 geofenceCategory — GPS 数据由 GPS 路径管理）
     this.recordedPut('wifiGeofence', '', 0, 'wifi');
-    this.recordedPut('geofenceCategory', '', 0, 'wifi');  // 同步清除 GPS 围栏类别
-    this.recordedPut('wifiSsid', '', 0, 'wifi');  // 清除 WiFi SSID
+    this.recordedPut('wifiSsid', '', 0, 'wifi');
     this.lastWifiSsid = '';
   }
   
@@ -631,7 +635,8 @@ export class ContextAwarenessService {
           if (summary && summary.wifiSsids.includes(ssid)) {
             this.log.info(TAG, `WiFi connected: ${ssid} matches ${gf.category} geofence (${gf.id})`);
             this.recordedPut('wifiGeofence', gf.category, 0.9, 'wifi');
-            this.recordedPut('geofence', gf.id, 1.0, 'wifi');  // WiFi 直接确认围栏
+            this.wifiGeofenceId = gf.id;
+            this.mergeGeofence();  // WiFi 确认围栏，优先级最高
             this.engine.pushEvent('wifi_arrive_' + gf.category);
             matched = true;
 
@@ -2268,14 +2273,13 @@ export class ContextAwarenessService {
           this.lastLocation.longitude
         );
         if (geofences.length > 0) {
-          this.recordedPut('geofence', geofences[0].id, 1.0, 'geofence');
-          // GPS 确认围栏：写入独立字段供 PhysicalStateBuilder 使用（不写 wifiGeofence，避免污染 WiFi guard）
           this.recordedPut('geofenceCategory', geofences[0].category, 0.8, 'geofence');
+          this.gpsGeofenceId = geofences[0].id;
         } else {
-          // 不在任何围栏内，清除旧值（防止新地点检测被 T1 skip 阻断）
-          this.recordedPut('geofence', '', 0, 'geofence');
           this.recordedPut('geofenceCategory', '', 0, 'geofence');
+          this.gpsGeofenceId = '';
         }
+        this.mergeGeofence();
       }
     }
 
@@ -3363,18 +3367,18 @@ export class ContextAwarenessService {
     // 更新位置
     this.lastLocation = event.location;
 
-    // 写入托盘
+    // 写入托盘（GPS 路径独立维护 geofenceCategory，通过 mergeGeofence 派生 geofence）
     this.recordedPut('latitude', event.location.latitude.toString(), 1.0, 'gps');
     this.recordedPut('longitude', event.location.longitude.toString(), 1.0, 'gps');
     if (event.type === 'enter') {
-      this.recordedPut('geofence', event.geofence.id, 1.0, 'geofence');
       this.recordedPut('geofenceCategory', event.geofence.category, 0.8, 'geofence');
+      this.gpsGeofenceId = event.geofence.id;
     } else {
-      // Exit: 清除围栏标记，让新地点检测和 GPS 定时器正常工作
-      this.recordedPut('geofence', '', 0, 'geofence');
       this.recordedPut('geofenceCategory', '', 0, 'geofence');
-      this.log.info(TAG, `Geofence exit: cleared tray, left ${event.geofence.name}`);
+      this.gpsGeofenceId = '';
+      this.log.info(TAG, `Geofence exit: cleared GPS geofence, left ${event.geofence.name}`);
     }
+    this.mergeGeofence();
 
     // Push event to engine buffer for temporal/sequence rules
     let eventType = event.type === 'enter' ? 'geofence_enter' : 'geofence_exit';
@@ -4888,6 +4892,19 @@ export class ContextAwarenessService {
     this.tray.put(key, value, quality, source);
     if (this.recorder.isRecording()) {
       this.recorder.recordEvent(key, value, quality, source);
+    }
+  }
+
+  /**
+   * 合并围栏：从 wifiGeofenceId（优先）和 gpsGeofenceId 派生 geofence
+   * WiFi 和 GPS 各自独立维护自己的围栏 ID，此方法计算最终结果。
+   */
+  private mergeGeofence(): void {
+    let id = this.wifiGeofenceId.length > 0 ? this.wifiGeofenceId : this.gpsGeofenceId;
+    if (id.length > 0) {
+      this.recordedPut('geofence', id, 1.0, 'geofence');
+    } else {
+      this.recordedPut('geofence', '', 0, 'geofence');
     }
   }
 
