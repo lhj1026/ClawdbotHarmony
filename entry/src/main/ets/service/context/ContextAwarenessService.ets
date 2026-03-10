@@ -610,9 +610,12 @@ export class ContextAwarenessService {
   private onWifiConnected(): void {
     if (this.isReplaying) return;  // 回放中不处理WiFi事件
     this.log.info(TAG, `onWifiConnected called, lastWifiSsid=${this.lastWifiSsid}`);
-    // WiFi 重新连接，清除丢失标记
+    // WiFi 重新连接，清除丢失标记（内存 + DataTray 同步清除）
     this.wifiLostWorkTimestamp = 0;
     this.wifiLostTimestamps.clear();
+    this.recordedPut('wifiLost', '', 0, 'wifi');
+    this.recordedPut('wifiLostCategory', '', 0, 'wifi');
+    this.recordedPut('wifiLostWork', '', 0, 'wifi');
     this.geofenceDepartureTime = 0;  // WiFi重连，取消围栏离开冷却
 
     // 尝试获取当前 SSID 并匹配围栏
@@ -2262,18 +2265,37 @@ export class ContextAwarenessService {
       // ignore
     }
     
-    // WiFi丢失标记（遍历所有类别，有效期内）
+    // WiFi丢失标记：刷新有效期内的标记，清除过期条目
     let nowMs = Date.now();
+    let hasActiveLost = false;
+    let latestCategory = '';
+    let latestTs = 0;
+    let expiredKeys: string[] = [];
     this.wifiLostTimestamps.forEach((ts: number, category: string) => {
       if (nowMs - ts < ContextAwarenessService.WIFI_LOST_TTL_MS) {
-        this.recordedPut('wifiLost', 'true', 0.8, 'wifi');
-        this.recordedPut('wifiLostCategory', category, 0.8, 'wifi');
-        // 向后兼容
-        if (category === 'work') {
-          this.recordedPut('wifiLostWork', 'true', 0.8, 'wifi');
+        hasActiveLost = true;
+        if (ts > latestTs) {
+          latestTs = ts;
+          latestCategory = category;
         }
+      } else {
+        expiredKeys.push(category);
       }
     });
+    for (let key of expiredKeys) {
+      this.wifiLostTimestamps.delete(key);
+    }
+    if (hasActiveLost) {
+      this.recordedPut('wifiLost', 'true', 0.8, 'wifi');
+      this.recordedPut('wifiLostCategory', latestCategory, 0.8, 'wifi');
+      if (latestCategory === 'work') {
+        this.recordedPut('wifiLostWork', 'true', 0.8, 'wifi');
+      }
+    } else {
+      this.recordedPut('wifiLost', '', 0, 'wifi');
+      this.recordedPut('wifiLostCategory', '', 0, 'wifi');
+      this.recordedPut('wifiLostWork', '', 0, 'wifi');
+    }
 
     // 位置：仅刷新 TTL，不重新匹配围栏（围栏数据由事件驱动路径写入）
     if (this.lastLocation) {
