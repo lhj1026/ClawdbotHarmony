@@ -2357,20 +2357,52 @@ Respond ONLY with the JSON array.`;
   private handleA2UIEvent(type: string, content: string): void {
     this.log.info('ChatPage', `A2UI event: type=${type} contentLen=${content.length}`);
     if (type === 'push') {
-      // A2UI JSONL push — 每次推荐创建独立气泡，不覆盖旧卡片
-      let msg = new ChatMessage('assistant', '');
-      msg.a2uiContent = content;
-      this.messages.push(msg);
-      this.gwAssistantMsgId = msg.id;
-      // 新消息需要新 WebView，清除旧引用
-      this.a2uiInjectFn = undefined;
-      this.a2uiResetFn = undefined;
+      // A2UI JSONL push
+      let idx = this.findGwAssistantIndex();
+      if (idx < 0) {
+        for (let i = this.messages.length - 1; i >= 0; i--) {
+          if (this.messages[i].role === 'assistant') {
+            idx = i;
+            this.gwAssistantMsgId = this.messages[i].id;
+            break;
+          }
+        }
+      }
+      if (idx < 0) {
+        let msg = new ChatMessage('assistant', '');
+        this.messages.push(msg);
+        idx = this.messages.length - 1;
+        this.gwAssistantMsgId = msg.id;
+      }
+      let msg = this.messages[idx];
+      msg.timestamp = Date.now();
+      msg.a2uiContent = msg.a2uiContent.length > 0 ? msg.a2uiContent + '\n' + content : content;
+      if (this.a2uiInjectFn) {
+        this.a2uiInjectFn(content);
+      } else {
+        // WebView 不存在，通过 splice 触发 ArkUI 创建
+        this.messages.splice(idx, 1, msg);
+      }
       this.scrollToEnd();
     } else if (type === 'reset') {
-      // reset 不再清除旧卡片内容，只断开当前跟踪，让下次 push 创建新气泡
-      this.gwAssistantMsgId = '';
-      this.a2uiInjectFn = undefined;
-      this.a2uiResetFn = undefined;
+      // 清空 A2UI 内容
+      if (this.a2uiResetFn) {
+        // WebView 存在 → 通过 JS 清空内容，保持 WebView 存活
+        this.a2uiResetFn();
+        let idx = this.findGwAssistantIndex();
+        if (idx >= 0) {
+          this.messages[idx].a2uiContent = '';
+        }
+      } else {
+        // WebView 不存在 → 清空数据并 splice 触发 UI 刷新
+        let idx = this.findGwAssistantIndex();
+        if (idx >= 0) {
+          let msg = this.messages[idx];
+          msg.a2uiContent = '';
+          this.messages.splice(idx, 1, msg);
+        }
+      }
+      // 不清除 a2uiInjectFn/a2uiResetFn — WebView 保持存活
     } else if (type === 'canvas.present') {
       // Inline canvas: prepare a slot in the current assistant message
       let idx = this.findGwAssistantIndex();
