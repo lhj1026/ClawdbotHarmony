@@ -830,6 +830,12 @@ export class NodeRuntime {
     cas.addStateChangeListener((ps: PhysicalState, prevPS: PhysicalState | undefined) => {
       this.log.info(TAG, `[StateChange] ${PhysicalStateBuilder.fingerprint(ps)}`);
 
+      // 状态变化卡片开关关闭时，跳过 A2UI 推送
+      if (!cas.isStateCardEnabled()) {
+        this.log.info(TAG, `[StateChange] State change cards disabled, skipping A2UI push`);
+        return;
+      }
+
       // 获取场景和推荐数据
       let currentScenarios = cas.getLastScenarioResults();
       let prevScenarios = cas.getPrevScenarioResults();

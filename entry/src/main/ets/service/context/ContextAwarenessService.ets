@@ -245,6 +245,7 @@ export class ContextAwarenessService {
 
   // 积极探索模式：每个新状态指纹都触发 LLM 建议
   private exploreMode: boolean = false;
+  private stateCardEnabled: boolean = true;  // 状态变化卡片开关，默认开启
   private exploredFingerprints: Map<string, number> = new Map(); // fp → timestamp
   private static readonly FINGERPRINT_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24小时后过期，允许重新探索
   private lastExploreBtDevices: string = ''; // 上次探索时的 BT 设备
@@ -3562,6 +3563,28 @@ export class ContextAwarenessService {
     }
   }
 
+  // ==================== 状态变化卡片开关 ====================
+
+  /** 获取状态变化卡片开关状态 */
+  isStateCardEnabled(): boolean {
+    return this.stateCardEnabled;
+  }
+
+  /** 设置状态变化卡片开关 */
+  async setStateCardEnabled(enabled: boolean): Promise<void> {
+    this.stateCardEnabled = enabled;
+    if (this.context) {
+      try {
+        let prefs = await preferences.getPreferences(this.context, 'context_awareness');
+        await prefs.put('state_card_enabled', enabled);
+        await prefs.flush();
+      } catch (err) {
+        this.log.warn(TAG, `Failed to persist state card setting: ${(err as Error).message}`);
+      }
+    }
+    this.log.info(TAG, `State change cards ${enabled ? 'enabled' : 'disabled'}`);
+  }
+
   // ==================== 积极探索模式 ====================
 
   /** 获取积极探索模式状态 */
@@ -3595,6 +3618,7 @@ export class ContextAwarenessService {
     try {
       let prefs = await preferences.getPreferences(this.context, 'context_awareness');
       this.exploreMode = await prefs.get('explore_mode', false) as boolean;
+      this.stateCardEnabled = await prefs.get('state_card_enabled', true) as boolean;
       let fpJson = await prefs.get('explored_fingerprints', '[]') as string;
       let parsed: Object[] = JSON.parse(fpJson) as Object[];
       // 兼容旧格式 (string[]) 和新格式 ({fp: string, ts: number}[])

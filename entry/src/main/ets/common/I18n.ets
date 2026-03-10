@@ -576,6 +576,8 @@ function buildZh(): Map<string, string> {
   m.set('context.explore.title', '积极探索模式');
   m.set('context.explore.desc', '遇到新情境时主动用AI生成建议，用户反馈后转化为规则');
   m.set('context.explore.fingerprints', '已探索状态');
+  m.set('context.stateCard.title', '状态变化卡片');
+  m.set('context.stateCard.desc', '物理状态变化时自动推送情景卡片（含推荐操作）');
 
   // App title
   m.set('app.title', 'OpenClaw 鸿蒙');
@@ -1521,6 +1523,8 @@ function buildEn(): Map<string, string> {
   m.set('context.explore.title', 'Active Explore Mode');
   m.set('context.explore.desc', 'AI suggests actions for new contexts; your feedback becomes rules');
   m.set('context.explore.fingerprints', 'Explored states');
+  m.set('context.stateCard.title', 'State Change Cards');
+  m.set('context.stateCard.desc', 'Push context cards with action suggestions when physical state changes');
 
   // App title
   m.set('app.title', 'OpenClaw Harmony');

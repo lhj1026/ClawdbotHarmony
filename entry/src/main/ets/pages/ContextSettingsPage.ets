@@ -59,6 +59,8 @@ struct ContextSettingsPage {
 
   // 积极探索模式
   @State exploreMode: boolean = false;
+  // 状态变化卡片开关
+  @State stateCardEnabled: boolean = true;
   @State exploreFpCount: number = 0;
   // 数据托盘折叠状态
   @State trayPersonExpanded: boolean = true;
@@ -319,6 +321,7 @@ struct ContextSettingsPage {
       this.geofenceIds = ids;
       this.engineStatus = cas.getStatus();
       this.exploreMode = cas.isExploreMode();
+      this.stateCardEnabled = cas.isStateCardEnabled();
       this.learnedSignals = cas.getLearnedSignalsSummaries();
       this.suggestions = cas.getLocationSuggestions();
       this.suggestions = cas.getFilteredSuggestions();
@@ -799,6 +802,36 @@ struct ContextSettingsPage {
                   .onChange((isOn: boolean) => {
                     this.exploreMode = isOn;
                     ContextAwarenessService.getInstance().setExploreMode(isOn);
+                  })
+              }
+              .width('100%')
+            }
+            .width('100%')
+            .padding(16)
+            .backgroundColor(Color.White)
+            .borderRadius(12)
+
+            // ===== 状态变化卡片开关 =====
+            Column() {
+              Row() {
+                Column() {
+                  Text(I18n.t('context.stateCard.title'))
+                    .fontSize(15)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor('#1A1A1A')
+                  Text(I18n.t('context.stateCard.desc'))
+                    .fontSize(12)
+                    .fontColor('#999999')
+                    .margin({ top: 2 })
+                }
+                .layoutWeight(1)
+                .alignItems(HorizontalAlign.Start)
+
+                Toggle({ type: ToggleType.Switch, isOn: this.stateCardEnabled })
+                  .selectedColor('#007AFF')
+                  .onChange((isOn: boolean) => {
+                    this.stateCardEnabled = isOn;
+                    ContextAwarenessService.getInstance().setStateCardEnabled(isOn);
                   })
               }
               .width('100%')
