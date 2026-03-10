@@ -2034,7 +2034,7 @@ export class ContextAwarenessService {
     this.recordedPut('longitude', lng.toFixed(6), 1.0, 'gps');
     this.recordedPut('locationAccuracy', accuracy.toFixed(0), 0.8, 'gps');
     
-    // 检查围栏
+    // 检查围栏（updateLocation 内部触发 enter/exit 事件回调）
     let locState: LocationState = {
       latitude: lat,
       longitude: lng,
@@ -2045,7 +2045,18 @@ export class ContextAwarenessService {
     };
     this.geofenceMgr.updateLocation(locState);
     this.lastLocation = locState;
-    
+
+    // GPS 围栏写入（统一在此处处理，onGeofenceEvent 只负责事件推送）
+    let geofences = this.geofenceMgr.getGeofencesAtLocation(lat, lng);
+    if (geofences.length > 0) {
+      this.recordedPut('geofenceCategory', geofences[0].category, 0.8, 'geofence');
+      this.gpsGeofenceId = geofences[0].id;
+    } else {
+      this.recordedPut('geofenceCategory', '', 0, 'geofence');
+      this.gpsGeofenceId = '';
+    }
+    this.mergeGeofence();
+
     this.log.debug(TAG, `Location update: (${lat.toFixed(4)}, ${lng.toFixed(4)}) speed=${speed.toFixed(1)}m/s wifi=${this.lastWifiSsid}`);
     
     // 检查新地点（停留5分钟+WiFi）- 异步执行
@@ -3364,21 +3375,8 @@ export class ContextAwarenessService {
     if (this.isReplaying) return;  // 回放中不处理围栏事件
     this.log.info(TAG, `Geofence ${event.type}: ${event.geofence.name}`);
 
-    // 更新位置
-    this.lastLocation = event.location;
-
-    // 写入托盘（GPS 路径独立维护 geofenceCategory，通过 mergeGeofence 派生 geofence）
-    this.recordedPut('latitude', event.location.latitude.toString(), 1.0, 'gps');
-    this.recordedPut('longitude', event.location.longitude.toString(), 1.0, 'gps');
-    if (event.type === 'enter') {
-      this.recordedPut('geofenceCategory', event.geofence.category, 0.8, 'geofence');
-      this.gpsGeofenceId = event.geofence.id;
-    } else {
-      this.recordedPut('geofenceCategory', '', 0, 'geofence');
-      this.gpsGeofenceId = '';
-      this.log.info(TAG, `Geofence exit: cleared GPS geofence, left ${event.geofence.name}`);
-    }
-    this.mergeGeofence();
+    // 围栏数据写入已统一在 handleLocationUpdate() 中处理
+    // 此处只负责事件推送和信号学习
 
     // Push event to engine buffer for temporal/sequence rules
     let eventType = event.type === 'enter' ? 'geofence_enter' : 'geofence_exit';
