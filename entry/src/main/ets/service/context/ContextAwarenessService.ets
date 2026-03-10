@@ -1913,12 +1913,15 @@ export class ContextAwarenessService {
       // 围栏 WiFi 仍连接 → 用户还在围栏内，跳过 GPS（无论是静止还是走路）
       if (inKnownGeofence && wifiMatchesGeofence && this.lastLocation) {
         this.log.debug(TAG, 'Skip GPS: geofence WiFi still connected');
+        // 清除过期速度，防止驾车状态因旧速度残留而"卡住"
+        this.lastLocation.speed = 0;
         return;
       }
 
       // 静止 + 已知围栏（无 WiFi 但 GPS 已确认在围栏内）→ 跳过
       if (this.lastMotionState === 'stationary' && inKnownGeofence && this.lastLocation) {
         this.log.debug(TAG, 'Skip GPS: stationary in known geofence');
+        this.lastLocation.speed = 0;
         return;
       }
 
@@ -1927,6 +1930,7 @@ export class ContextAwarenessService {
         let envChanged = await this.checkEnvironmentChanged();
         if (!envChanged && this.lastLocation) {
           this.log.debug(TAG, 'Skip GPS: stationary, environment unchanged');
+          this.lastLocation.speed = 0;
           this.checkForNewPlaceSmart(this.lastLocation.latitude, this.lastLocation.longitude);
           return;
         }
