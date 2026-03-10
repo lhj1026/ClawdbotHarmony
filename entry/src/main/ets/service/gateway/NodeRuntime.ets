@@ -758,9 +758,23 @@ export class NodeRuntime {
       } catch (_e) { /* 静默跳过 */ }
       // ────────────────────────────────────────────────────────────
 
-      // A2UI 卡片由 stateChangeListener 统一处理（ChatPage 可见时正常显示）
-      // ChatPage 不可见时：投递为持久 chat message + 发送系统通知
-      if (!this._isChatPageVisible) {
+      // ChatPage 可见时：用规则匹配结果重建 A2UI 卡片（替换 stateChangeListener 推送的空规则卡片）
+      if (this._isChatPageVisible) {
+        let currentPS = PhysicalStateBuilder.getInstance().build();
+        let currentScenarios2 = cas.getLastScenarioResults();
+        let prevScenarios2 = cas.getPrevScenarioResults();
+        let currentStateCode2 = this.buildStateCodeFromPhysical(currentPS);
+        let recItems2: RecommendItem[] = [];
+        try {
+          recItems2 = RecommenderBridge.getInstance().predict(currentStateCode2, 3);
+        } catch (_e) { /* ignore */ }
+        let a2uiJsonl = this.buildScenarioRecA2UI(
+          currentPS, undefined, currentScenarios2, prevScenarios2, recItems2, alternatives
+        );
+        this.dispatchA2UI('reset', '');
+        this.dispatchA2UI('push', a2uiJsonl);
+      } else {
+        // ChatPage 不可见时：投递为持久 chat message + 发送系统通知
         let text = `💡 **${ruleName}**\n${rec.reason}`;
         let event: GatewayChatEvent = {
           runId: `ctx-rec-${Date.now()}`,

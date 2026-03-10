@@ -18,6 +18,8 @@ Follow these steps strictly:
 4. Run `git push` again.
 5. If push succeeds, report the commit hash and confirm success.
 6. If push fails again, report the error and ask the user for guidance.
+7. 在代码根目录执行`.\build_debug.bat`构建包
+8. cd到`C:\Program Files\Huawei\DevEco Studio\sdk\default\openharmony\toolchains`目录，然后执行`./hdc.exe install "D:\code\AI\ClawdbotHarmony\entry\build\default\outputs\default\entry-default-signed.hap"`安装hap到手机（注意：必须先cd到toolchains目录，hap路径必须用反斜杠+引号）
 
 Important:
 - Never use `git push --force` unless the user explicitly requests it.

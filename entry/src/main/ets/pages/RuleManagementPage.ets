@@ -806,8 +806,9 @@ struct RuleManagementPage {
                 .value(this.contextKeys[row.keyIndex]?.label || '选择...')
                 .font({ size: 12 })
                 .onSelect((index: number) => {
+                  let cur = this.conditionRows[idx];
                   let newRows = this.conditionRows.slice();
-                  newRows[idx] = { keyIndex: index, opIndex: row.opIndex, value: '' };
+                  newRows[idx] = { keyIndex: index, opIndex: cur.opIndex, value: '' };
                   this.conditionRows = newRows;
                 })
                 .layoutWeight(1)
@@ -827,8 +828,9 @@ struct RuleManagementPage {
                 .value(['=', '≠', '>', '<', '≥', '≤', '包含'][row.opIndex])
                 .font({ size: 12 })
                 .onSelect((index: number) => {
+                  let cur = this.conditionRows[idx];
                   let newRows = this.conditionRows.slice();
-                  newRows[idx] = { keyIndex: row.keyIndex, opIndex: index, value: row.value };
+                  newRows[idx] = { keyIndex: cur.keyIndex, opIndex: index, value: cur.value };
                   this.conditionRows = newRows;
                 })
                 .width(70)
@@ -852,8 +854,9 @@ struct RuleManagementPage {
                     .borderRadius(12)
                     .margin(3)
                     .onClick(() => {
+                      let cur = this.conditionRows[idx];
                       let newRows = this.conditionRows.slice();
-                      newRows[idx] = { keyIndex: row.keyIndex, opIndex: row.opIndex, value: preset };
+                      newRows[idx] = { keyIndex: cur.keyIndex, opIndex: cur.opIndex, value: preset };
                       this.conditionRows = newRows;
                     })
                 }, (preset: string) => preset)
@@ -866,8 +869,9 @@ struct RuleManagementPage {
               text: row.value
             })
               .onChange((val: string) => {
+                let cur = this.conditionRows[idx];
                 let newRows = this.conditionRows.slice();
-                newRows[idx] = { keyIndex: row.keyIndex, opIndex: row.opIndex, value: val };
+                newRows[idx] = { keyIndex: cur.keyIndex, opIndex: cur.opIndex, value: val };
                 this.conditionRows = newRows;
               })
               .width('100%').height(36).fontSize(13).borderRadius(8)
