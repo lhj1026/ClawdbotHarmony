@@ -200,7 +200,7 @@ export class ContextAwarenessService {
   private static readonly ACTIVE_DWELL_MS = 800;         // 转运动需0.8秒
   private static readonly DRIVING_EXIT_DWELL_MS = 30 * 1000;  // driving退出需30秒dwell
   private static readonly DRIVING_INERTIA_MS = 90 * 1000;     // 驾车惯性90秒
-  private static readonly GEOFENCE_DEPARTURE_COOLDOWN_MS = 3 * 60 * 1000;  // 围栏离开冷却3分钟
+
 
   // Z轴振幅和频率特征（用于走路vs驾车区分）
   private zAxisHistory: Array<ZAxisSamplePoint> = [];
@@ -2132,6 +2132,12 @@ export class ContextAwarenessService {
     // Refresh tray with latest sensor data, then read snapshot from tray
     await this.refreshTray();
 
+    // 位置数据缺失时按需获取 GPS（refreshTray 不再做围栏匹配，需要此处补位）
+    let hasGeofence = this.wifiGeofenceId.length > 0 || this.gpsGeofenceId.length > 0;
+    if (!hasGeofence && !this.lastLocation) {
+      await this.fetchSingleLocation();
+    }
+
     // Inject travel data (flight countdown, arrival, etc.)
     await this.injectTravelData();
 
@@ -2269,29 +2275,10 @@ export class ContextAwarenessService {
       }
     });
 
-    // 位置 / 围栏
+    // 位置：仅刷新 TTL，不重新匹配围栏（围栏数据由事件驱动路径写入）
     if (this.lastLocation) {
       this.recordedPut('latitude', this.lastLocation.latitude.toString(), 1.0, 'gps');
       this.recordedPut('longitude', this.lastLocation.longitude.toString(), 1.0, 'gps');
-
-      // 围栏离开冷却期内：跳过GPS围栏重匹配，防止旧坐标重新匹配到刚离开的围栏
-      let inDepartureCooldown = this.geofenceDepartureTime > 0
-        && (Date.now() - this.geofenceDepartureTime < ContextAwarenessService.GEOFENCE_DEPARTURE_COOLDOWN_MS);
-
-      if (!inDepartureCooldown) {
-        let geofences = this.geofenceMgr.getGeofencesAtLocation(
-          this.lastLocation.latitude,
-          this.lastLocation.longitude
-        );
-        if (geofences.length > 0) {
-          this.recordedPut('geofenceCategory', geofences[0].category, 0.8, 'geofence');
-          this.gpsGeofenceId = geofences[0].id;
-        } else {
-          this.recordedPut('geofenceCategory', '', 0, 'geofence');
-          this.gpsGeofenceId = '';
-        }
-        this.mergeGeofence();
-      }
     }
 
     // 步数：由 StepCounterPlugin 通过插件路径写入（step_count_today）
