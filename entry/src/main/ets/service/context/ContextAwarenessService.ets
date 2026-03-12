@@ -444,7 +444,7 @@ export class ContextAwarenessService {
         if (state === 1) {
           // WiFi 已连接
           this.log.info(TAG, 'WiFi connection event: connected');
-          this.refreshWifiAsync();
+          this.scanWifi();
         } else {
           // WiFi 已断开
           this.log.info(TAG, 'WiFi connection event: disconnected');
@@ -610,7 +610,9 @@ export class ContextAwarenessService {
   
   private onWifiConnected(): void {
     if (this.isReplaying) return;  // 回放中不处理WiFi事件
-    this.log.info(TAG, `onWifiConnected called, lastWifiSsid=${this.lastWifiSsid}`);
+    let ssid = this.lastWifiSsid;  // 已由 updateWifiSsid() 更新
+    this.log.info(TAG, `onWifiConnected: ssid=${ssid}`);
+
     // WiFi 重新连接，清除丢失标记（内存 + DataTray 同步清除）
     this.wifiLostWorkTimestamp = 0;
     this.wifiLostTimestamps.clear();
@@ -619,66 +621,52 @@ export class ContextAwarenessService {
     this.recordedPut('wifiLostWork', '', 0, 'wifi');
     this.geofenceDepartureTime = 0;  // WiFi重连，取消围栏离开冷却
 
-    // 尝试获取当前 SSID 并匹配围栏
-    try {
-      wifiManager.getLinkedInfo().then((info) => {
-        let ssid = info.ssid || '';
-        if (ssid.startsWith('"') && ssid.endsWith('"')) {
-          ssid = ssid.substring(1, ssid.length - 1);
-        }
-        if (ssid.length === 0) return;
+    if (ssid.length === 0) return;
 
-        this.lastWifiSsid = ssid;
-        this.recordedPut('wifiSsid', ssid, 1.0, 'wifi');
+    // 遍历所有围栏查找匹配
+    let matched = false;
+    let allGeofences = this.geofenceMgr.getAllGeofences();
+    for (let gf of allGeofences) {
+      let summary = this.locationFusion.getLearnedSignalsSummary(gf);
+      if (summary && summary.wifiSsids.includes(ssid)) {
+        this.log.info(TAG, `WiFi connected: ${ssid} matches ${gf.category} geofence (${gf.id})`);
+        this.recordedPut('wifiGeofence', gf.category, 0.9, 'wifi');
+        this.wifiGeofenceId = gf.id;
+        this.mergeGeofence();  // WiFi 确认围栏，优先级最高
+        this.engine.pushEvent('wifi_arrive_' + gf.category);
+        matched = true;
 
-        // 遍历所有围栏查找匹配
-        let matched = false;
-        let allGeofences = this.geofenceMgr.getAllGeofences();
-        for (let gf of allGeofences) {
-          let summary = this.locationFusion.getLearnedSignalsSummary(gf);
-          if (summary && summary.wifiSsids.includes(ssid)) {
-            this.log.info(TAG, `WiFi connected: ${ssid} matches ${gf.category} geofence (${gf.id})`);
-            this.recordedPut('wifiGeofence', gf.category, 0.9, 'wifi');
-            this.wifiGeofenceId = gf.id;
-            this.mergeGeofence();  // WiFi 确认围栏，优先级最高
-            this.engine.pushEvent('wifi_arrive_' + gf.category);
-            matched = true;
+        // 到达新围栏 → WiFi 已确认位置，无需额外 GPS
+        this.adjustLocationInterval(this.lastMotionState);
 
-            // 到达新围栏 → WiFi 已确认位置，无需额外 GPS
-            this.adjustLocationInterval(this.lastMotionState);
-
-            // 交通场景: 检查旅行信息并显示登机牌/火车票
-            if (gf.category === 'transit') {
-              this.triggerTravelInfoCards(gf.name);
-            }
-
-            // 立即触发评估
-            this.refreshTray().then(() => {
-              this.buildPhysicalStateAndDetectChange();
-              let snapshot = this.augmentSnapshot(this.tray.getSnapshot());
-              this.evaluateAndDeliver(snapshot);
-            });
-            return;
-          }
+        // 交通场景: 检查旅行信息并显示登机牌/火车票
+        if (gf.category === 'transit') {
+          this.triggerTravelInfoCards(gf.name);
         }
 
-        // 自动地点发现：未匹配围栏的 WiFi，记录 GPS+SSID
-        if (!matched) {
-          this.recordDiscoveredWifiPlace(ssid);
-        }
+        // 立即触发评估
+        this.refreshTray().then(() => {
+          this.buildPhysicalStateAndDetectChange();
+          let snapshot = this.augmentSnapshot(this.tray.getSnapshot());
+          this.evaluateAndDeliver(snapshot);
+        });
+        return;
+      }
+    }
 
-        // 探索模式：WiFi 变化但未匹配围栏也触发评估（让 LLM 分析新环境）
-        if (!matched && this.exploreMode) {
-          this.log.info(TAG, `[Explore-DBG] WiFi connected to unmatched "${ssid}", triggering explore evaluation`);
-          this.refreshTray().then(() => {
-            this.buildPhysicalStateAndDetectChange();
-            let snapshot = this.augmentSnapshot(this.tray.getSnapshot());
-            this.evaluateAndDeliver(snapshot);
-          });
-        }
+    // 自动地点发现：未匹配围栏的 WiFi，记录 GPS+SSID
+    if (!matched) {
+      this.recordDiscoveredWifiPlace(ssid);
+    }
+
+    // 探索模式：WiFi 变化但未匹配围栏也触发评估（让 LLM 分析新环境）
+    if (!matched && this.exploreMode) {
+      this.log.info(TAG, `[Explore-DBG] WiFi connected to unmatched "${ssid}", triggering explore evaluation`);
+      this.refreshTray().then(() => {
+        this.buildPhysicalStateAndDetectChange();
+        let snapshot = this.augmentSnapshot(this.tray.getSnapshot());
+        this.evaluateAndDeliver(snapshot);
       });
-    } catch (err) {
-      this.log.debug(TAG, `WiFi connected, get info failed: ${(err as Error).message}`);
     }
   }
   
@@ -1851,32 +1839,35 @@ export class ContextAwarenessService {
     }
   }
 
+  /**
+   * 统一的 SSID 变化检测入口 — 所有 WiFi 状态更新路径都经过此方法。
+   * 负责：去引号、写 DataTray、检测变化、触发 onWifiConnected / onWifiDisconnected。
+   */
+  private updateWifiSsid(rawSsid: string): void {
+    let ssid = rawSsid ?? '';
+    if (ssid.startsWith('"') && ssid.endsWith('"')) {
+      ssid = ssid.substring(1, ssid.length - 1);
+    }
+    this.recordedPut('wifiSsid', ssid, 0.9, 'wifi');
+
+    if (ssid !== this.lastWifiSsid) {
+      let oldSsid = this.lastWifiSsid;
+      this.log.info(TAG, `WiFi SSID changed: "${oldSsid}" -> "${ssid}"`);
+      this.lastWifiSsid = ssid;
+      this.engine.pushEvent('wifi_change');
+
+      if (ssid.length > 0 && oldSsid !== ssid) {
+        this.onWifiConnected();
+      } else if (ssid.length === 0 && oldSsid.length > 0) {
+        this.onWifiDisconnected();
+      }
+    }
+  }
+
   private scanWifi(): void {
     try {
       wifiManager.getLinkedInfo().then((info) => {
-        let ssid = info.ssid ?? '';
-        // 去引号（部分系统返回 "SSID" 带引号）
-        if (ssid.startsWith('"') && ssid.endsWith('"')) {
-          ssid = ssid.substring(1, ssid.length - 1);
-        }
-        this.recordedPut('wifiSsid', ssid, 0.9, 'wifi');
-        
-        if (ssid !== this.lastWifiSsid) {
-          let oldSsid = this.lastWifiSsid;
-          this.log.info(TAG, `WiFi change detected: "${oldSsid}" -> "${ssid}"`);
-          this.lastWifiSsid = ssid;
-          this.engine.pushEvent('wifi_change');
-
-
-          // 触发连接/断开回调
-          if (ssid.length > 0 && oldSsid !== ssid) {
-            this.onWifiConnected();
-          } else if (ssid.length === 0 && oldSsid.length > 0) {
-            this.onWifiDisconnected();
-          }
-        } else {
-          this.lastWifiSsid = ssid;
-        }
+        this.updateWifiSsid(info.ssid);
       }).catch(() => {});
     } catch {
       // ignore
@@ -1913,7 +1904,7 @@ export class ContextAwarenessService {
   private async fetchSingleLocation(): Promise<void> {
     try {
       // 先获取WiFi信息
-      this.refreshWifiSync();
+      this.scanWifi();
 
       // 检查是否仍在已知围栏内（WiFi 连接 = 仍在围栏覆盖范围）
       let geofenceSlot = this.tray.get('geofence');
@@ -1965,61 +1956,6 @@ export class ContextAwarenessService {
       }
     } catch (err) {
       this.log.warn(TAG, `Location fetch failed: ${(err as Error).message}`);
-    }
-  }
-
-  /**
-   * 同步获取WiFi信息
-   */
-  private refreshWifiSync(): void {
-    try {
-      wifiManager.getLinkedInfo().then((info) => {
-        let ssid = info.ssid ?? '';
-        if (ssid.startsWith('"') && ssid.endsWith('"')) {
-          ssid = ssid.substring(1, ssid.length - 1);
-        }
-        this.recordedPut('wifiSsid', ssid, 0.9, 'wifi');
-        if (ssid !== this.lastWifiSsid) {
-          let oldSsid = this.lastWifiSsid;
-          this.log.info(TAG, `WiFi(sync): ${oldSsid} -> ${ssid}`);
-          this.lastWifiSsid = ssid;
-          this.engine.pushEvent('wifi_change');
-          if (ssid.length > 0 && oldSsid !== ssid) {
-            this.onWifiConnected();
-          } else if (ssid.length === 0 && oldSsid.length > 0) {
-            this.onWifiDisconnected();
-          }
-        }
-      }).catch(() => {});
-    } catch {
-      // ignore
-    }
-  }
-
-  /**
-   * 异步获取WiFi信息
-   */
-  private async refreshWifiAsync(): Promise<void> {
-    try {
-      let info = await wifiManager.getLinkedInfo();
-      let ssid = info.ssid ?? '';
-      if (ssid.startsWith('"') && ssid.endsWith('"')) {
-        ssid = ssid.substring(1, ssid.length - 1);
-      }
-      this.recordedPut('wifiSsid', ssid, 0.9, 'wifi');
-      if (ssid !== this.lastWifiSsid) {
-        let oldSsid = this.lastWifiSsid;
-        this.log.info(TAG, `WiFi(async): ${oldSsid} -> ${ssid}`);
-        this.lastWifiSsid = ssid;
-        this.engine.pushEvent('wifi_change');
-        if (ssid.length > 0 && oldSsid !== ssid) {
-          this.onWifiConnected();
-        } else if (ssid.length === 0 && oldSsid.length > 0) {
-          this.onWifiDisconnected();
-        }
-      }
-    } catch {
-      // ignore
     }
   }
 
@@ -2711,9 +2647,14 @@ export class ContextAwarenessService {
   private async learnPlaceSignals(lat: number, lng: number): Promise<void> {
     let allGeofences = this.geofenceMgr.getAllGeofences();
     
-    // 如果WiFi信息为空，尝试同步获取
+    // 如果WiFi信息为空，尝试获取
     if (!this.lastWifiSsid || this.lastWifiSsid.length === 0) {
-      await this.refreshWifiAsync();
+      try {
+        let info = await wifiManager.getLinkedInfo();
+        this.updateWifiSsid(info.ssid);
+      } catch {
+        // ignore
+      }
     }
     
     this.log.debug(TAG, `learnPlaceSignals: checking ${allGeofences.length} geofences, wifi=${this.lastWifiSsid}`);
